@@ -15,6 +15,8 @@ constexpr size_t kMaxExe = 32u << 20; // refuse anything absurdly large
 constexpr size_t kMinExe = 64u << 10; // or suspiciously small
 constexpr wchar_t kKey[] = L"Software\\Astraeus";
 constexpr wchar_t kDoneVal[] = L"UpdatedTo"; // last tag we installed, stops retry loops
+constexpr int kTries = 4; // network blips are common right after wake/boot
+constexpr DWORD kRetryMs = 30000;
 
 std::string JsonStr(const std::string& s, size_t key) { // string value after "key":
     size_t colon = s.find(':', key);
@@ -95,9 +97,21 @@ struct Updater::Impl {
         if (th.joinable()) th.join();
     }
 
+    void Wait(DWORD ms) { // sleep that wakes early on shutdown
+        for (DWORD t = 0; t < ms && !stop.load(); t += 100) ::Sleep(100);
+    }
+
+    bool Get(const wchar_t* url, std::string& out, size_t max) { // retried get
+        for (int i = 0; i < kTries && !stop.load(); ++i) {
+            if (i) Wait(kRetryMs);
+            if (detail::HttpGet(url, out, stop, req, max)) return true;
+        }
+        return false;
+    }
+
     bool Fetch() {
         std::string body;
-        if (!detail::HttpGet(kLatest, body, stop, req)) return false; // offline or rate limited, try next time
+        if (!Get(kLatest, body, 256 * 1024)) return false; // still offline, next scheduled check retries
         size_t k = body.find("\"tag_name\"");
         std::string t = k == std::string::npos ? "" : JsonStr(body, k);
         if (t.empty() || !Newer(t) || Widen(t) == Done()) return false; // up to date, or this tag already tried
@@ -112,7 +126,7 @@ struct Updater::Impl {
         }
         if (url.empty()) return false; // release without our asset, e.g. still building
         std::string exe;
-        if (!detail::HttpGet(Widen(url).c_str(), exe, stop, req, kMaxExe) || exe.size() < kMinExe || exe[0] != 'M' || exe[1] != 'Z')
+        if (!Get(Widen(url).c_str(), exe, kMaxExe) || exe.size() < kMinExe || exe[0] != 'M' || exe[1] != 'Z')
             return false; // must look like a windows exe
         MarkDone(Widen(t)); // once only, even if the swap fails
         if (!Swap(exe)) return false;

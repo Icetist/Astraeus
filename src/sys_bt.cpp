@@ -9,6 +9,7 @@
 #include <winrt/Windows.Devices.Enumeration.h>
 
 #include <bluetoothapis.h>
+#include <cfgmgr32.h>
 #include <devicetopology.h>
 #include <mmdeviceapi.h>
 #include <wrl/client.h>
@@ -22,6 +23,8 @@
 #include <mutex>
 
 using Microsoft::WRL::ComPtr;
+
+#pragma comment(lib, "cfgmgr32.lib")
 
 namespace sys {
 namespace {
@@ -46,6 +49,8 @@ constexpr auto kScanFor = std::chrono::seconds(40); // scanning drains power, au
 constexpr DWORD kCycleMs = 600; // gap between service off and on
 const GUID kBtAudioSet = {0x7fa06c40, 0xb8f6, 0x4c7e, {0x85, 0x56, 0xe8, 0xc3, 0x3a, 0x12, 0xe5, 0x4d}}; // KSPROPSETID_BtAudio
 constexpr ULONG kKsGet = 1; // KSPROPERTY_TYPE_GET
+constexpr DWORD kIoctlKsProperty = 0x2F0003; // CTL_CODE(FILE_DEVICE_KS, 0, METHOD_NEITHER, FILE_ANY_ACCESS)
+const GUID kKsAudio = {0x6994ad04, 0x93ef, 0x11d0, {0xa3, 0xcc, 0x00, 0xa0, 0xc9, 0x22, 0x31, 0x96}}; // KSCATEGORY_AUDIO
 
 struct KsProp { // KSPROPERTY layout, avoids pulling in ks.h
     GUID set;
@@ -208,6 +213,28 @@ bool KsToggle(const std::wstring& mac, bool on) { // audio: ask bt audio driver 
         KsProp p = {kBtAudioSet, on ? 0ul : 1ul, kKsGet}; // a get request triggers the action
         ULONG got = 0;
         if (SUCCEEDED(ks->KsProperty(&p, sizeof(p), nullptr, 0, &got))) hit = true;
+    }
+    return hit;
+}
+
+bool KsDirect(const std::wstring& mac, bool on) { // newer stacks hide the topology link, talk to the filter itself
+    if (mac.size() != 12) return false;
+    GUID cat = kKsAudio;
+    ULONG len = 0;
+    if (CM_Get_Device_Interface_List_SizeW(&len, &cat, nullptr, CM_GET_DEVICE_INTERFACE_LIST_PRESENT) != CR_SUCCESS || len < 2)
+        return false;
+    std::vector<wchar_t> list(len);
+    if (CM_Get_Device_Interface_ListW(&cat, nullptr, list.data(), len, CM_GET_DEVICE_INTERFACE_LIST_PRESENT) != CR_SUCCESS)
+        return false;
+    bool hit = false;
+    for (const wchar_t* p = list.data(); *p; p += wcslen(p) + 1) { // double-null terminated list
+        if (Lower(p).find(mac) == std::wstring::npos) continue; // bt filter paths embed the address
+        HANDLE h = CreateFileW(p, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (h == INVALID_HANDLE_VALUE) continue;
+        KsProp prop = {kBtAudioSet, on ? 0ul : 1ul, kKsGet};
+        DWORD got = 0;
+        if (DeviceIoControl(h, kIoctlKsProperty, &prop, sizeof(prop), nullptr, 0, &got, nullptr)) hit = true; // same request IKsControl sends
+        CloseHandle(h);
     }
     return hit;
 }
@@ -412,9 +439,10 @@ struct Bt::Impl : std::enable_shared_from_this<Bt::Impl> {
         co_await winrt::resume_background(); // driver calls block, keep off ui thread
         bool ok = false;
         try {
-            if (d.audio) ok = KsToggle(d.mac, on); // headphones, speakers
+            if (d.audio) ok = KsToggle(d.mac, on) || KsDirect(d.mac, on); // headphones, speakers
             if (!ok && d.le) ok = on ? co_await HoldLe(d.id) : DropLe(d.id);
-            else if (!ok) ok = on ? co_await PageClassic(d.id) : CycleServices(d.mac);
+            else if (!ok && on) ok = co_await PageClassic(d.id);
+            else if (!ok && !d.audio) ok = CycleServices(d.mac); // never on audio: it drops sound with no way back
         } catch (...) {
             Log(L"connect failed");
         }

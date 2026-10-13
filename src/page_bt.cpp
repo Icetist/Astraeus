@@ -62,7 +62,7 @@ void Radar(Ui& ui, const Theme& t, D2D1_POINT_2F o, bool on, bool scanning) {
         float ph = static_cast<float>(std::fmod(ui.Now() * 0.55, 1.0)); // ring cycle ~1.8s
         for (int i = 0; i < 3; ++i) {
             float f = std::fmod(ph + i / 3.0f, 1.0f); // 3 staggered rings expand and fade
-            c.Ring(o, 34 + f * 32, t.accent.Alpha((1 - f) * 0.5f * scan), 1.5f);
+            c.Ring(o, 34 + f * 22, t.accent.Alpha((1 - f) * 0.5f * scan), 1.5f); // stays clear of the title
         }
         ui.KeepAlive(); // ambient rate is plenty for rings
     }

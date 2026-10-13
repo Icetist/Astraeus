@@ -183,7 +183,7 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == kSecTimer && app->model) {
             app->model->Tick(); // refresh stats, clock, timer
             ++app->ticks;
-            if (app->cfg.autoUpdate && (app->ticks == 30 || app->ticks % 43200 == 0)) // 30s after launch, then every 12h
+            if (app->cfg.autoUpdate && (app->ticks == 30 || app->ticks % 10800 == 0)) // 30s after launch, then every 3h
                 app->updater.Check(app->host, WM_APP_UPDATE);
             if (app->restartPending && !app->drawer->Busy()) Restart(app->exePath); // never yank the panel away mid-use
             app->drawer->OnSecond();
