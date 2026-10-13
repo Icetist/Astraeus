@@ -153,8 +153,6 @@ cl /nologo /std:c++20 /O2 /GL /Gw /EHsc /MT /W4 /permissive- /utf-8 /MP ^
 
 The result is a single self-contained `build\Astraeus.exe`.
 
-Releases are built by GitHub Actions. To publish one, bump the version in `src/version.h` and push a matching tag such as `v1.0.3`.
-
 ## ❓ FAQ
 
 <details>
