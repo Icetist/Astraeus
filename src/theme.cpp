@@ -1,0 +1,134 @@
+#include "theme.h"
+
+#include <cmath>
+#include <vector>
+
+namespace {
+
+float Clamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+void ToHsl(float r, float g, float b, float& h, float& s, float& l) {
+    float mx = (std::max)(r, (std::max)(g, b)), mn = (std::min)(r, (std::min)(g, b));
+    float d = mx - mn;
+    l = (mx + mn) / 2;
+    s = d < 1e-5f ? 0 : d / (1 - std::fabs(2 * l - 1)); // grey: no saturation, avoid div by 0
+    if (d < 1e-5f) h = 0;
+    else if (mx == r) h = 60 * std::fmod((g - b) / d, 6.0f); // hue sector from dominant channel
+    else if (mx == g) h = 60 * ((b - r) / d + 2);
+    else h = 60 * ((r - g) / d + 4);
+    if (h < 0) h += 360;
+}
+
+}
+
+namespace theme {
+
+Color Hsl(float h, float s, float l, float a) {
+    s = Clamp(s, 0, 1);
+    float c = (1 - std::fabs(2 * l - 1)) * s; // chroma from lightness and sat
+    float hp = std::fmod(std::fmod(h, 360.0f) + 360.0f, 360.0f) / 60; // wrap hue, split into 6 sectors
+    float x = c * (1 - std::fabs(std::fmod(hp, 2.0f) - 1));
+    float r = 0, g = 0, b = 0;
+    if (hp < 1) { r = c; g = x; } // standard hsl -> rgb sector table
+    else if (hp < 2) { r = x; g = c; }
+    else if (hp < 3) { g = c; b = x; }
+    else if (hp < 4) { g = x; b = c; }
+    else if (hp < 5) { r = x; b = c; }
+    else { r = c; b = x; }
+    float m = l - c / 2; // lift all channels to match lightness
+    return {Clamp(r + m, 0, 1), Clamp(g + m, 0, 1), Clamp(b + m, 0, 1), a};
+}
+
+Seed FromCol(Color c) {
+    float h, s, l;
+    ToHsl(c.r, c.g, c.b, h, s, l);
+    return {h, s};
+}
+
+Seed FromBmp(IWICBitmapSource* source) {
+    const UINT side = 48; // 48x48 sample is plenty for dominant hue
+    const int bins = 24; // 15 degree hue bins
+    Seed fallback;
+    if (!source) return fallback;
+    ComPtr<IWICBitmapScaler> scaler;
+    if (FAILED(gfx::Wic()->CreateBitmapScaler(&scaler)) ||
+        FAILED(scaler->Initialize(source, side, side, WICBitmapInterpolationModeLinear))) // ignores aspect, fine for stats
+        return fallback;
+    std::vector<BYTE> px(side * side * 4);
+    if (FAILED(scaler->CopyPixels(nullptr, side * 4, (UINT)px.size(), px.data()))) return fallback;
+
+    float weight[bins] = {}, sn[bins] = {}, cs[bins] = {}, sat[bins] = {}; // hue histogram + circular mean parts
+    float total = 0;
+    for (size_t i = 0; i < px.size(); i += 4) {
+        if (px[i + 3] < 128) continue;
+        float a = px[i + 3] / 255.0f;
+        float h, s, l;
+        ToHsl(px[i + 2] / 255.0f / a, px[i + 1] / 255.0f / a, px[i] / 255.0f / a, h, s, l); // unpremultiply, bgr order
+        if (l < 0.08f || l > 0.94f) continue; // near black/white carry no hue
+        float w = s * (1 - std::fabs(2 * l - 1)); // weight by visible chroma
+        if (w < 0.05f) continue;
+        int b = (int)(h / (360.0f / bins)) % bins;
+        float rad = h * 3.14159265f / 180;
+        weight[b] += w;
+        sn[b] += std::sin(rad) * w; // sum vectors so hue avg wraps correctly
+        cs[b] += std::cos(rad) * w;
+        sat[b] += s * w;
+        total += w;
+    }
+    if (total / (side * side) < 0.02f) return {fallback.hue, 0.05f}; // near greyscale wallpaper: default hue, almost no chroma
+
+    int best = 0;
+    float bestS = -1;
+    for (int b = 0; b < bins; ++b) {
+        float score = weight[b] + 0.5f * (weight[(b + bins - 1) % bins] + weight[(b + 1) % bins]); // neighbors count half, smooths bin edges
+        if (score > bestS) { bestS = score; best = b; } // pick strongest bin
+    }
+    float hue = std::atan2(sn[best], cs[best]) * 180 / 3.14159265f; // circular mean within winning bin
+    if (hue < 0) hue += 360;
+    return {hue, sat[best] / weight[best]}; // weighted avg saturation
+}
+
+std::wstring WallPath() {
+    wchar_t path[MAX_PATH] = {};
+    if (!SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, path, 0)) return L""; // empty when solid color bg
+    return path;
+}
+
+}
+
+Theme Theme::From(Seed seed) {
+    using theme::Hsl;
+    float h = seed.hue;
+    float k = Clamp(seed.chroma * 1.4f, 0.12f, 1.0f); // boost dull seeds, keep a hint of tint
+    Theme t;
+    t.accent = Hsl(h, (std::max)(0.62f, 0.85f * k), 0.71f); // accents keep min sat so they always pop
+    t.accentHi = Hsl(h, (std::max)(0.72f, 0.95f * k), 0.83f);
+    t.onAccent = Hsl(h, 0.50f * k, 0.09f);
+    t.text = Hsl(h, 0.12f * k, 0.94f); // near white, faintly tinted
+    t.textDim = Hsl(h, 0.10f * k, 0.66f);
+    t.textLow = Hsl(h, 0.08f * k, 0.40f);
+    t.card = Hsl(h, 0.32f * k, 0.052f); // very dark surfaces, lightness ramps card < cardHi < track
+    t.cardHi = Hsl(h, 0.26f * k, 0.095f);
+    t.track = Hsl(h, 0.20f * k, 0.155f);
+    t.hairTop = Color{1, 1, 1, 0.11f}; // neutral white hairlines, work on any hue
+    t.hairBot = Color{1, 1, 1, 0.02f};
+    t.glow = t.accent.Alpha(0.20f);
+    return t;
+}
+
+Theme Theme::Lerp(const Theme& o, float t) const {
+    Theme r;
+    r.accent = accent.Mix(o.accent, t);
+    r.accentHi = accentHi.Mix(o.accentHi, t);
+    r.onAccent = onAccent.Mix(o.onAccent, t);
+    r.text = text.Mix(o.text, t);
+    r.textDim = textDim.Mix(o.textDim, t);
+    r.textLow = textLow.Mix(o.textLow, t);
+    r.card = card.Mix(o.card, t);
+    r.cardHi = cardHi.Mix(o.cardHi, t);
+    r.track = track.Mix(o.track, t);
+    r.hairTop = hairTop.Mix(o.hairTop, t);
+    r.hairBot = hairBot.Mix(o.hairBot, t);
+    r.glow = glow.Mix(o.glow, t);
+    return r;
+}
