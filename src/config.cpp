@@ -37,7 +37,10 @@ const char* kDefault = // written on first run, utf-8 ini
     "\n"
     "# --- Tools --------------------------------------------------------------\n"
     "Weather = true\n"
-    "Fahrenheit = false\n";
+    "Fahrenheit = false\n"
+    "\n"
+    "# Download and install new versions automatically\n"
+    "AutoUpdate = true\n";
 
 std::wstring Trim(const std::wstring& s) {
     size_t a = s.find_first_not_of(L" \t\r\n"); // \r too, handles crlf files
@@ -130,6 +133,7 @@ Config Config::Load(const std::wstring& path) {
         else if (key == L"visualizer") ok = ParseBool(val, c.viz);
         else if (key == L"weather") ok = ParseBool(val, c.weather);
         else if (key == L"fahrenheit") ok = ParseBool(val, c.fahr);
+        else if (key == L"autoupdate") ok = ParseBool(val, c.autoUpdate);
         else c.warns.push_back(L"Unknown config key: " + key); // typo guard, keep parsing
         if (!ok) c.warns.push_back(L"Invalid value for " + key + L": " + val); // bad value keeps default
     }

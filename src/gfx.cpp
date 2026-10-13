@@ -18,9 +18,41 @@ struct State {
     std::wstring textFam = L"Segoe UI Variable Text"; // fallback if outfit fails to load
     std::wstring lineFam, fillFam;
     std::vector<FmtEntry> formats; // few entries, linear scan is fine
+    ComPtr<IDWriteInMemoryFontFileLoader> mem; // serves fonts straight from the exe image
 };
 
 State* g = nullptr; // process-wide, created in Init
+
+struct Pin : IUnknown { // owner for in-memory fonts: resource memory lives as long as the exe, so no refcount
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void** out) override {
+        *out = id == __uuidof(IUnknown) ? this : nullptr;
+        return *out ? S_OK : E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
+    ULONG STDMETHODCALLTYPE Release() override { return 1; }
+} gPin;
+
+ComPtr<IDWriteFontCollection1> LoadRes(std::initializer_list<int> ids) { // fonts embedded as RCDATA, zero copies
+    if (!g->mem) return nullptr;
+    ComPtr<IDWriteFontSetBuilder1> builder;
+    if (FAILED(g->dw->CreateFontSetBuilder(&builder))) return nullptr;
+    int added = 0;
+    for (int id : ids) {
+        HRSRC r = FindResourceW(nullptr, MAKEINTRESOURCEW(id), RT_RCDATA);
+        HGLOBAL h = r ? LoadResource(nullptr, r) : nullptr;
+        const void* data = h ? LockResource(h) : nullptr;
+        if (!data) continue;
+        ComPtr<IDWriteFontFile> file; // owner set, so dwrite reads the mapped image instead of copying
+        if (SUCCEEDED(g->mem->CreateInMemoryFontFileReference(g->dw.Get(), data, SizeofResource(nullptr, r), &gPin, &file)) &&
+            SUCCEEDED(builder->AddFontFile(file.Get())))
+            ++added;
+    }
+    ComPtr<IDWriteFontSet> set;
+    ComPtr<IDWriteFontCollection1> collection;
+    if (added == 0 || FAILED(builder->CreateFontSet(&set)) || FAILED(g->dw->CreateFontCollectionFromFontSet(set.Get(), &collection)))
+        return nullptr;
+    return collection;
+}
 
 ComPtr<IDWriteFontCollection1> LoadFonts(const std::vector<std::wstring>& files) {
     ComPtr<IDWriteFontSetBuilder1> builder; // in-memory font set from loose ttf files
@@ -90,11 +122,16 @@ bool Init(const std::wstring& fontDir) {
     if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory5), &g->dw))) return false; // shared = system font cache
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&g->wic)))) return false; // needs CoInitialize first
 
-    std::wstring dir = fontDir + L"\\";
-    g->textFonts = LoadFonts({dir + L"Outfit-200.ttf", dir + L"Outfit-300.ttf", dir + L"Outfit-400.ttf", // one file per Weight value
+    if (SUCCEEDED(g->dw->CreateInMemoryFontFileLoader(&g->mem)) && FAILED(g->dw->RegisterFontFileLoader(g->mem.Get())))
+        g->mem.Reset();
+    g->textFonts = LoadRes({201, 202, 203, 204, 205}); // ids from app.rc, outfit 200..600
+    g->iconLine = LoadRes({206});
+    g->iconFill = LoadRes({207});
+    std::wstring dir = fontDir + L"\\"; // loose files only as a fallback
+    if (!g->textFonts) g->textFonts = LoadFonts({dir + L"Outfit-200.ttf", dir + L"Outfit-300.ttf", dir + L"Outfit-400.ttf", // one file per Weight value
                                    dir + L"Outfit-500.ttf", dir + L"Outfit-600.ttf"});
-    g->iconLine = LoadFonts({dir + L"SymbolsOutline.ttf"});
-    g->iconFill = LoadFonts({dir + L"SymbolsFilled.ttf"});
+    if (!g->iconLine) g->iconLine = LoadFonts({dir + L"SymbolsOutline.ttf"});
+    if (!g->iconFill) g->iconFill = LoadFonts({dir + L"SymbolsFilled.ttf"});
     if (g->textFonts) g->textFam = FirstFam(g->textFonts.Get(), L"Outfit");
     g->lineFam = FirstFam(g->iconLine.Get(), nullptr); // icon fonts have one family, take it
     g->fillFam = FirstFam(g->iconFill.Get(), nullptr);
@@ -103,6 +140,7 @@ bool Init(const std::wstring& fontDir) {
 }
 
 void Shutdown() {
+    if (g && g->mem) g->dw->UnregisterFontFileLoader(g->mem.Get());
     delete g;
     g = nullptr;
 }

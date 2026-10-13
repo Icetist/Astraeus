@@ -24,6 +24,7 @@ struct Config {
 
     bool weather = true;
     bool fahr = false;
+    bool autoUpdate = true; // install new github releases silently
 
     std::vector<std::wstring> warns; // parse problems, shown to user, never fatal
 

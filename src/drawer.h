@@ -23,11 +23,12 @@ public:
     HWND Hwnd() const { return hwnd; }
     const Theme& Shell() const { return shellNow; } // current palette, tray menu matches it
     void Toggle();
-    void Peek(const std::wstring& title, const std::wstring& detail); // brief notification drop
+    void Peek(const std::wstring& title, const std::wstring& detail, int icon = 0); // brief notification drop, 0 = timer icon
     void SetFull(bool on); // fullscreen app present, stay out of the way
     void SyncHide();
     void OnSecond();
 
+    bool Busy() const { return opened || peeking || dragging; } // user is looking, don't restart now
     bool NeedsFrame() const { return needsFrame; } // main loop polls this to keep rendering
     HANDLE FrameWait() const { return frameWait; } // swapchain waitable, paces to vsync
     void Frame();
@@ -83,6 +84,7 @@ private:
     anim::Spring spring;
     bool opened = false, dragging = false, peeking = false;
     std::wstring peekTitle, peekDetail;
+    int peekIcon = 0;
     float dragOff = 0, dragY0 = 0, dragY = 0, dragVel = 0, pressTo = 0; // drag state, vel for fling
     double dragT = 0;
 

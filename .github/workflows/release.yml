@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag matches version.h
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path src/version.h -Pattern '#define APP_VER_STR "(.+)"').Matches[0].Groups[1].Value
+          if ("v$v" -ne "${{ github.ref_name }}") { Write-Error "tag ${{ github.ref_name }} does not match version.h ($v)"; exit 1 }
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build
+        shell: cmd
+        run: |
+          mkdir build\obj || exit /b 1
+          rc /nologo /fo build\obj\app.res res\app.rc || exit /b 1
+          cl /nologo /std:c++20 /O2 /GL /Gw /EHsc /MT /W4 /permissive- /utf-8 /MP /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX /Fo:build\obj\ src\*.cpp build\obj\app.res /Fe:build\Astraeus.exe /link /LTCG /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF user32.lib gdi32.lib shell32.lib shlwapi.lib ole32.lib oleaut32.lib advapi32.lib dwmapi.lib d2d1.lib d3d11.lib dxgi.lib dxguid.lib dwrite.lib dcomp.lib windowscodecs.lib pdh.lib iphlpapi.lib wlanapi.lib winhttp.lib bthprops.lib powrprof.lib wbemuuid.lib ntdll.lib windowsapp.lib || exit /b 1
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: build/Astraeus.exe

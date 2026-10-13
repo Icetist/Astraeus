@@ -8,10 +8,6 @@
 
 namespace sys {
 
-namespace detail {  // shared winhttp helpers from sys_net.cpp
-bool HttpGet(const wchar_t* url, std::string& body, std::atomic<bool>& stop, std::atomic<void*>& slot);
-void HttpCancel(std::atomic<bool>& stop, std::atomic<void*>& slot);
-}
 
 namespace {
 

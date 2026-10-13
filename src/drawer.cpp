@@ -165,7 +165,8 @@ void Drawer::SetPage(int p) {
     Redraw();
 }
 
-void Drawer::Peek(const std::wstring& title, const std::wstring& detail) {
+void Drawer::Peek(const std::wstring& title, const std::wstring& detail, int icon) {
+    peekIcon = icon;
     peekTitle = title;
     peekDetail = detail;
     if (opened) {

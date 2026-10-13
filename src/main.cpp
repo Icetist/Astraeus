@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <shlwapi.h>
 
 #include <memory>
@@ -10,7 +11,9 @@
 #include "drawer.h"
 #include "gfx.h"
 #include "model.h"
+#include "glyphs.h"
 #include "tray.h"
+#include "version.h"
 
 namespace {
 
@@ -29,6 +32,9 @@ struct App {
     UINT tbMsg = 0; // TaskbarCreated, explorer restarted
     bool appbar = false; // registered for fullscreen notices
     HANDLE mutex = nullptr; // single instance guard
+    sys::Updater updater;
+    unsigned ticks = 0; // seconds since launch, schedules update checks
+    bool restartPending = false; // new exe swapped in, restart once idle
 };
 
 App* app = nullptr; // global so window procs can reach it
@@ -45,30 +51,81 @@ void Log(const std::wstring& s) {
     CloseHandle(f);
 }
 
-bool StartupOn() {
+std::wstring InstallDir() { // %LOCALAPPDATA%\Programs\Astraeus, per-user, no admin needed
+    wchar_t* base = nullptr;
+    std::wstring dir;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_UserProgramFiles, 0, nullptr, &base))) dir = std::wstring(base) + L"\\Astraeus";
+    CoTaskMemFree(base);
+    return dir;
+}
+
+bool CopyIfChanged(const std::wstring& from, const std::wstring& to) {
+    WIN32_FILE_ATTRIBUTE_DATA a, b;
+    if (!GetFileAttributesExW(from.c_str(), GetFileExInfoStandard, &a)) return false;
+    if (GetFileAttributesExW(to.c_str(), GetFileExInfoStandard, &b) && CompareFileTime(&a.ftLastWriteTime, &b.ftLastWriteTime) <= 0)
+        return true; // target same or newer (e.g. auto-updated), keep it
+    return CopyFileW(from.c_str(), to.c_str(), FALSE) != FALSE;
+}
+
+bool Install(const std::wstring& dst) { // copy the exe (fonts are inside it) so boot never depends on the build folder
+    if (dst.empty()) return false;
+    int r = SHCreateDirectoryExW(nullptr, dst.c_str(), nullptr); // creates parents too
+    if (r != ERROR_SUCCESS && r != ERROR_ALREADY_EXISTS && r != ERROR_FILE_EXISTS) return false;
+    if (!CopyIfChanged(app->exePath, dst + L"\\Astraeus.exe")) return false;
+    std::wstring ini = dst + L"\\astraeus.ini";
+    if (GetFileAttributesW(ini.c_str()) == INVALID_FILE_ATTRIBUTES) CopyFileW(app->cfgPath.c_str(), ini.c_str(), TRUE); // carry settings over once, never clobber
+    return true;
+}
+
+std::wstring BootExe() { // exe the run key launches at sign-in, unquoted, empty if none
     wchar_t value[MAX_PATH * 2];
     DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER, kRunKey, L"Astraeus", RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS) return false;
-    if (_wcsicmp(value, (L"\"" + app->exePath + L"\"").c_str()) != 0) return false; // stale path, exe moved
+    if (RegGetValueW(HKEY_CURRENT_USER, kRunKey, L"Astraeus", RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS) return L"";
+    std::wstring v = value;
+    if (v.size() >= 2 && v.front() == L'"') v = v.substr(1, v.find(L'"', 1) - 1); // strip quotes
+    return v;
+}
+
+bool StartupOn() { // any existing copy counts, wherever it lives
+    std::wstring exe = BootExe();
+    if (exe.empty() || GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES) return false; // no entry, or exe deleted
     BYTE flags[12] = {};
-    size = sizeof(flags);
+    DWORD size = sizeof(flags);
     if (RegGetValueW(HKEY_CURRENT_USER, kApprovedKey, L"Astraeus", RRF_RT_REG_BINARY, nullptr, flags, &size) == ERROR_SUCCESS)
         return (flags[0] & 1) == 0; // settings > startup toggle: odd first byte = disabled
     return true;
 }
 
+void SetBoot(const std::wstring& exe) { // point the run key at exe and clear any settings disable
+    std::wstring cmd = L"\"" + exe + L"\""; // quoted for paths with spaces
+    RegSetKeyValueW(HKEY_CURRENT_USER, kRunKey, L"Astraeus", REG_SZ, cmd.c_str(), (DWORD)((cmd.size() + 1) * sizeof(wchar_t)));
+    BYTE flags[12] = {2}; // 2 = enabled
+    RegSetKeyValueW(HKEY_CURRENT_USER, kApprovedKey, L"Astraeus", REG_BINARY, flags, sizeof(flags));
+}
+
+void Restart(const std::wstring& exe);
 void SetStartup(bool on) {
-    HKEY key;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_SET_VALUE, &key) != ERROR_SUCCESS) return;
-    if (on) {
-        std::wstring cmd = L"\"" + app->exePath + L"\""; // quoted for paths with spaces
-        RegSetValueExW(key, L"Astraeus", 0, REG_SZ, (const BYTE*)cmd.c_str(), (DWORD)((cmd.size() + 1) * sizeof(wchar_t))); // byte size incl null
-        BYTE flags[12] = {2}; // 2 = enabled, clears a disable from settings
-        RegSetKeyValueW(HKEY_CURRENT_USER, kApprovedKey, L"Astraeus", REG_BINARY, flags, sizeof(flags));
-    } else {
-        RegDeleteValueW(key, L"Astraeus");
+    std::wstring dst = InstallDir();
+    if (!on) {
+        RegDeleteKeyValueW(HKEY_CURRENT_USER, kRunKey, L"Astraeus");
+        return;
     }
-    RegCloseKey(key);
+    if (!Install(dst)) { // nothing safe to point at
+        Log(L"Could not copy Astraeus to " + dst);
+        return;
+    }
+    SetBoot(dst + L"\\Astraeus.exe");
+    if (_wcsicmp(app->dir.c_str(), dst.c_str()) != 0) Restart(dst + L"\\Astraeus.exe"); // switch over to the installed copy
+}
+
+void SyncBoot() { // launch-time housekeeping once startup is known to be on
+    std::wstring dst = InstallDir(), inst = dst + L"\\Astraeus.exe", boot = BootExe();
+    if (_wcsicmp(app->dir.c_str(), dst.c_str()) == 0) return; // we are the installed copy
+    if (_wcsicmp(boot.c_str(), app->exePath.c_str()) == 0) { // entry points at this build folder: move it somewhere safe
+        if (Install(dst)) SetBoot(inst);
+    } else if (_wcsicmp(boot.c_str(), inst.c_str()) == 0) {
+        Install(dst); // newer build run: refresh the boot copy
+    } // else a copy the user placed elsewhere, leave it alone
 }
 
 void AddTray() {
@@ -106,13 +163,13 @@ void ShowMenu() {
     tray::Show(app->host, app->drawer->Shell(), StartupOn()); // themed popup, picks arrive as WM_COMMAND
 }
 
-void Restart() {
+void Restart(const std::wstring& exe) {
     if (app->mutex) {
         ReleaseMutex(app->mutex); // free guard so new instance can start
         CloseHandle(app->mutex);
         app->mutex = nullptr;
     }
-    ShellExecuteW(nullptr, L"open", app->exePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL); // relaunch self, then quit
+    ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL); // relaunch self, then quit
     PostQuitMessage(0);
 }
 
@@ -125,6 +182,10 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_TIMER:
         if (wp == kSecTimer && app->model) {
             app->model->Tick(); // refresh stats, clock, timer
+            ++app->ticks;
+            if (app->cfg.autoUpdate && (app->ticks == 30 || app->ticks % 43200 == 0)) // 30s after launch, then every 12h
+                app->updater.Check(app->host, WM_APP_UPDATE);
+            if (app->restartPending && !app->drawer->Busy()) Restart(app->exePath); // never yank the panel away mid-use
             app->drawer->OnSecond();
             if (app->model->TimerDone()) { // countdown just hit zero
                 std::wstring detail = std::to_wstring(app->model->TimerMins()) + L" min timer is up";
@@ -133,6 +194,9 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 Notify(L"Timer finished", detail.c_str()); // plus system toast
             }
         }
+        return 0;
+    case WM_APP_UPDATE:
+        app->restartPending = true;
         return 0;
     case WM_APP_TRAY:
         if (LOWORD(lp) == WM_LBUTTONUP) app->drawer->Toggle(); // left click opens/closes
@@ -146,7 +210,7 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case kOpen: app->drawer->Toggle(); break;
         case kConfig: ShellExecuteW(nullptr, L"open", L"notepad.exe", (L"\"" + app->cfgPath + L"\"").c_str(), nullptr, SW_SHOWNORMAL); break; // edit ini in notepad
         case kStartup: SetStartup(!StartupOn()); break;
-        case kRestart: Restart(); break;
+        case kRestart: Restart(app->exePath); break;
         case kExit: PostQuitMessage(0); break;
         }
         return 0;
@@ -240,6 +304,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     }
     state.model->Start(state.drawer->Hwnd()); // background pollers post to drawer
     if (!StartupOn()) tray::Ask(app->host, state.drawer->Shell()); // asks every launch while off
+    else SyncBoot();
+    if (sys::FinishUpdate()) state.drawer->Peek(L"Astraeus updated", L"Now on version " APP_VER_W, glyph::Sparkle); // first run after a swap
     SetProcessWorkingSetSizeEx(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1, 0); // trim startup memory
 
     Run();

@@ -16,7 +16,6 @@ namespace sys {
 
 namespace detail {
 
-constexpr size_t kMaxBody = 256 * 1024;  // cap response to avoid runaway memory
 constexpr int kResolveMs = 10000;  // dns timeout
 constexpr int kConnMs = 10000;
 constexpr int kSendMs = 10000;
@@ -59,14 +58,14 @@ private:
     std::atomic<void*>& slot_;
 };
 
-bool ReadBody(HINTERNET req, std::string& body, const LiveReq& active) {
+bool ReadBody(HINTERNET req, std::string& body, const LiveReq& active, size_t maxBytes) {
     char chunk[8192];
     for (;;) {
         if (active.Cancelled()) return false;  // check between chunks
         DWORD read = 0;
         if (!WinHttpReadData(req, chunk, sizeof(chunk), &read)) return false;  // fails if handle closed by cancel
         if (read == 0) return true;  // zero bytes = end of body
-        if (body.size() + read > kMaxBody) return false;  // too big, treat as error
+        if (body.size() + read > maxBytes) return false;  // too big, treat as error
         body.append(chunk, read);
     }
 }
@@ -78,7 +77,7 @@ void HttpCancel(std::atomic<bool>& stop, std::atomic<void*>& slot) {
     if (void* h = slot.exchange(nullptr)) WinHttpCloseHandle(static_cast<HINTERNET>(h));  // cancel closes handle to unblock read
 }
 
-bool HttpGet(const wchar_t* url, std::string& body, std::atomic<bool>& stop, std::atomic<void*>& slot) {
+bool HttpGet(const wchar_t* url, std::string& body, std::atomic<bool>& stop, std::atomic<void*>& slot, size_t maxBytes) {
     body.clear();
     if (!url || stop.load()) return false;
 
@@ -129,7 +128,7 @@ bool HttpGet(const wchar_t* url, std::string& body, std::atomic<bool>& stop, std
         LogHttp(L"status", status);
         return false;
     }
-    return ReadBody(req, body, active) && !body.empty();  // empty body counts as failure
+    return ReadBody(req, body, active, maxBytes) && !body.empty();  // empty body counts as failure
 }
 
 }

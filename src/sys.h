@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -154,6 +155,26 @@ void SignOut();
 }
 
 bool CaptureOn(const RECT& monitor);
+
+namespace detail { // winhttp get shared by weather, wan ip, updater
+bool HttpGet(const wchar_t* url, std::string& body, std::atomic<bool>& stop, std::atomic<void*>& slot,
+             size_t maxBytes = 256 * 1024);
+void HttpCancel(std::atomic<bool>& stop, std::atomic<void*>& slot);
+}
+
+class Updater { // checks github releases, swaps in a newer exe
+public:
+    Updater();
+    ~Updater();
+    Updater(const Updater&) = delete;
+    Updater& operator=(const Updater&) = delete;
+    void Check(HWND notify, UINT msg); // background, posts msg once the new exe is in place
+    std::wstring Applied() const; // tag that was installed
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl;
+};
+bool FinishUpdate(); // at launch: clean up, true right after an update
 
 bool ReadFlag(const wchar_t* name, bool fallback);  // persisted setting, fallback if missing
 void SaveFlag(const wchar_t* name, bool on);

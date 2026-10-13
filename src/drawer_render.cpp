@@ -259,7 +259,7 @@ void Drawer::DrawPeek(float h) {
     if (a <= 0) return;
     float cx = W / 2, cy = h / 2 + 2;
     canvas->Dot({cx - 112, cy}, 17, t.accent.Alpha(0.18f * a));
-    canvas->Icon(glyph::Timer, {cx - 112, cy}, 21, t.accentHi.Alpha(a), true);
+    canvas->Icon(peekIcon ? peekIcon : glyph::Timer, {cx - 112, cy}, 21, t.accentHi.Alpha(a), true);
     canvas->Text(peekTitle, Rect(cx - 84, cy - 20, 240, 22), Weight::Medium, 15, t.text.Alpha(a));
     canvas->Text(peekDetail, Rect(cx - 84, cy + 1, 240, 18), Weight::Light, 12.5f, t.textDim.Alpha(a));
 }

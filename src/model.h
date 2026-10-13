@@ -21,6 +21,7 @@ enum : UINT { // posted to ui thread by services/worker
     WM_APP_APPBAR,
     WM_APP_STATS,
     WM_APP_BT,
+    WM_APP_UPDATE,
 };
 
 class Hist { // fixed-size rolling graph history
