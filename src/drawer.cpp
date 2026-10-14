@@ -132,10 +132,7 @@ void Drawer::SetFull(bool on) {
 }
 
 void Drawer::SyncHide() {
-    bool hide = fullApp && !(model.recShow && sys::CaptureOn(monitor)); // stay visible over fullscreen if recording indicator wanted
-    if (!hide && fullApp && !opened) {
-        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); // fullscreen app may have covered us
-    }
+    bool hide = fullApp;
     if (hide == hidden) return;
     hidden = hide;
     if (hide) {
@@ -149,7 +146,6 @@ void Drawer::SyncHide() {
 }
 
 void Drawer::OnSecond() {
-    if (fullApp) SyncHide(); // capture state can change any time
     if (!opened) return;
     model.ReadAudio(); // volume only matters when visible
     Redraw();

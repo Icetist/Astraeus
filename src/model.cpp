@@ -12,12 +12,7 @@ unsigned long long Ticks(const FILETIME& f) { // filetime -> 100ns count
 
 }
 
-namespace {
-constexpr wchar_t kRecShow[] = L"ShowWhileRecording";
-}
-
-Model::Model(const Config& c)
-    : cfg(c), portable(sys::IsPortable()), recShow(sys::ReadFlag(kRecShow, true)) {} // default: visible in captures
+Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()) {}
 
 Model::~Model() {
     {
@@ -181,11 +176,6 @@ void Model::SetBright(float v) {
 void Model::SetAwake(bool on) {
     awake = on;
     sys::SetAwake(on);
-}
-
-void Model::SetRecShow(bool on) {
-    recShow = on;
-    sys::SaveFlag(kRecShow, on);
 }
 
 namespace {

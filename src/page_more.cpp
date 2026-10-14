@@ -218,7 +218,7 @@ void DrawTools(PageCtx& p) {
 
     D2D1_RECT_F quick = D2D1_RECT_F{timer.right + 12, timer.top, a.right, a.bottom};
     float tw = (Width(quick) - 10) / 2, th = (Height(quick) - 10) / 2; // 2x2 quick grid, 10px gaps
-    int top = m.portable ? 3 : 2; // laptops fit awake in the top row too
+    int top = m.portable ? 2 : 1; // laptops fit awake in the top row too
     float cw = (Width(quick) - 10 * (top - 1)) / top;
     if (w::Tile(ui, t, Ui::Id("tl.snip"), Rect(quick.left, quick.top, cw, th), glyph::Snip, L"Screenshot", L"Pick a region", false)) {
         p.wantClose = true; // hide drawer so it's not in the snip
@@ -227,9 +227,6 @@ void DrawTools(PageCtx& p) {
     if (m.portable && w::Tile(ui, t, Ui::Id("tl.awake"), Rect(quick.left + cw + 10, quick.top, cw, th), glyph::Coffee, L"Awake",
                               m.awake ? L"Screen stays on" : L"Off", m.awake))
         m.SetAwake(!m.awake);
-    if (w::Tile(ui, t, Ui::Id("tl.rec"), Rect(quick.right - cw, quick.top, cw, th), m.recShow ? glyph::Cam : glyph::CamOff,
-                L"Recordings", m.recShow ? L"Bezel shown" : L"Bezel hidden", m.recShow)) // show bezel while screen recording
-        m.SetRecShow(!m.recShow);
     if (w::Tile(ui, t, Ui::Id("tl.taskmgr"), Rect(quick.left, quick.top + th + 10, tw, th), glyph::System, L"Task Manager", L"Processes", false)) {
         p.wantClose = true;
         sys::OpenUri(L"taskmgr.exe");

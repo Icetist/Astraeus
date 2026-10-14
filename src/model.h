@@ -73,7 +73,6 @@ public:
     void ToggleMic();
     void SetBright(float v);
     void SetAwake(bool on);
-    void SetRecShow(bool on);
     void CyclePower();
     void CycleOut();
 
@@ -117,7 +116,6 @@ public:
     int brightPct = -1; // -1 hides brightness slider
 
     bool awake = false;
-    bool recShow; // stay visible to screen capture, persisted
     bool timerOn = false;
 
 private:

@@ -154,8 +154,6 @@ void Shutdown();
 void SignOut();
 }
 
-bool CaptureOn(const RECT& monitor);
-
 namespace detail { // winhttp get shared by weather, wan ip, updater
 bool HttpGet(const wchar_t* url, std::string& body, std::atomic<bool>& stop, std::atomic<void*>& slot,
              size_t maxBytes = 256 * 1024);
@@ -175,9 +173,6 @@ private:
     std::unique_ptr<Impl> impl;
 };
 bool FinishUpdate(); // at launch: clean up, true right after an update
-
-bool ReadFlag(const wchar_t* name, bool fallback);  // persisted setting, fallback if missing
-void SaveFlag(const wchar_t* name, bool on);
 
 void SetEco(bool on); // efficiency mode + low memory priority while idle
 void SetAwake(bool on);  // keep display awake

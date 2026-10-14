@@ -39,7 +39,7 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 - **Tools:** lock, sleep, sign out, restart and shut down (destructive actions are press-and-hold), a timer with notifications, a screenshot shortcut and keep-awake.
 - **Weather** for your location, in Celsius or Fahrenheit.
 - **Colors that follow you.** The palette is pulled from your wallpaper, or from the album art of whatever is playing.
-- **Gets out of the way.** Hides itself when a game or video goes fullscreen, and can optionally stay visible in screen recordings.
+- **Gets out of the way.** Hides itself when a game or video goes fullscreen.
 - **Stays up to date.** New releases install themselves silently in the background.
 - **Lightweight.** Nothing renders while the panel is closed, the GPU is released after a few seconds and the process drops into Windows efficiency mode.
 

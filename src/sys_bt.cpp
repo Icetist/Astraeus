@@ -44,9 +44,11 @@ constexpr wchar_t kAddr[] = L"System.Devices.Aep.DeviceAddress"; // aa:bb:cc:dd:
 constexpr wchar_t kMajor[] = L"System.Devices.Aep.Bluetooth.Cod.Major"; // classic device class
 constexpr wchar_t kMinor[] = L"System.Devices.Aep.Bluetooth.Cod.Minor";
 constexpr wchar_t kLeCat[] = L"System.Devices.Aep.Bluetooth.Le.Appearance.Category"; // le device class
-constexpr uint64_t kOpMs = 10000; // give up showing "connecting" after 10s
+constexpr uint64_t kOpMs = 15000; // give up showing "connecting" after 15s, room for one audio resend
 constexpr auto kScanFor = std::chrono::seconds(40); // scanning drains power, auto stop
 constexpr DWORD kCycleMs = 600; // gap between service off and on
+constexpr auto kAudioPoll = std::chrono::milliseconds(250); // how often to check whether the link flipped
+constexpr int kAudioResend = 20; // polls between driver requests, ~5s: one takes 3-4s to land, resending sooner restarts it
 const GUID kBtAudioSet = {0x7fa06c40, 0xb8f6, 0x4c7e, {0x85, 0x56, 0xe8, 0xc3, 0x3a, 0x12, 0xe5, 0x4d}}; // KSPROPSETID_BtAudio
 constexpr ULONG kKsGet = 1; // KSPROPERTY_TYPE_GET
 constexpr DWORD kIoctlKsProperty = 0x2F0003; // CTL_CODE(FILE_DEVICE_KS, 0, METHOD_NEITHER, FILE_ANY_ACCESS)
@@ -434,12 +436,33 @@ struct Bt::Impl : std::enable_shared_from_this<Bt::Impl> {
         StopWatch(b);
     }
 
+    enum class Op { Waiting, Done, Dropped };
+
+    Op OpState(const std::wstring& id, bool on) {
+        std::lock_guard lock(mu);
+        BtDev* x = Find(id);
+        if (!x || x->want != on || x->until <= GetTickCount64()) return Op::Dropped; // gone, superseded or timed out
+        return x->on == on ? Op::Done : Op::Waiting;
+    }
+
+    WF::IAsyncOperation<bool> AudioLink(BtDev d, bool on) { // driver is missing right after pairing and ignores requests while the link settles: resend until it flips
+        auto self = shared_from_this();
+        bool sent = false;
+        for (int tick = 0;; ++tick) {
+            if (tick % kAudioResend == 0 && (KsToggle(d.mac, on) || KsDirect(d.mac, on))) sent = true;
+            co_await winrt::resume_after(kAudioPoll);
+            Op st = OpState(d.id, on);
+            if (st == Op::Done) co_return true;
+            if (st == Op::Dropped) co_return sent; // deadline or newer op; unsent lets Link try other paths
+        }
+    }
+
     winrt::fire_and_forget Link(BtDev d, bool on) {
         auto self = shared_from_this();
         co_await winrt::resume_background(); // driver calls block, keep off ui thread
         bool ok = false;
         try {
-            if (d.audio) ok = KsToggle(d.mac, on) || KsDirect(d.mac, on); // headphones, speakers
+            if (d.audio) ok = co_await AudioLink(d, on); // headphones, speakers
             if (!ok && d.le) ok = on ? co_await HoldLe(d.id) : DropLe(d.id);
             else if (!ok && on) ok = co_await PageClassic(d.id);
             else if (!ok && !d.audio) ok = CycleServices(d.mac); // never on audio: it drops sound with no way back
@@ -448,7 +471,7 @@ struct Bt::Impl : std::enable_shared_from_this<Bt::Impl> {
         }
         if (!ok) { // nothing happened, stop the spinner now
             std::lock_guard lock(mu);
-            if (BtDev* x = Find(d.id)) x->until = 0;
+            if (BtDev* x = Find(d.id); x && x->want == on) x->until = 0; // a newer op owns the spinner otherwise
         }
         Ping();
     }
