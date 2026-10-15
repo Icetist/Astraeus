@@ -99,19 +99,62 @@ std::wstring WallPath() {
 Theme Theme::From(Seed seed) {
     using theme::Hsl;
     float h = seed.hue;
-    float k = Clamp(seed.chroma * 1.4f, 0.12f, 1.0f); // boost dull seeds, keep a hint of tint
+    float k = seed.chroma < 0.08f ? 0.0f : Clamp(seed.chroma * 1.4f, 0.12f, 1.0f); // boost dull seeds, keep a hint of tint; colorless stays neutral grey
     Theme t;
-    t.accent = Hsl(h, (std::max)(0.62f, 0.85f * k), 0.71f); // accents keep min sat so they always pop
-    t.accentHi = Hsl(h, (std::max)(0.72f, 0.95f * k), 0.83f);
-    t.onAccent = Hsl(h, 0.50f * k, 0.09f);
-    t.text = Hsl(h, 0.12f * k, 0.94f); // near white, faintly tinted
-    t.textDim = Hsl(h, 0.10f * k, 0.66f);
-    t.textLow = Hsl(h, 0.08f * k, 0.40f);
-    t.card = Hsl(h, 0.32f * k, 0.052f); // very dark surfaces, lightness ramps card < cardHi < track
-    t.cardHi = Hsl(h, 0.26f * k, 0.095f);
-    t.track = Hsl(h, 0.20f * k, 0.155f);
-    t.hairTop = Color{1, 1, 1, 0.11f}; // neutral white hairlines, work on any hue
-    t.hairBot = Color{1, 1, 1, 0.02f};
+    if (seed.look == 1) { // same roles, lightness ramps flipped: dark ink on pale tinted surfaces
+        t.accent = Hsl(h, (std::max)(0.55f, 0.80f * k), 0.47f); // deep enough to read on pale cards and carry white ink
+        t.accentHi = Hsl(h, (std::max)(0.65f, 0.90f * k), 0.38f); // "hi" = more emphasis, so darker here
+        t.onAccent = Hsl(h, 0.30f * k, 0.98f);
+        t.text = Hsl(h, 0.20f * k, 0.11f); // near black, faintly tinted
+        t.textDim = Hsl(h, 0.12f * k, 0.36f);
+        t.textLow = Hsl(h, 0.10f * k, 0.56f);
+        t.card = Hsl(h, 0.30f * k, 0.975f); // cards sit a step above the body
+        t.cardHi = Hsl(h, 0.28f * k, 0.935f);
+        t.track = Hsl(h, 0.22f * k, 0.86f);
+        t.hairTop = Color{0, 0, 0, 0.10f};
+        t.hairBot = Color{0, 0, 0, 0.04f};
+        t.bg = Hsl(h, 0.22f * k, 0.925f);
+        t.line = Color{0, 0, 0, 0.08f};
+        t.sheen = Color{1, 1, 1, 0.55f};
+        t.veil = Hsl(h, 0.20f * k, 0.97f);
+    } else {
+        t.accent = Hsl(h, (std::max)(0.62f, 0.85f * k), 0.71f); // accents keep min sat so they always pop
+        t.accentHi = Hsl(h, (std::max)(0.72f, 0.95f * k), 0.83f);
+        t.onAccent = Hsl(h, 0.50f * k, 0.09f);
+        t.text = Hsl(h, 0.12f * k, 0.94f); // near white, faintly tinted
+        t.textDim = Hsl(h, 0.10f * k, 0.66f);
+        t.textLow = Hsl(h, 0.08f * k, 0.40f);
+        t.card = Hsl(h, 0.32f * k, 0.052f); // very dark surfaces, lightness ramps card < cardHi < track
+        t.cardHi = Hsl(h, 0.26f * k, 0.095f);
+        t.track = Hsl(h, 0.20f * k, 0.155f);
+        t.hairTop = Color{1, 1, 1, 0.11f}; // neutral white hairlines, work on any hue
+        t.hairBot = Color{1, 1, 1, 0.02f};
+        t.bg = Color{0, 0, 0, 1}; // black blends with the screen bezel
+        t.line = Color{1, 1, 1, 0.06f};
+        t.sheen = Color{1, 1, 1, 0.035f};
+        t.veil = Color{0, 0, 0, 1};
+    }
+    if (seed.look == 2) { // liquid glass: clear tinted surfaces over the blur, glossy light on every edge
+        t.text = Hsl(h, 0.08f * k, 0.98f);
+        t.textDim = Hsl(h, 0.10f * k, 0.84f); // brighter than dark mode, the background shows through
+        t.textLow = Hsl(h, 0.08f * k, 0.64f);
+        t.card = Hsl(h, 0.25f * k, 0.92f).Alpha(0.10f); // clear glass pieces, not solid cards
+        t.cardHi = Hsl(h, 0.25f * k, 0.92f).Alpha(0.17f);
+        t.track = Color{1, 1, 1, 0.20f};
+        t.hairTop = Color{1, 1, 1, 0.38f}; // specular edge, light catching the top of each piece
+        t.hairBot = Color{1, 1, 1, 0.08f};
+        t.bg = Hsl(h, 0.45f * k, 0.10f).Alpha(0.30f); // light tinted wash: the blur stays visible, white text stays readable
+        t.line = Color{1, 1, 1, 0.14f};
+        t.sheen = Color{1, 1, 1, 0.16f}; // glossy band at the top of every surface
+        t.veil = Hsl(h, 0.30f * k, 0.06f);
+        t.glass = true;
+    }
+    if (seed.chroma < 0.08f) { // black and white art or wallpaper: a colored accent would invent a mood that isn't there
+        bool lightLook = seed.look == 1;
+        t.accent = Hsl(h, 0, lightLook ? 0.20f : 0.86f);
+        t.accentHi = Hsl(h, 0, lightLook ? 0.08f : 0.97f);
+        t.onAccent = Hsl(h, 0, lightLook ? 0.98f : 0.07f);
+    }
     t.glow = t.accent.Alpha(0.20f);
     return t;
 }
@@ -130,5 +173,10 @@ Theme Theme::Lerp(const Theme& o, float t) const {
     r.hairTop = hairTop.Mix(o.hairTop, t);
     r.hairBot = hairBot.Mix(o.hairBot, t);
     r.glow = glow.Mix(o.glow, t);
+    r.bg = bg.Mix(o.bg, t);
+    r.line = line.Mix(o.line, t);
+    r.sheen = sheen.Mix(o.sheen, t);
+    r.veil = veil.Mix(o.veil, t);
+    r.glass = t < 0.5f ? glass : o.glass;
     return r;
 }

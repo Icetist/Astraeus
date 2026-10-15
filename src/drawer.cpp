@@ -1,7 +1,14 @@
 #include "drawer.h"
+#include "glyphs.h"
 
 #include <dwmapi.h>
+#include <shellscalingapi.h>
 #include <windowsx.h>
+
+#include <algorithm>
+#include <cmath>
+
+#pragma comment(lib, "shcore.lib")
 
 namespace {
 
@@ -23,11 +30,18 @@ double Seconds() {
 Drawer::Drawer(const Config& c, Model& m) : cfg(c), model(m) {
     W = cfg.panW + 2 * cfg.fillet; // room for curved shoulders on both sides
     H = cfg.panH;
-    Seed seed = cfg.wallTheme ? Seed{} : theme::FromCol(cfg.themeCol); // wallpaper theme fills in later
-    shellFrom = shellTo = shellNow = mediaFrom = mediaTo = mediaNow = Theme::From(seed);
+    accentModeNow = model.accentMode;
+    accentHexNow = model.accentHex;
+    shellSeed = mediaSeed = accentModeNow ? theme::FromCol(Color::Rgb((uint32_t)accentHexNow)) : Seed{}; // wallpaper theme fills in later
+    lookNow = model.look;
+    edgeNow = model.edge;
+    screensNow = model.screens;
+    screenNow = model.screen;
+    shellFrom = shellTo = shellNow = mediaFrom = mediaTo = mediaNow = Make(shellSeed);
 }
 
 Drawer::~Drawer() {
+    FreeStrips();
     FreeDev();
     if (hwnd) DestroyWindow(hwnd);
 }
@@ -44,7 +58,9 @@ bool Drawer::Create(HINSTANCE instance) {
     if (!hwnd) return false;
     BOOL off = TRUE;
     DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &off, sizeof(off)); // no dwm fade, we animate ourselves
+    if (!screensNow) mon = sys::FindScreen(screenNow); // the picked screen, primary if none or unplugged
     Place();
+    BuildStrips();
     SyncWall();
     shellNow = shellTo; // start on final colors, no fade at boot
     mediaNow = mediaTo;
@@ -53,22 +69,158 @@ bool Drawer::Create(HINSTANCE instance) {
 }
 
 void Drawer::Place() {
-    scale = GetDpiForWindow(hwnd) / 96.0f;
     MONITORINFO mi = {sizeof(mi)};
-    GetMonitorInfoW(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi); // primary monitor
+    if (!mon || !GetMonitorInfoW(mon, &mi)) { // primary, or the screen we were sent to is gone
+        mon = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+        GetMonitorInfoW(mon, &mi);
+    }
+    UINT dpiX = 96, dpiY = 96;
+    scale = SUCCEEDED(GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &dpiX, &dpiY)) ? dpiX / 96.0f : GetDpiForWindow(hwnd) / 96.0f; // the target screen's dpi
     monitor = mi.rcMonitor; // full rect, not work area, so it sits on the top edge
+    DWM_TIMING_INFO ti = {sizeof(ti)};
+    if (SUCCEEDED(DwmGetCompositionTimingInfo(nullptr, &ti)) && ti.rateRefresh.uiDenominator > 0) { // 144hz+ screens would otherwise run ambient at 72-120 fps
+        constexpr double kAmbientFps = 30;
+        double hz = (double)ti.rateRefresh.uiNumerator / ti.rateRefresh.uiDenominator;
+        ambientSync = (UINT)(std::clamp)((int)std::lround(hz / kAmbientFps), 1, 4); // dxgi caps sync interval at 4
+    }
+    sideH = (std::min)(kSideMaxH, (mi.rcMonitor.bottom - mi.rcMonitor.top) / scale - 2 * cfg.fillet - 60); // sidebar fits the screen
     Resize(winH > 0 ? winH : kStrip, false);
+}
+
+bool Drawer::MaximizedBelow() const {
+    POINT p;
+    GetCursorPos(&p);
+    RECT self = {};
+    GetWindowRect(hwnd, &self);
+    LONG in = (LONG)(24 * scale); // sample just inside the screen past our own window, never ourselves
+    POINT probe = edgeNow == 0 ? POINT{p.x, (std::max)(monitor.top + in, self.bottom + 2)}
+                : edgeNow == 1 ? POINT{(std::max)(monitor.left + in, self.right + 2), p.y}
+                               : POINT{(std::min)(monitor.right - in, self.left - 2), p.y};
+    HWND w = WindowFromPoint(probe); // what is just under the hot zone
+    HWND root = w ? GetAncestor(w, GA_ROOT) : nullptr;
+    if (!root || root == hwnd) return false;
+    wchar_t cls[32] = {};
+    GetClassNameW(root, cls, 32);
+    if (!wcscmp(cls, L"Progman") || !wcscmp(cls, L"WorkerW")) return false; // the desktop
+    if (IsZoomed(root)) return true;
+    RECT r;
+    MONITORINFO mi = {sizeof(mi)};
+    if (!GetWindowRect(root, &r) || !GetMonitorInfoW(MonitorFromWindow(root, MONITOR_DEFAULTTONULL), &mi)) return false;
+    bool spans = r.left <= mi.rcWork.left && r.right >= mi.rcWork.right && r.top <= mi.rcWork.top; // fills the screen from the top: maximized in all but name
+    return edgeNow == 0 ? spans : spans && r.bottom >= mi.rcWork.bottom;
+}
+
+void Drawer::ShowIsland() {
+    if (hidden || opened || peeking || !EnsureDev()) return;
+    KillTimer(hwnd, kReleaseTimer); // keep gpu alive
+    KillTimer(hwnd, kCloseTimer);
+    island = islandLook = true;
+    model.meter.Refresh(); // bind the level meter to the current output for the mini visualizer
+    Resize(kIslandH + overshoot, true); // room for the bounce, trimmed once it settles
+    spring.target = kIslandH;
+    spring.damp = 0.6f; // a little bounce, island style
+    Redraw();
+}
+
+float Drawer::DepthOf(D2D1_POINT_2F p) const {
+    return edgeNow == 0 ? p.y : edgeNow == 1 ? p.x : winH - p.x; // right edge: measured from the window's right side
+}
+
+D2D1_MATRIX_3X2_F Drawer::EdgeXform() const {
+    float off = -(Span() - winW) / 2; // the window may be shorter than the panel (strip, island), the shape stays centered in it
+    if (edgeNow == 1) return D2D1::Matrix3x2F(0, 1, 1, 0, 0, off); // left: depth runs along x
+    if (edgeNow == 2) return D2D1::Matrix3x2F(0, 1, -1, 0, winH, off); // right: depth runs leftwards from the window's right side
+    return D2D1::Matrix3x2F::Translation(off, 0);
+}
+
+void Drawer::ApplyPlace() {
+    edgeNow = model.edge;
+    screensNow = model.screens;
+    screenNow = model.screen;
+    if (!screensNow) mon = sys::FindScreen(screenNow); // one screen: the picked one, primary if none
+    FreeDev(); // swapchain is sized for the old edge
+    Place();
+    BuildStrips();
+    needsFrame = false;
+}
+
+constexpr UINT kAdoptMsg = WM_APP + 60; // a hover strip on another screen asks the panel to come over
+
+LRESULT CALLBACK Drawer::StripProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_MOUSEMOVE) { // hand the hover to the panel: it moves to this screen and takes it from there
+        HWND owner = (HWND)GetWindowLongPtrW(h, GWLP_USERDATA);
+        if (owner) PostMessageW(owner, kAdoptMsg, (WPARAM)MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), 0);
+        return 0;
+    }
+    if (msg == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+void Drawer::FreeStrips() {
+    for (HWND s : strips) DestroyWindow(s);
+    strips.clear();
+}
+
+void Drawer::BuildStrips() {
+    FreeStrips();
+    if (screensNow != 1) return; // primary only: nothing to add
+    static bool registered = false;
+    HINSTANCE inst = (HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE);
+    if (!registered) {
+        WNDCLASSEXW wc = {sizeof(wc)};
+        wc.lpfnWndProc = StripProc;
+        wc.hInstance = inst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.lpszClassName = L"AstraeusStrip";
+        registered = RegisterClassExW(&wc) != 0;
+    }
+    struct Ctx { Drawer* self; HINSTANCE inst; };
+    Ctx c{this, inst};
+    EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR m, HDC, LPRECT r, LPARAM lp) -> BOOL {
+        auto* c = reinterpret_cast<Ctx*>(lp);
+        Drawer* d = c->self;
+        if (m == d->mon) return TRUE; // the panel itself lives here
+        UINT dx = 96, dy = 96;
+        float s = SUCCEEDED(GetDpiForMonitor(m, MDT_EFFECTIVE_DPI, &dx, &dy)) ? dx / 96.0f : 1.0f;
+        int along = (int)(d->cfg.hoverW * s + 0.5f), deep = (std::max)(2, (int)(kStrip * s + 0.5f));
+        int x, y, w, h;
+        if (d->edgeNow == 0) { w = along, h = deep; x = r->left + (r->right - r->left - w) / 2; y = r->top; }
+        else { w = deep, h = along; x = d->edgeNow == 1 ? r->left : r->right - w; y = r->top + (r->bottom - r->top - h) / 2; }
+        HWND sw = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP, L"AstraeusStrip", L"",
+                                  WS_POPUP, x, y, w, h, nullptr, nullptr, c->inst, nullptr); // no surface, nothing drawn, just catches the mouse
+        if (sw) {
+            SetWindowLongPtrW(sw, GWLP_USERDATA, (LONG_PTR)d->hwnd);
+            ShowWindow(sw, SW_SHOWNOACTIVATE);
+            d->strips.push_back(sw);
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&c));
+}
+
+void Drawer::ReleaseLater() {
+    if (!opened && !peeking && spring.value <= 0 && cfg.gpuIdleSec > 0)
+        SetTimer(hwnd, kReleaseTimer, (UINT)cfg.gpuIdleSec * 1000, nullptr); // timer handler re-checks state
 }
 
 void Drawer::Resize(float hDip, bool topmost) {
     winH = hDip;
     bool idle = hDip <= kStrip + 0.01f;
     if (idle != eco) sys::SetEco(eco = idle); // throttle only while fully closed
-    float wDip = hDip <= kStrip + 0.01f ? (std::min)(W, cfg.hoverW) : W; // closed: only a small centered hot zone
-    int w = (int)(wDip * scale + 0.5f);
-    int h = (std::max)(2, (int)(hDip * scale + 0.5f)); // min 2px so strip stays hoverable
-    int x = monitor.left + (monitor.right - monitor.left - w) / 2;
-    SetWindowPos(hwnd, topmost ? HWND_TOPMOST : nullptr, x, monitor.top, w, h,
+    float along = idle ? (std::min)(Span(), cfg.hoverW) : islandLook && !opened ? IslandSpan() : Span(); // closed: small hot zone, island: just the pill
+    winW = along;
+    int a = (int)(along * scale + 0.5f);
+    int d = (std::max)(2, (int)(hDip * scale + 0.5f)); // min 2px so strip stays hoverable
+    int x, y, w, h;
+    if (edgeNow == 0) { // top: along = width, depth = height
+        w = a, h = d;
+        x = monitor.left + (monitor.right - monitor.left - w) / 2;
+        y = monitor.top;
+    } else { // left or right: along = height, depth = width, centered vertically
+        w = d, h = a;
+        x = edgeNow == 1 ? monitor.left : monitor.right - w;
+        y = monitor.top + (monitor.bottom - monitor.top - h) / 2;
+    }
+    SetWindowPos(hwnd, topmost ? HWND_TOPMOST : nullptr, x, y, w, h,
                  SWP_NOACTIVATE | (topmost ? 0 : SWP_NOZORDER)); // only re-raise z-order when opening
 }
 
@@ -92,6 +244,8 @@ bool Drawer::MouseIn() const {
 
 void Drawer::Open() {
     if (hidden) return;
+    grow = grow || islandLook; // expanding out of the island: width morphs as it drops
+    island = islandLook = false;
     if (!EnsureDev()) return; // gpu may have been freed while idle
     KillTimer(hwnd, kReleaseTimer); // keep gpu alive
     KillTimer(hwnd, kCloseTimer);
@@ -103,8 +257,8 @@ void Drawer::Open() {
         model.OnOpen();
         model.SetLive(true, page == 2); // fast polling only while visible, page 2 = media
     }
-    Resize(H + overshoot, true); // grow first so bounce isn't clipped
-    spring.target = H;
+    Resize(Depth() + overshoot, true); // grow first so bounce isn't clipped
+    spring.target = Depth();
     spring.damp = 0.62f; // underdamped, drips open with a bounce
     Redraw();
 }
@@ -114,7 +268,12 @@ void Drawer::Close() {
     KillTimer(hwnd, kPeekTimer);
     peeking = false;
     opened = false;
-    model.CloseBt(); // menu dies with the panel
+    island = false; // the island retracts with the same spring, its shape stays until it's gone
+    model.hexFocus = false;
+    SyncTyping(); // hand the keyboard back right away
+    model.CloseBt(); // menus die with the panel
+    model.CloseWifi();
+    model.CloseSettings();
     model.SetLive(false, false);
     spring.target = 0;
     spring.damp = 0.92f; // near critical, retract without bounce
@@ -136,10 +295,24 @@ void Drawer::SyncHide() {
     if (hide == hidden) return;
     hidden = hide;
     if (hide) {
-        opened = false;
+        KillTimer(hwnd, kHoverTimer);
+        KillTimer(hwnd, kCloseTimer);
+        KillTimer(hwnd, kPeekTimer);
+        armed = peeking = dragging = island = islandLook = grow = false;
+        if (GetCapture() == hwnd) ReleaseCapture(); // mid-drag when the game took over
+        if (opened) { // same teardown as Close, minus the animation
+            opened = false;
+            model.CloseBt();
+            model.CloseWifi();
+            model.CloseSettings();
+            model.SetLive(false, false);
+        }
         spring = anim::Spring{}; // reset instantly, no close anim
         Resize(kStrip, false);
+        ui.Forget();
         ShowWindow(hwnd, SW_HIDE);
+        needsFrame = false;
+        FreeDev(); // a game is fullscreen, give the gpu back now
     } else {
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     }
@@ -154,6 +327,8 @@ void Drawer::OnSecond() {
 void Drawer::SetPage(int p) {
     if (p == page) return;
     model.CloseBt();
+    model.CloseWifi();
+    model.CloseSettings();
     prevPage = page;
     page = p;
     pageT = 0;
@@ -170,9 +345,11 @@ void Drawer::Peek(const std::wstring& title, const std::wstring& detail, int ico
         return;
     }
     if (hidden || !EnsureDev()) return;
+    island = islandLook = grow = false; // a notice replaces the island
     peeking = true;
-    Resize(kPeekH + overshoot, true);
-    spring.target = kPeekH; // drop only a short banner
+    float reach = Side() ? kPeekSide : kPeekH; // on a side edge the banner needs room for its text
+    Resize(reach + overshoot, true);
+    spring.target = reach; // drop only a short banner
     spring.damp = 0.55f; // extra bouncy to catch the eye
     SetTimer(hwnd, kPeekTimer, 6000, nullptr); // auto retract after 6s
     Redraw();
@@ -188,7 +365,7 @@ void Drawer::StartDrag(float y) {
     dragVel = 0;
     spring.vel = 0; // finger takes over from spring
     KillTimer(hwnd, kCloseTimer);
-    Resize(H + overshoot, true); // full size so drag isn't clipped
+    Resize(Depth() + overshoot, true); // full size so drag isn't clipped
     Redraw();
 }
 
@@ -211,7 +388,7 @@ void Drawer::EndDrag() {
         return;
     }
     if (Seconds() - dragT > 0.12) dragVel = 0; // paused before release, no fling
-    bool open = dragVel > kFling || (dragVel > -kFling && spring.value > H * kOpenAt); // fling wins, else by position
+    bool open = dragVel > kFling || (dragVel > -kFling && spring.value > Depth() * kOpenAt); // fling wins, else by position
     spring.vel = dragVel; // hand off momentum to spring
     if (open) Open();
     else Close();
@@ -245,9 +422,10 @@ void Drawer::Perf(double drawSec) {
 
 float Drawer::Rubber(float raw) const {
     if (raw <= 0) return 0;
-    if (raw <= H) return raw;
-    float over = raw - H;
-    return H + overshoot * 0.8f * (1 - std::exp(-over / (overshoot * 2))); // rubber band past full height, caps at 80% of overshoot
+    float full = Depth();
+    if (raw <= full) return raw;
+    float over = raw - full;
+    return full + overshoot * 0.8f * (1 - std::exp(-over / (overshoot * 2))); // rubber band past full height, caps at 80% of overshoot
 }
 
 LRESULT CALLBACK Drawer::Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -268,22 +446,27 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         D2D1_POINT_2F p = ToDip(lp);
         TrackLeave();
         if (dragging) {
-            MoveDrag(p.y);
+            MoveDrag(DepthOf(p));
             return 0;
         }
         if (peeking) {
             Open(); // hovering a peek expands it
             return 0;
         }
-        if (!opened && spring.value < 1) { // on the closed strip
+        if (!opened && !islandLook && spring.value < 1) { // on the closed strip; the island handles its own hover
             if (cfg.hoverOpen && !armed) {
                 EnsureDev(); // warm up gpu during hover delay
-                SetTimer(hwnd, kHoverTimer, (UINT)cfg.hoverMs, nullptr); // open only if mouse lingers
+                islandNext = MaximizedBelow(); // one check per hover, nothing polls
+                SetTimer(hwnd, kHoverTimer, islandNext ? kIslandMs : (UINT)cfg.hoverMs, nullptr); // open only if mouse lingers
                 armed = true;
             }
             return 0;
         }
         KillTimer(hwnd, kCloseTimer); // back inside, cancel pending close
+        if (islandLook && !islandHot) { // entering the island: light up its expand hint
+            islandHot = true;
+            Redraw();
+        }
         input.mouse = p;
         D2D1_POINT_2F local = {p.x - cfg.fillet, p.y - (spring.value - H)}; // to panel space, panel slides down from -H
         if (ui.Captured() || ui.HitAt(local) != ui.Hovered()) Redraw(); // only redraw when hover target changes
@@ -293,15 +476,19 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         tracking = false;
         KillTimer(hwnd, kHoverTimer);
         armed = false;
+        islandHot = false;
         input.mouse = {-1e6f, -1e6f}; // park offscreen to clear hover
-        if (opened && !dragging && GetCapture() != hwnd) SetTimer(hwnd, kCloseTimer, (UINT)cfg.closeMs, nullptr); // close after grace period
+        if ((opened || island) && !dragging && GetCapture() != hwnd) SetTimer(hwnd, kCloseTimer, (UINT)cfg.closeMs, nullptr); // close after grace period
+        ReleaseLater(); // brushed the strip without opening: the hover warm-up made a device
         Redraw();
         return 0;
     case WM_TIMER:
         KillTimer(hwnd, wp); // all timers are one-shot
         if (wp == kHoverTimer) {
             armed = false;
-            if (MouseIn()) Open();
+            if (!MouseIn()) ReleaseLater();
+            else if (islandNext) ShowIsland(); // a maximized app below: the pill first, a tap opens the panel
+            else Open();
         } else if (wp == kCloseTimer) {
             if (!dragging && GetCapture() != hwnd && !MouseIn()) Close();
         } else if (wp == kReleaseTimer) {
@@ -311,10 +498,14 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_LBUTTONDOWN: {
+        if (island && !opened) { // tap the island: the full panel grows out of it
+            Open();
+            return 0;
+        }
         D2D1_POINT_2F p = ToDip(lp);
         SetCapture(hwnd); // keep getting moves outside window while held
         if (!opened && spring.value < 1) {
-            StartDrag(p.y); // pull down from strip
+            StartDrag(DepthOf(p)); // pull out from the strip
             return 0;
         }
         input.mouse = p;
@@ -322,7 +513,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         input.pressed = true;
         input.down = true;
         Frame(); // run ui now to see what was hit
-        if (ui.FreePress()) StartDrag(p.y); // press on empty area drags panel
+        if (ui.FreePress()) StartDrag(DepthOf(p)); // press on empty area drags panel
         return 0;
     }
     case WM_LBUTTONUP:
@@ -356,7 +547,10 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_DPICHANGED:
     case WM_DISPLAYCHANGE:
         FreeDev(); // swapchain size/dpi stale, rebuild lazily
+        if (!screensNow) mon = sys::FindScreen(screenNow); // the picked screen may have just been plugged back in
+        model.screenList.clear(); // settings re-reads the monitors next frame
         Place();
+        BuildStrips(); // screens may have come or gone
         return 0;
     case WM_APP_MEDIA:
         model.OnMedia();
@@ -378,6 +572,57 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         model.OnBt();
         Redraw();
         return 0;
+    case WM_APP_WIFI:
+        model.OnWifi();
+        Redraw();
+        return 0;
+    case kAdoptMsg: { // hovered the strip on another screen
+        HMONITOR m = (HMONITOR)wp;
+        if (!opened && !dragging && !peeking && spring.value <= 0.5f && m != mon) {
+            mon = m;
+            FreeDev(); // other screen, maybe other dpi
+            Place();
+            BuildStrips();
+        }
+        return 0;
+    }
+    case WM_APP_NOTIFY: { // a windows notification arrived and pills are on
+        sys::Toast toast;
+        if (model.notifyWatch.Pop(toast) && !opened) // open panel: don't interrupt
+            Peek(toast.title.empty() ? toast.app : toast.title, toast.body.empty() ? toast.app : toast.body, glyph::Sparkle);
+        return 0;
+    }
+    case WM_APP_SHARE:
+        model.OnShare();
+        Redraw();
+        return 0;
+    case WM_CHAR: // only reaches us while the hex field holds the keyboard
+        if (model.hexFocus) {
+            wchar_t ch = (wchar_t)wp;
+            if (ch == 22) { // ctrl+v
+                int rgb = 0;
+                if (Model::ParseHex(sys::ClipText(), rgb)) {
+                    wchar_t buf[8];
+                    swprintf_s(buf, L"%06X", rgb);
+                    model.hexEdit = buf;
+                }
+            } else if (ch == 8) {
+                if (!model.hexEdit.empty()) model.hexEdit.pop_back();
+            } else if (iswxdigit(ch) && model.hexEdit.size() < 6) {
+                model.hexEdit += (wchar_t)towupper(ch);
+            }
+            Redraw();
+            return 0;
+        }
+        break;
+    case WM_KEYDOWN:
+        if (model.hexFocus) {
+            if (wp == VK_RETURN) model.CommitHex();
+            else if (wp == VK_ESCAPE) model.hexFocus = false;
+            Redraw();
+            return 0;
+        }
+        break;
     case WM_RBUTTONDOWN:
         return 0;
     case WM_RBUTTONUP:
@@ -396,6 +641,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 void Drawer::Frame() {
+    if (stage) { // stage paces the loop while it's up, the panel only draws if it's still retracting
+        stage->Frame(mediaNow);
+        if (stage->Done()) stage.reset(); // its window, device and audio capture all go with it
+        if (!needsFrame) return;
+    }
     double now = Seconds();
     float dt = (float)(std::min)(now - lastFrame, 0.05); // clamp so a stall doesn't jump the spring
     if (lastFrame == 0) dt = 1 / 60.0f; // first frame, assume 60hz
@@ -403,14 +653,21 @@ void Drawer::Frame() {
 
     bool moving = !dragging && spring.Step(dt); // drag drives value directly
     if (!moving && !dragging) { // spring settled
+        grow = false; // expansion finished, or retracted
         if (spring.target <= 0 && winH > kStrip) {
+            islandLook = hand = false; // fully retracted, back to the plain strip and arrow cursor
             Resize(kStrip, false); // shrink window so it can't block clicks
             ui.Forget();
             if (cfg.gpuIdleSec > 0) SetTimer(hwnd, kReleaseTimer, (UINT)cfg.gpuIdleSec * 1000, nullptr); // schedule gpu release
-        } else if (spring.target > 0 && winH > spring.target + 1) {
-            Resize(spring.target, false); // drop overshoot margin once at rest
+        } else if (spring.target > 0) {
+            float room = spring.target + (hintFade > 0.01f ? kHintRoom : 0); // a tip outside the panel needs a little window
+            if (std::fabs(winH - room) > 1) Resize(room, false); // otherwise drop the overshoot margin once at rest
         }
     }
+    if (PlaceStale() && opened) Close(); // re-dock once it has retracted
+    SyncLook(); // before the device: switching to or from glass rebuilds it
+    SyncAccent();
+    SyncTyping();
     if (!EnsureDev()) {
         needsFrame = false; // no device, stop loop instead of spinning
         return;
@@ -418,17 +675,30 @@ void Drawer::Frame() {
     bool themes = StepTheme(dt);
     SyncCover();
 
-    float h = (std::max)(0.0f, (std::min)(spring.value, H + overshoot)); // clamp to window room
+    float h = (std::max)(0.0f, (std::min)(spring.value, Depth() + overshoot)); // clamp to window room
     double drawT0 = Seconds();
     canvas->NewFrame();
     ctx->BeginDraw();
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0)); // transparent, desktop shows through via dcomp
     bool uiBusy = false, ambient = false;
+    ComPtr<ID2D1Geometry> outline; // this frame's shape, the glass blur is cut to it
     if (h > 0.5f) {
-        ComPtr<ID2D1Geometry> shape = Shape(h);
-        if (shape) canvas->FillGeometry(shape.Get(), Color{0, 0, 0, 1}); // black blends with screen bezel
+        float shapeWide = Span();
+        if (islandLook) shapeWide = IslandSpan();
+        else if (grow) shapeWide = IslandSpan() + (Span() - IslandSpan()) * anim::Clamp01((h - kIslandH) / (Depth() * 0.3f - kIslandH)); // pill widens into the panel
+        shapeXform = EdgeXform();
+        ctx->SetTransform(shapeXform); // turned to the docked edge, centered in the window
+        ComPtr<ID2D1Geometry> shape = Shape(h, shapeWide);
+        if (shape) canvas->FillGeometry(shape.Get(), shellNow.bg); // dark mode: black, blends with screen bezel
+        if (shape && shellNow.glass) { // liquid glass: glossy light from above and a bright specular rim
+            canvas->FillGeoV(shape.Get(), {0, 0, W, (std::min)(h, 90.0f)}, shellNow.sheen, shellNow.sheen.Alpha(0));
+            canvas->StrokeGeo(shape.Get(), Color{1, 1, 1, 0.26f}, 1.2f);
+        }
+        outline = shape;
+        ctx->SetTransform(Side() ? D2D1::Matrix3x2F::Identity() : shapeXform);
         if (peeking) DrawPeek(h);
+        else if (islandLook) ambient = DrawIsland(h, dt, now); // bars bounce only while it shows and music plays
         else if (h > 24) { // too short for content, just shape
             DrawBody(h, dt, now);
             uiBusy = ui.Busy();
@@ -443,17 +713,22 @@ void Drawer::Frame() {
         needsFrame = true;
         return;
     }
+    if (glass) {
+        GlassBlur(model.glassBlur / 100.0f);
+        GlassMask(outline.Get());
+    }
     bool fast = moving || dragging || uiBusy || themes || pageT < 1; // anything actively animating
     if (cfg.perfLog) {
         int why = moving ? 0 : dragging ? 1 : uiBusy ? 2 : (themes || pageT < 1) ? 3 : ambient ? 4 : 5;
         ++perfWhy[why];
         Perf(Seconds() - drawT0);
     }
-    hr = swap->Present(fast ? 1 : 2, 0); // half refresh rate for ambient-only motion
+    hr = swap->Present(fast ? 1 : ambientSync, 0); // ambient-only motion runs at ~30 fps
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) { // driver reset / gpu switch
         FreeDev();
         needsFrame = true;
         return;
     }
     needsFrame = fast || (ambient && h > 0.5f); // otherwise go idle until next input
+    if (PlaceStale() && !opened && !dragging && spring.value <= 0.5f) ApplyPlace();
 }

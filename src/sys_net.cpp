@@ -355,11 +355,11 @@ NetSrc::NetSrc() {
 
 NetSrc::~NetSrc() = default;
 
-Net NetSrc::Sample() {
+Net NetSrc::Sample(bool refreshInfo) {
     Net n;
     try {
         if (!impl) return n;
-        impl->UpdInfo();
+        if (refreshInfo || !impl->haveInfo) impl->UpdInfo();
         impl->ReadIO(n);
         n.online = impl->online;
         n.adapter = impl->adapter;

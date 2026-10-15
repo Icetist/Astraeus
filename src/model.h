@@ -10,6 +10,9 @@
 #include "media.h"
 #include "sys.h"
 #include "bt.h"
+#include "wifi.h"
+#include "share.h"
+#include "notify.h"
 
 enum : UINT { // posted to ui thread by services/worker
     WM_APP_MEDIA = WM_APP + 1,
@@ -22,6 +25,9 @@ enum : UINT { // posted to ui thread by services/worker
     WM_APP_STATS,
     WM_APP_BT,
     WM_APP_UPDATE,
+    WM_APP_WIFI,
+    WM_APP_SHARE,
+    WM_APP_NOTIFY,
 };
 
 class Hist { // fixed-size rolling graph history
@@ -66,6 +72,12 @@ public:
     void OpenBt(); // starts bt watcher, only while menu shown
     void CloseBt(); // stops it and frees the list
     void OnBt();
+    void OpenWifi(); // wi-fi picker sheet: opens wlan, only while shown
+    void CloseWifi(); // frees it and the list
+    void OnWifi();
+    void ReopenWifi(); // start over, e.g. adapter appeared after opening
+    void DropWifiList(); // free the list once the sheet has faded out
+    void OnShare(); // refresh the shared-audio list, only while its tab shows
 
     void SetVol(float v);
     void ToggleMute();
@@ -73,6 +85,15 @@ public:
     void ToggleMic();
     void SetBright(float v);
     void SetAwake(bool on);
+    void SetLook(int look); // appearance: 0 dark, 1 light, 2 glass; persisted
+    void SetPref(int& field, const wchar_t* key, int value); // store a settings value and remember it
+    void OpenSettings(); // astraeus settings sheet, one sheet at a time
+    void PickScreen(const std::wstring& name); // live on this screen only
+    void CloseSettings();
+    void SetAccent(int mode, int hex); // persisted, drawer crossfades to it
+    void SetNotifyPills(bool on); // persisted, starts or stops the watcher
+    bool CommitHex(); // apply the typed hex if it parses, ends typing either way
+    static bool ParseHex(const std::wstring& text, int& rgb); // #rgb, #rrggbb, with or without #
     void CyclePower();
     void CycleOut();
 
@@ -104,6 +125,13 @@ public:
     sys::Bt bt;
     std::vector<sys::BtDev> btDevs; // ui copy, empty while closed
     bool btOpen = false, btScan = false;
+    sys::Share share; // plays the main output on extra devices, idle unless something is shared
+    std::vector<sys::ShareOut> shareOuts; // ui copy for the shared-audio tab
+    bool shareTab = false; // bluetooth sheet shows the shared-audio tab
+    sys::Wifi wifi;
+    std::vector<sys::WifiNet> wifiNets; // ui copy, empty while closed
+    bool wifiOpen = false, wifiScan = false;
+    sys::WifiState wifiState = sys::WifiState::Ok;
     sys::WxSvc weather;
     sys::Wx wx;
 
@@ -116,6 +144,19 @@ public:
     int brightPct = -1; // -1 hides brightness slider
 
     bool awake = false;
+    int look = 0; // appearance: 0 dark (default), 1 light, 2 glass
+    int glassBlur = 100; // glass: 0 clear .. 100 fully frosted
+    int edge = 0; // 0 top (default), 1 left, 2 right
+    int screens = 0; // 0 one screen, 1 every screen (the panel follows the mouse)
+    std::wstring screen; // the one screen, by device name; empty = primary
+    std::vector<sys::Screen> screenList; // connected screens, read when settings opens
+    int accentMode = 0; // 0 colors from the wallpaper (default), 1 custom
+    int accentHex = 0xB8C4FF; // custom accent, 0xRRGGBB
+    bool hexFocus = false; // the settings hex field is taking keystrokes
+    std::wstring hexEdit; // what's typed so far, without the #
+    int notifyPills = 0; // 1: windows notifications also drop as a pill
+    bool settingsOpen = false;
+    sys::NotifyWatch notifyWatch; // only runs while notification pills are on
     bool timerOn = false;
 
 private:
@@ -133,4 +174,7 @@ private:
     ULONGLONG timerEnd = 0, timerTotal = 0;
     bool timerDone = false; // one-shot flag, cleared on read
     unsigned long long lastIdle = 0, lastTotal = 0; // prev cpu ticks for delta
+    bool shown = false; // panel open, ui thread copy of SetLive
+    int unsampled = 0; // seconds since the last stats sample
+    void Sample(int seconds); // read cpu/ram/net, push one graph point per second covered
 };

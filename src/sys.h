@@ -44,7 +44,7 @@ public:
     ~NetSrc();
     NetSrc(const NetSrc&) = delete;
     NetSrc& operator=(const NetSrc&) = delete;
-    Net Sample();
+    Net Sample(bool refreshInfo = true);  // false: reuse last nic/ssid, skips the wlan service call
     void FetchWan(HWND notify, UINT msg);  // background lookup, posts msg when done
 private:
     struct Impl;
@@ -173,6 +173,23 @@ private:
     std::unique_ptr<Impl> impl;
 };
 bool FinishUpdate(); // at launch: clean up, true right after an update
+
+bool ReadFlag(const wchar_t* name, bool fallback); // persisted hkcu setting, fallback if missing
+void SaveFlag(const wchar_t* name, bool on);
+int ReadNum(const wchar_t* name, int fallback);
+std::wstring ClipText(); // clipboard text, empty if none
+void SaveNum(const wchar_t* name, int value);
+std::wstring ReadText(const wchar_t* name); // empty if missing
+void SaveText(const wchar_t* name, const std::wstring& value);
+
+struct Screen {
+    std::wstring name; // device name, e.g. \\.\DISPLAY2, how a pick is remembered
+    RECT rc{};
+    bool primary = false;
+    int number = 0; // the number windows display settings shows
+};
+std::vector<Screen> ListScreens();
+HMONITOR FindScreen(const std::wstring& name); // null if that screen isn't connected
 
 void SetEco(bool on); // efficiency mode + low memory priority while idle
 void SetAwake(bool on);  // keep display awake

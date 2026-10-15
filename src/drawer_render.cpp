@@ -36,8 +36,8 @@ bool Drawer::EnsureDev() {
     }
 
     DXGI_SWAP_CHAIN_DESC1 d = {};
-    d.Width = (UINT)(W * scale + 0.5f);
-    d.Height = (UINT)((H + overshoot) * scale + 0.5f); // max size, window clips the rest
+    d.Width = (UINT)((Side() ? Depth() + overshoot : W) * scale + 0.5f);
+    d.Height = (UINT)((Side() ? Span() : H + overshoot) * scale + 0.5f); // max size, window clips the rest
     d.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     d.SampleDesc.Count = 1;
     d.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -63,6 +63,10 @@ bool Drawer::EnsureDev() {
     ctx->SetDpi(96 * scale, 96 * scale); // draw in dips
     ctx->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE); // cleartype breaks on transparent bg
 
+    if (lookNow == 2 && OpenGlass(factory.Get(), d)) { // glass: windows composition with a live backdrop blur
+        canvas = std::make_unique<Canvas>(ctx.Get());
+        return true;
+    }
     if (FAILED(DCompositionCreateDevice(dxgi.Get(), IID_PPV_ARGS(&dcomp))) ||
         FAILED(dcomp->CreateTargetForHwnd(hwnd, TRUE, &target)) || FAILED(dcomp->CreateVisual(&visual)) || // topmost target on our hwnd
         FAILED(visual->SetContent(swap.Get())) || FAILED(target->SetRoot(visual.Get())) || FAILED(dcomp->Commit())) { // bind swapchain to window
@@ -81,6 +85,7 @@ void Drawer::FreeDev() {
         CloseHandle(frameWait);
         frameWait = nullptr; // main loop falls back to plain msg wait
     }
+    FreeGlass();
     visual.Reset(); // release in reverse order of creation
     target.Reset();
     dcomp.Reset();
@@ -91,28 +96,7 @@ void Drawer::FreeDev() {
     SetProcessWorkingSetSizeEx(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1, 0); // hand freed pages back to os
 }
 
-ComPtr<ID2D1Bitmap> Drawer::Blur(ID2D1Bitmap1* source) {
-    ComPtr<ID2D1Effect> blur;
-    ComPtr<ID2D1Bitmap1> out;
-    D2D1_SIZE_U size = source->GetPixelSize();
-    D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
-    if (FAILED(ctx->CreateEffect(CLSID_D2D1GaussianBlur, &blur)) || FAILED(ctx->CreateBitmap(size, nullptr, 0, bp, &out))) return nullptr;
-    blur->SetInput(0, source);
-    blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, 26.0f); // heavy blur for backdrop
-    blur->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD); // no dark fade at edges
-    float dx, dy;
-    ctx->GetDpi(&dx, &dy);
-    ctx->SetDpi(96, 96);
-    ctx->SetTarget(out.Get()); // bake once, not every frame
-    ctx->BeginDraw();
-    ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
-    ctx->DrawImage(blur.Get());
-    ctx->EndDraw();
-    ctx->SetTarget(backBuf.Get());
-    ctx->SetDpi(dx, dy);
-    return out;
-}
+ComPtr<ID2D1Bitmap> Drawer::Blur(ID2D1Bitmap1* source) { return gfx::BakeBlur(ctx.Get(), source, 26.0f); } // heavy blur for backdrop
 
 void Drawer::SyncCover() {
     uint64_t id = model.hasTrack ? model.track.coverId : 0;
@@ -123,7 +107,7 @@ void Drawer::SyncCover() {
         coverBlur.Reset();
         const auto& bytes = model.track.cover;
         if (id != 0 && bytes && !bytes->empty()) coverSrc = gfx::Decode(bytes->data(), bytes->size(), 480); // decode capped at 480px
-        if (coverSrc && cfg.albumCol) SetMedia(Theme::From(theme::FromBmp(coverSrc.Get()))); // tint media page from art
+        if (coverSrc && cfg.albumCol) SetMedia(Make(mediaSeed = theme::FromBmp(coverSrc.Get()))); // tint media page from art
         else SetMedia(shellTo); // no art, follow shell theme
     }
     if (coverSrc && !cover && SUCCEEDED(ctx->CreateBitmapFromWicBitmap(coverSrc.Get(), nullptr, &cover))) // gpu upload, redone after device loss
@@ -131,7 +115,7 @@ void Drawer::SyncCover() {
 }
 
 void Drawer::SyncWall() {
-    if (!cfg.wallTheme) return;
+    if (model.accentMode != 0) return; // custom accent: the wallpaper doesn't decide
     std::wstring path = theme::WallPath();
     WIN32_FILE_ATTRIBUTE_DATA info;
     if (path.empty() || !GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &info)) return;
@@ -140,7 +124,45 @@ void Drawer::SyncWall() {
     wallKey = key;
     ComPtr<IWICBitmapSource> src = gfx::DecodeFile(path.c_str(), 256); // small decode is enough for palette
     if (!src) return;
-    SetShell(Theme::From(theme::FromBmp(src.Get())));
+    SetShell(Make(shellSeed = theme::FromBmp(src.Get())));
+}
+
+Theme Drawer::Make(Seed s) const {
+    s.look = lookNow;
+    return Theme::From(s);
+}
+
+void Drawer::SyncLook() {
+    if (model.look == lookNow) return;
+    bool rebuild = (model.look == 2) != (lookNow == 2) && ctx; // glass draws through a different pipeline
+    lookNow = model.look;
+    if (rebuild) FreeDev(); // the caller rebuilds it right away for the new appearance
+    SetShell(Make(shellSeed)); // media follows unless album tinted
+    if (coverSrc && cfg.albumCol) SetMedia(Make(mediaSeed));
+}
+
+void Drawer::SyncAccent() {
+    if (model.accentMode == accentModeNow && model.accentHex == accentHexNow) return;
+    accentModeNow = model.accentMode;
+    accentHexNow = model.accentHex;
+    if (accentModeNow) {
+        SetShell(Make(shellSeed = theme::FromCol(Color::Rgb((uint32_t)accentHexNow)))); // hue and saturation kept, brightness tuned by the theme
+    } else {
+        wallKey.clear(); // re-read the wallpaper even if it didn't change
+        SyncWall();
+    }
+}
+
+void Drawer::SyncTyping() {
+    if (model.hexFocus == typing) return;
+    typing = model.hexFocus;
+    if (typing) { // the panel never takes focus normally, the hex field is the one exception
+        typingFrom = GetForegroundWindow();
+        SetForegroundWindow(hwnd);
+        SetFocus(hwnd);
+    } else if (GetForegroundWindow() == hwnd && typingFrom && IsWindow(typingFrom)) {
+        SetForegroundWindow(typingFrom); // give the keyboard back to where it was
+    }
 }
 
 void Drawer::SetShell(const Theme& t) {
@@ -171,19 +193,21 @@ bool Drawer::StepTheme(float dt) {
     return moving;
 }
 
-ComPtr<ID2D1Geometry> Drawer::Shape(float h) {
-    if (shapeC && std::fabs(h - shapeH) < 0.01f) return shapeC; // reuse while height is steady
-    shapeC = BuildShape(h);
+ComPtr<ID2D1Geometry> Drawer::Shape(float h, float w) {
+    if (shapeC && std::fabs(h - shapeH) < 0.01f && std::fabs(w - shapeW) < 0.01f) return shapeC; // reuse while size is steady
+    shapeC = BuildShape(h, w);
     shapeH = h;
+    shapeW = w;
     return shapeC;
 }
 
-ComPtr<ID2D1Geometry> Drawer::BuildShape(float h) const {
+ComPtr<ID2D1Geometry> Drawer::BuildShape(float h, float w) const {
     ComPtr<ID2D1PathGeometry> path;
     ComPtr<ID2D1GeometrySink> s;
     if (FAILED(gfx::D2D()->CreatePathGeometry(&path)) || FAILED(path->Open(&s))) return nullptr;
     float f = (std::min)(cfg.fillet, h / 2), r = (std::min)(cfg.corner, h / 2); // shrink radii when short so arcs don't overlap
-    float xr = W - cfg.fillet, xl = cfg.fillet; // panel edges inside the fillet margins
+    float left = (Span() - w) / 2;
+    float xr = left + w - cfg.fillet, xl = left + cfg.fillet; // panel edges inside the fillet margins
     s->BeginFigure({xl - f, 0}, D2D1_FIGURE_BEGIN_FILLED);
     s->AddLine({xr + f, 0});
     s->AddArc({{xr, f}, {f, f}, 0, D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, D2D1_ARC_SIZE_SMALL}); // concave shoulder, looks like dripping from bezel
@@ -199,23 +223,32 @@ ComPtr<ID2D1Geometry> Drawer::BuildShape(float h) const {
 }
 
 void Drawer::DrawBody(float h, float dt, double now) {
-    float panelW = W - 2 * cfg.fillet;
-    float dy = h - H; // content slides down with the shape, not stretched
-    D2D1_MATRIX_3X2_F base = D2D1::Matrix3x2F::Translation(cfg.fillet, dy);
+    float panelW = CW(), panelH = CH();
+    D2D1_POINT_2F org = edgeNow == 0 ? D2D1_POINT_2F{cfg.fillet, h - H} // content slides with the shape, never stretched
+                      : edgeNow == 1 ? D2D1_POINT_2F{h - panelW, cfg.fillet}
+                                     : D2D1_POINT_2F{winH - h, cfg.fillet};
+    D2D1_MATRIX_3X2_F base = D2D1::Matrix3x2F::Translation(org.x, org.y);
     ctx->SetTransform(base);
-    canvas->PushClip({0, H - h, panelW, H});
-    float reveal = anim::Clamp01((h - H * 0.25f) / (H * 0.55f)); // fade content in from 25% to 80% height
+    canvas->PushClip(edgeNow == 0 ? D2D1_RECT_F{0, H - h, panelW, H} : edgeNow == 1 ? D2D1_RECT_F{panelW - h, 0, panelW, panelH} : D2D1_RECT_F{0, 0, h, panelH});
+    float reach = Depth();
+    float reveal = anim::Clamp01((h - reach * 0.25f) / (reach * 0.55f)); // fade content in from 25% to 80% of the way out
     bool layered = reveal < 0.999f; // skip costly layer once fully shown
     if (layered) ctx->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
                                                        D2D1::IdentityMatrix(), reveal), nullptr);
 
     Input local = input;
-    local.mouse = {input.mouse.x - cfg.fillet, input.mouse.y - dy}; // mouse into panel space
-    local.pressPos = {input.pressPos.x - cfg.fillet, input.pressPos.y - dy};
+    local.mouse = {input.mouse.x - org.x, input.mouse.y - org.y}; // mouse into panel space
+    local.pressPos = {input.pressPos.x - org.x, input.pressPos.y - org.y};
     ui.Begin(*canvas, local, dt, now);
 
-    DrawRail(shellNow);
-    canvas->Line({kRailW, 34}, {kRailW, H - 34}, Color{1, 1, 1, 0.06f}, 1, false);
+    if (Side()) { // sidebar: icons along the top
+        DrawRailTop(shellNow);
+        canvas->Line({20, kTopRail}, {panelW - 20, kTopRail}, shellNow.line, 1, false);
+    } else {
+        DrawRail(shellNow);
+        canvas->Line({kRailW, 34}, {kRailW, H - 34}, shellNow.line, 1, false);
+    }
+    D2D1_RECT_F area = Side() ? D2D1_RECT_F{14, kTopRail + 10, panelW - 14, panelH - 14} : D2D1_RECT_F{kRailW + 14, 18, panelW - 20, H - 20};
 
     if (pageT < 1) pageT = (std::min)(1.0f, pageT + dt / 0.38f); // 380ms page switch
     float e = anim::EaseOut(pageT);
@@ -226,23 +259,39 @@ void Drawer::DrawBody(float h, float dt, double now) {
                                                       D2D1::IdentityMatrix(), e), nullptr); // opacity follows slide
     float fade = ui.SmoothFrom(Ui::Id("cover.fade", (int)coverId), 1, 0, 6); // id per cover restarts fade on track change
     PageCtx pc{ui, model, shellNow, mediaNow, cover.Get(), coverBlur.Get(), fade,
-                   D2D1_RECT_F{kRailW + 14, 18 - slide, panelW - 20, H - 20 - slide}}; // undo slide so hit rects stay put
+                   D2D1_RECT_F{area.left, area.top - slide, area.right, area.bottom - slide}}; // undo slide so hit rects stay put
     float sheet = ui.Smooth(Ui::Id("bt.sheet"), model.btOpen ? 1.0f : 0, 14); // bt menu open anim
-    ui.Block(sheet > 0.01f); // page under the menu takes no input
-    switch (page) {
-    case 0: DrawHome(pc); break;
-    case 1: DrawMedia(pc); break;
-    case 2: DrawSys(pc); break;
-    case 3: DrawNet(pc); break;
-    default: DrawTools(pc); break;
+    float wsheet = ui.Smooth(Ui::Id("wifi.sheet"), model.wifiOpen ? 1.0f : 0, 14); // wi-fi picker open anim
+    float ssheet = ui.Smooth(Ui::Id("set.sheet"), model.settingsOpen ? 1.0f : 0, 14); // settings open anim
+    ui.Block(sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f); // page under a sheet takes no input
+    if ((std::max)((std::max)(sheet, wsheet), ssheet) < 0.999f) { // a fully open sheet hides the page, skip drawing it
+        switch (page) {
+        case 0: DrawHome(pc); break;
+        case 1: DrawMedia(pc); break;
+        case 2: DrawSys(pc); break;
+        case 3: DrawNet(pc); break;
+        default: DrawTools(pc); break;
+        }
     }
     if (fading) ctx->PopLayer();
     ctx->SetTransform(base);
     ui.Block(false);
     if (sheet > 0.001f) {
-        PageCtx bc{ui, model, shellNow, mediaNow, nullptr, nullptr, 1, D2D1_RECT_F{kRailW + 14, 18, panelW - 20, H - 20}};
+        PageCtx bc{ui, model, shellNow, mediaNow, nullptr, nullptr, 1, area};
         DrawBt(bc, sheet);
         pc.wantClose = pc.wantClose || bc.wantClose;
+    }
+    if (wsheet > 0.001f) {
+        PageCtx wc{ui, model, shellNow, mediaNow, nullptr, nullptr, 1, area};
+        DrawWifi(wc, wsheet);
+        pc.wantClose = pc.wantClose || wc.wantClose;
+    } else {
+        model.DropWifiList(); // faded out, free it
+    }
+    if (ssheet > 0.001f) {
+        PageCtx sc{ui, model, shellNow, mediaNow, nullptr, nullptr, 1, area};
+        DrawSettings(sc, ssheet);
+        pc.wantClose = pc.wantClose || sc.wantClose;
     }
 
     ui.End();
@@ -250,18 +299,170 @@ void Drawer::DrawBody(float h, float dt, double now) {
     if (layered) ctx->PopLayer();
     canvas->PopClip();
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+    hintText = pc.hint;
+    hintFade = pc.hint ? pc.hintFade : 0;
+    hintRect = {pc.hintRect.left + org.x, pc.hintRect.top + org.y, pc.hintRect.right + org.x, pc.hintRect.bottom + org.y};
+    DrawHint(h);
     if (pc.wantClose) Close(); // page asked to close, after drawing finishes
+    if (pc.wantStage) OpenStage();
+}
+
+void Drawer::OpenStage() {
+    Close(); // the panel steps aside, the stage covers this screen
+    stage = std::make_unique<Stage>(model, MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY));
+    if (!stage->Ok()) stage.reset();
+}
+
+void Drawer::DrawHint(float h) {
+    if (!hintText || hintFade < 0.01f) return;
+    const Theme& t = shellNow;
+    const float pw = 104, ph = 28, gapOut = 9;
+    float cy = (hintRect.top + hintRect.bottom) / 2, cx = (hintRect.left + hintRect.right) / 2;
+    D2D1_RECT_F pill = edgeNow == 0 ? Rect(cx - pw / 2, h + gapOut - 4 * (1 - hintFade), pw, ph) // under the panel, below the cover
+                     : edgeNow == 1 ? Rect(h + gapOut - 4 * (1 - hintFade), cy - ph / 2, pw, ph) // beside the sidebar
+                                    : Rect(winH - h - gapOut - pw + 4 * (1 - hintFade), cy - ph / 2, pw, ph);
+    Color fill = t.bg;
+    fill.a = 0.94f; // solid even in glass, it sits off the blurred panel
+    canvas->Fill(pill, ph / 2, fill.Alpha(hintFade));
+    canvas->StrokeV(pill, ph / 2, t.hairTop.Alpha(hintFade), t.hairBot.Alpha(hintFade), 1);
+    canvas->Text(hintText, pill, Weight::Medium, 12, t.text.Alpha(hintFade), Align::Center);
 }
 
 void Drawer::DrawPeek(float h) {
     const Theme& t = shellNow;
     float a = anim::Clamp01((h - 26) / 30); // fade text in as banner drops
     if (a <= 0) return;
-    float cx = W / 2, cy = h / 2 + 2;
+    D2D1_RECT_F area = edgeNow == 0 ? Rect(0, 0, W, h) : edgeNow == 1 ? Rect(0, cfg.fillet, h, CH()) : Rect(winH - h, cfg.fillet, h, CH()); // visible part
+    float cx = (area.left + area.right) / 2 + (Side() ? 60 : 0), cy = Side() ? area.top + 70 : (area.top + area.bottom) / 2 + 2; // sidebar: near the top
     canvas->Dot({cx - 112, cy}, 17, t.accent.Alpha(0.18f * a));
     canvas->Icon(peekIcon ? peekIcon : glyph::Timer, {cx - 112, cy}, 21, t.accentHi.Alpha(a), true);
     canvas->Text(peekTitle, Rect(cx - 84, cy - 20, 240, 22), Weight::Medium, 15, t.text.Alpha(a));
     canvas->Text(peekDetail, Rect(cx - 84, cy + 1, 240, 18), Weight::Light, 12.5f, t.textDim.Alpha(a));
+}
+
+bool Drawer::StepIslandBars(float dt, double now) {
+    bool playing = model.hasTrack && model.track.playing;
+    float l = 0, r = 0;
+    if (playing) model.meter.Read(l, r);
+    float level = std::sqrt((l + r) / 2); // sqrt lifts quiet passages so the bars stay alive
+    bool moving = false;
+    for (int i = 0; i < 4; ++i) {
+        float wobble = 0.55f + 0.45f * std::sin((float)now * (5.0f + i * 1.7f) + i * 1.3f); // each bar on its own rhythm
+        float want = playing ? anim::Clamp01(level * wobble * 1.4f) : 0;
+        float& v = islandBars[i];
+        v += (want - v) * (std::min)(1.0f, dt * 14); // quick attack, smooth fall
+        moving = moving || std::fabs(want - v) > 0.01f || want > 0.01f;
+    }
+    return moving;
+}
+
+bool Drawer::DrawIsland(float h, float dt, double now) {
+    const Theme& t = shellNow;
+    const Theme& mt = mediaNow; // album-tinted accent, matches the media page
+    float a = anim::Clamp01((h - 14) / 18); // fade in as the pill drops
+    hand = true; // the whole pill is a button
+    if (a <= 0) return false;
+    bool moving = model.hasTrack && !model.track.title.empty() && StepIslandBars(dt, now);
+    if (Side()) return DrawIslandSide(h, a) && moving;
+    float inner = kIslandW - 2 * cfg.fillet - 20; // usable width inside the shoulders
+    float x0 = W / 2 - inner / 2, cy = h / 2 - 1; // content sits a little high, the handle takes the bottom
+    float cx = W / 2;
+
+    float hw = islandHot ? 26.0f : 16.0f; // handle bar: the "pull me down" hint, wider and brighter on hover
+    canvas->Line({cx - hw / 2, h - 3.5f}, {cx + hw / 2, h - 3.5f}, t.text.Alpha((islandHot ? 0.75f : 0.30f) * a), 2.5f);
+
+    if (!model.hasTrack || model.track.title.empty()) { // nothing playing: time and date
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        wchar_t clock[32] = {}, day[48] = {};
+        GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &st, nullptr, clock, 32);
+        GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &st, L"ddd d MMM", day, 48, nullptr);
+        canvas->Text(std::wstring(clock) + L"  ·  " + day, Rect(x0, cy - 8, inner, 16), Weight::Medium, 11.5f, t.text.Alpha(a), Align::Center);
+        return false;
+    }
+
+    D2D1_RECT_F art = Rect(x0, cy - 10, 20, 20); // cover thumbnail, rounded like an app icon
+    if (cover) {
+        canvas->Art(cover.Get(), coverBlur.Get(), art, 5, a);
+    } else {
+        canvas->Fill(art, 5, mt.cardHi.Alpha(a));
+        canvas->Icon(glyph::Music, {art.left + 10, art.top + 10}, 12, mt.accentHi.Alpha(a), true);
+    }
+
+    const float barsW = 22; // mini visualizer on the right, or the expand chevron on hover
+    float tx = art.right + 7, tw = inner - (tx - x0) - barsW - 6;
+    canvas->Text(model.track.title, Rect(tx, cy - 12, tw, 14), Weight::Medium, 10.5f, t.text.Alpha(a));
+    if (!model.track.artist.empty()) canvas->Text(model.track.artist, Rect(tx, cy + 1, tw, 12), Weight::Light, 9.5f, t.textDim.Alpha(a));
+
+    float bx = x0 + inner - barsW;
+    if (islandHot) { // chevron: tap opens the full panel
+        float ccx = bx + barsW / 2;
+        Color ink = mt.accentHi.Alpha(a);
+        canvas->Line({ccx - 6, cy - 3}, {ccx, cy + 3}, ink, 2);
+        canvas->Line({ccx, cy + 3}, {ccx + 6, cy - 3}, ink, 2);
+        return false;
+    }
+    for (int i = 0; i < 4; ++i) {
+        float v = islandBars[i], bh = 3 + 11 * v;
+        canvas->Fill(Rect(bx + i * 6, cy - bh / 2, 3.5f, bh), 1.75f, mt.accent.Mix(mt.accentHi, v).Alpha(a));
+    }
+    return moving;
+}
+
+bool Drawer::DrawIslandSide(float h, float a) {
+    const Theme& t = shellNow;
+    const Theme& mt = mediaNow;
+    bool left = edgeNow == 1;
+    auto X = [&](float d) { return left ? d : winH - d; }; // d = distance from the docked edge, y runs along it
+    float mid = winW / 2, dc = h / 2 - 1; // the handle takes the inner side
+    float hw = islandHot ? 26.0f : 16.0f;
+    canvas->Line({X(h - 3.5f), mid - hw / 2}, {X(h - 3.5f), mid + hw / 2}, t.text.Alpha((islandHot ? 0.75f : 0.30f) * a), 2.5f);
+
+    if (!model.hasTrack || model.track.title.empty()) { // nothing playing: the time, hours over minutes
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        wchar_t hh[4], mm[4];
+        swprintf_s(hh, L"%02d", st.wHour);
+        swprintf_s(mm, L"%02d", st.wMinute);
+        canvas->Text(hh, {X(dc) - 14, mid - 17, X(dc) + 14, mid - 1}, Weight::Medium, 12, t.text.Alpha(a), Align::Center);
+        canvas->Text(mm, {X(dc) - 14, mid + 1, X(dc) + 14, mid + 17}, Weight::Medium, 12, mt.accentHi.Alpha(a), Align::Center);
+        return false;
+    }
+    D2D1_RECT_F art = {X(dc) - 10, mid - 34, X(dc) + 10, mid - 14}; // thumbnail above, bars below
+    if (cover) {
+        canvas->Art(cover.Get(), coverBlur.Get(), art, 5, a);
+    } else {
+        canvas->Fill(art, 5, mt.cardHi.Alpha(a));
+        canvas->Icon(glyph::Music, {X(dc), mid - 24}, 12, mt.accentHi.Alpha(a), true);
+    }
+    if (islandHot) { // chevron pointing into the screen: tap opens the full panel
+        Color ink = mt.accentHi.Alpha(a);
+        float s = left ? 1.0f : -1.0f, y = mid + 16;
+        canvas->Line({X(dc) - 3 * s, y - 6}, {X(dc) + 3 * s, y}, ink, 2);
+        canvas->Line({X(dc) + 3 * s, y}, {X(dc) - 3 * s, y + 6}, ink, 2);
+        return false;
+    }
+    for (int i = 0; i < 4; ++i) { // bars grow across the pill
+        float v = islandBars[i], bl = 3 + 11 * v, y = mid + 6 + i * 6;
+        canvas->Fill({X(dc) - bl / 2, y, X(dc) + bl / 2, y + 3.5f}, 1.75f, mt.accent.Mix(mt.accentHi, v).Alpha(a));
+    }
+    return true;
+}
+
+void Drawer::DrawRailTop(const Theme& t) {
+    Canvas& c = *canvas;
+    float step = (CW() - 28) / kPages, cy = kTopRail / 2;
+    float x = ui.Smooth(Ui::Id("railx"), 14 + step * (page + 0.5f), 18); // highlight glides to the active page
+    c.Fill({x - 26, cy - 19, x + 26, cy + 19}, 19, t.accent.Alpha(0.13f));
+    c.Fill({x - 11, kTopRail - 6, x + 11, kTopRail - 3}, 1.5f, t.accent); // accent bar under the active icon
+    for (int i = 0; i < kPages; ++i) {
+        float ix = 14 + step * (i + 0.5f);
+        Ui::Hit h = ui.Button(Ui::Id("railt", i), {ix - 28, 4, ix + 28, kTopRail - 4});
+        if (h.clicked) SetPage(i);
+        float hover = ui.Smooth(Ui::Id("railt.h", i), h.hover && i != page ? 1.0f : 0, 16);
+        bool active = i == page;
+        c.Icon(kRailIcons[i], {ix, cy}, 22, active ? t.accentHi : t.textDim.Mix(t.text, hover), active);
+    }
 }
 
 void Drawer::DrawRail(const Theme& t) {

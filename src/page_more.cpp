@@ -4,6 +4,7 @@
 
 #include "anim.h"
 #include "glyphs.h"
+#include "page_sheet.h"
 #include "pages.h"
 
 namespace {
@@ -46,14 +47,6 @@ void Procs(PageCtx& p, const D2D1_RECT_F& r) {
         if (bar > 0.003f) c.Line({x0, by}, {x0 + (x1 - 100 - x0) * bar, by}, t.accent, 3); // skip near-zero to avoid cap dot
     }
     if (p.m.procs.empty()) c.Text(L"Measuring…", Rect(r.left + 18, r.top + 46, 200, 20), Weight::Light, 12.5f, t.textDim); // worker hasn't sampled procs yet
-}
-
-void Bars(Canvas& c, const Theme& t, float x, float bottom, int quality) {
-    for (int i = 0; i < 4; ++i) {
-        float h = 6.0f + i * 4; // bars step up 4px each
-        bool lit = quality >= 25 * i + 10; // thresholds 10/35/60/85%
-        c.Fill(Rect(x + i * 7, bottom - h, 4, h), 2, lit ? t.accent : t.track); // 7px pitch, 4px wide
-    }
 }
 
 void InfoRow(Canvas& c, const Theme& t, float x, float y, float wdt, const wchar_t* label, const std::wstring& value) {
@@ -107,7 +100,8 @@ bool PowerBtn(PageCtx& p, D2D1_POINT_2F c, int glyph, const wchar_t* label, cons
 void DrawSys(PageCtx& p) {
     const D2D1_RECT_F& a = p.area;
     const sys::Stats& s = p.m.stats;
-    D2D1_RECT_F left = Rect(a.left, a.top, 480, Height(a)); // fixed 480px gauge card, procs take rest
+    bool tall = Height(a) > Width(a); // sidebar: gauges on top, processes below
+    D2D1_RECT_F left = tall ? Rect(a.left, a.top, Width(a), 232) : Rect(a.left, a.top, 480, Height(a)); // fixed gauge card, procs take rest
     w::Card(p.ui, p.shell, left);
 
     std::vector<Cell> cells;
@@ -119,7 +113,7 @@ void DrawSys(PageCtx& p) {
     for (size_t i = 0; i < cells.size(); ++i)
         GaugeCell(p, Rect(left.left + 10 + cw * i, left.top + 10, cw, Height(left) - 20), cells[i], (int)i);
 
-    Procs(p, D2D1_RECT_F{left.right + 12, a.top, a.right, a.bottom});
+    Procs(p, tall ? D2D1_RECT_F{a.left, left.bottom + 12, a.right, a.bottom} : D2D1_RECT_F{left.right + 12, a.top, a.right, a.bottom});
 }
 
 void DrawNet(PageCtx& p) {
@@ -129,13 +123,17 @@ void DrawNet(PageCtx& p) {
     const sys::Net& n = p.m.net;
     const D2D1_RECT_F& a = p.area;
 
-    D2D1_RECT_F info = Rect(a.left, a.top, 316, Height(a));
+    bool tall = Height(a) > Width(a); // sidebar: info on top, graph below
+    D2D1_RECT_F info = tall ? Rect(a.left, a.top, Width(a), 290) : Rect(a.left, a.top, 316, Height(a));
     w::Card(ui, t, info);
     bool wifi = !n.ssid.empty(); // ssid present = wifi, else wired
     c.Icon(wifi ? glyph::Wifi : glyph::Lan, {info.left + 32, info.top + 36}, 26, t.accent, true);
     c.Text(wifi ? n.ssid : (n.online ? L"Ethernet" : L"Offline"), Rect(info.left + 18, info.top + 58, 280, 34), Weight::Light, 25, t.text);
+    if (p.m.radios.HasWifi() && // opens the wi-fi picker sheet, also on right click of the home tile
+        sheet::Act(ui, t, Ui::Id("net.networks"), Rect(info.right - 112, info.top + 21, 94, 30), L"Networks", false, false, true))
+        p.m.OpenWifi();
     if (wifi) {
-        Bars(c, t, info.left + 20, info.top + 112, n.signal);
+        sheet::Bars(c, t, info.left + 20, info.top + 112, n.signal, t.accent);
         c.Text(std::to_wstring(n.signal) + L"% signal", Rect(info.left + 56, info.top + 96, 200, 18), Weight::Regular, 12.5f, t.textDim);
     }
     float x = info.left + 20, wdt = 276;
@@ -150,7 +148,7 @@ void DrawNet(PageCtx& p) {
     if (copied) ui.KeepAlive(); // repaint until check reverts
     InfoRow(c, t, x, info.top + 234, wdt, L"ADAPTER", n.adapter);
 
-    D2D1_RECT_F graph = D2D1_RECT_F{info.right + 12, a.top, a.right, a.bottom};
+    D2D1_RECT_F graph = tall ? D2D1_RECT_F{a.left, info.bottom + 12, a.right, a.bottom} : D2D1_RECT_F{info.right + 12, a.top, a.right, a.bottom};
     w::Card(ui, t, graph);
     c.TextSp(L"THROUGHPUT", Rect(graph.left + 20, graph.top + 18, 200, 14), Weight::Medium, 10, t.textLow, 1.4f);
     c.Icon(glyph::Up, {graph.left + 30, graph.top + 56}, 20, t.accentHi);
@@ -194,19 +192,21 @@ void DrawTools(PageCtx& p) {
         }
     }
 
-    D2D1_RECT_F timer = Rect(a.left, power.bottom + 12, 470, a.bottom - power.bottom - 12);
+    bool tall = Height(a) > Width(a); // sidebar: timer and tiles stack under the power row
+    D2D1_RECT_F timer = tall ? Rect(a.left, power.bottom + 12, Width(a), 190) : Rect(a.left, power.bottom + 12, 470, a.bottom - power.bottom - 12);
     w::Card(ui, t, timer);
     c.TextSp(L"TIMER", Rect(timer.left + 20, timer.top + 16, 200, 14), Weight::Medium, 10, t.textLow, 1.4f);
     if (!m.timerOn) {
         const int minutes[] = {1, 5, 10, 15, 25, 45, 60};
-        float cx = timer.left + 20, cw = (Width(timer) - 40 - 6 * 8) / 7; // 7 chips, 8px gaps
+        int perRow = tall ? 4 : 7; // sidebar: two rows so the labels fit
+        float cx = timer.left + 20, cw = (Width(timer) - 40 - (perRow - 1) * 8) / perRow; // 8px gaps
         for (int i = 0; i < 7; ++i) {
             std::wstring label = std::to_wstring(minutes[i]) + (minutes[i] == 60 ? L"h" : L"m");
             if (minutes[i] == 60) label = L"1h"; // 60 shows as 1h not 60m
-            if (w::Chip(ui, t, Ui::Id("tl.min", i), Rect(cx + i * (cw + 8), timer.top + 52, cw, 32), label, false))
+            if (w::Chip(ui, t, Ui::Id("tl.min", i), Rect(cx + (i % perRow) * (cw + 8), timer.top + 52 + (i / perRow) * 40, cw, 32), label, false))
                 m.StartTimer(minutes[i] * 60);
         }
-        c.Text(L"Ends with a notification, even if the dropdown is closed.", Rect(timer.left + 20, timer.top + 100, 430, 18), // timer runs in model, survives close
+        c.Text(L"Ends with a notification, even if the dropdown is closed.", Rect(timer.left + 20, timer.top + (tall ? 140 : 100), Width(timer) - 40, 18), // timer runs in model, survives close
                Weight::Light, 12, t.textDim);
     } else {
         D2D1_POINT_2F rc = {timer.left + 72, (timer.top + timer.bottom) / 2 + 6}; // ring left, countdown right
@@ -216,7 +216,7 @@ void DrawTools(PageCtx& p) {
         if (w::IconBtn(ui, t, Ui::Id("tl.stop"), {timer.right - 44, rc.y}, 44, glyph::Stop, 26, true, true)) m.StopTimer();
     }
 
-    D2D1_RECT_F quick = D2D1_RECT_F{timer.right + 12, timer.top, a.right, a.bottom};
+    D2D1_RECT_F quick = tall ? D2D1_RECT_F{a.left, timer.bottom + 12, a.right, a.bottom} : D2D1_RECT_F{timer.right + 12, timer.top, a.right, a.bottom};
     float tw = (Width(quick) - 10) / 2, th = (Height(quick) - 10) / 2; // 2x2 quick grid, 10px gaps
     int top = m.portable ? 2 : 1; // laptops fit awake in the top row too
     float cw = (Width(quick) - 10 * (top - 1)) / top;
@@ -232,10 +232,8 @@ void DrawTools(PageCtx& p) {
         sys::OpenUri(L"taskmgr.exe");
     }
     if (w::Tile(ui, t, Ui::Id("tl.settings"), Rect(quick.left + tw + 10, quick.top + th + 10, tw, th), glyph::Settings, L"Settings",
-                L"Windows", false)) {
-        p.wantClose = true;
-        sys::OpenUri(L"ms-settings:");
-    }
+                L"Astraeus", false))
+        m.OpenSettings(); // windows settings is one tap away inside the sheet
 }
 
 namespace fmt {

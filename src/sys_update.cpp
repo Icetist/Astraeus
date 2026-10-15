@@ -1,16 +1,24 @@
 #include "sys.h"
 
+#include <bcrypt.h>
+
 #include <cctype>
 #include <cstring>
 #include <thread>
 
 #include "version.h"
 
+#pragma comment(lib, "bcrypt.lib")
+
 namespace sys {
 namespace {
 
 constexpr wchar_t kLatest[] = L"https://api.github.com/repos/Icetist/Astraeus/releases/latest"; // public api, no token needed
 constexpr char kAsset[] = "/Astraeus.exe"; // release asset the workflow uploads
+constexpr char kHashAsset[] = "/Astraeus.exe.sha256"; // sha-256 of that exe, uploaded by the same workflow
+constexpr size_t kMaxHashFile = 1024; // 64 hex chars plus maybe a filename
+constexpr size_t kHexLen = 64; // sha-256 as hex
+constexpr char kTrusted[] = "https://github.com/Icetist/Astraeus/releases/download/"; // assets must come from this repo's releases
 constexpr size_t kMaxExe = 32u << 20; // refuse anything absurdly large
 constexpr size_t kMinExe = 64u << 10; // or suspiciously small
 constexpr wchar_t kKey[] = L"Software\\Astraeus";
@@ -40,6 +48,48 @@ bool Newer(const std::string& tag) { // "v2.3.1" vs compiled-in version
 }
 
 std::wstring Widen(const std::string& s) { return std::wstring(s.begin(), s.end()); } // tags and urls are ascii
+
+std::string AssetUrl(const std::string& body, const char* name) { // download url of the asset whose url ends with name
+    const size_t n = std::strlen(name);
+    for (size_t p = body.find("\"browser_download_url\""); p != std::string::npos; p = body.find("\"browser_download_url\"", p + 1)) {
+        std::string u = JsonStr(body, p);
+        if (u.size() > n && u.compare(u.size() - n, n, name) == 0) return u;
+    }
+    return {};
+}
+
+std::string Sha256Hex(const std::string& data) { // lowercase hex, empty on failure
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    BCRYPT_HASH_HANDLE h = nullptr;
+    unsigned char digest[32];
+    std::string hex;
+    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0))) return hex;
+    if (BCRYPT_SUCCESS(BCryptCreateHash(alg, &h, nullptr, 0, nullptr, 0, 0)) &&
+        BCRYPT_SUCCESS(BCryptHashData(h, reinterpret_cast<PUCHAR>(const_cast<char*>(data.data())), static_cast<ULONG>(data.size()), 0)) &&
+        BCRYPT_SUCCESS(BCryptFinishHash(h, digest, sizeof(digest), 0))) {
+        static const char kHex[] = "0123456789abcdef";
+        for (unsigned char b : digest) {
+            hex += kHex[b >> 4];
+            hex += kHex[b & 15];
+        }
+    }
+    if (h) BCryptDestroyHash(h);
+    BCryptCloseAlgorithmProvider(alg, 0);
+    return hex;
+}
+
+std::string ParseHash(const std::string& file) { // first run of 64 hex chars, lowercased; empty if malformed
+    std::string hex;
+    for (char ch : file) {
+        if (std::isxdigit(static_cast<unsigned char>(ch))) {
+            hex += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            if (hex.size() > kHexLen) return {}; // too long, not a sha-256
+        } else if (!hex.empty()) {
+            break; // hash ended, e.g. "<hash>  Astraeus.exe"
+        }
+    }
+    return hex.size() == kHexLen ? hex : std::string();
+}
 
 std::wstring Done() {
     wchar_t v[64] = {};
@@ -115,19 +165,20 @@ struct Updater::Impl {
         size_t k = body.find("\"tag_name\"");
         std::string t = k == std::string::npos ? "" : JsonStr(body, k);
         if (t.empty() || !Newer(t) || Widen(t) == Done()) return false; // up to date, or this tag already tried
-        std::string url;
-        const size_t n = std::strlen(kAsset);
-        for (size_t p = body.find("\"browser_download_url\""); p != std::string::npos; p = body.find("\"browser_download_url\"", p + 1)) {
-            std::string u = JsonStr(body, p);
-            if (u.size() > n && u.compare(u.size() - n, n, kAsset) == 0) {
-                url = u;
-                break;
-            }
-        }
-        if (url.empty()) return false; // release without our asset, e.g. still building
+        const std::string url = AssetUrl(body, kAsset), hashUrl = AssetUrl(body, kHashAsset);
+        if (url.empty() || hashUrl.empty()) return false; // still building, or a release without a published hash: never install unverified
+        if (url.rfind(kTrusted, 0) != 0 || hashUrl.rfind(kTrusted, 0) != 0) return false; // https, this repo only
+        std::string sum;
+        if (!Get(Widen(hashUrl).c_str(), sum, kMaxHashFile)) return false;
+        const std::string want = ParseHash(sum);
+        if (want.empty()) return false;
         std::string exe;
         if (!Get(Widen(url).c_str(), exe, kMaxExe) || exe.size() < kMinExe || exe[0] != 'M' || exe[1] != 'Z')
             return false; // must look like a windows exe
+        if (Sha256Hex(exe) != want) { // corrupted or tampered download: not marked done, so the next check retries
+            OutputDebugStringW(L"[sys] update rejected: sha-256 mismatch\n");
+            return false;
+        }
         MarkDone(Widen(t)); // once only, even if the swap fails
         if (!Swap(exe)) return false;
         tag = Widen(t);

@@ -40,6 +40,7 @@ IDWriteTextFormat* IconFmt(float size, bool filled); // outline or filled symbol
 
 ComPtr<IWICBitmapSource> Decode(const uint8_t* data, size_t size, UINT maxPx); // downscaled to maxPx, pbgra out
 ComPtr<IWICBitmapSource> DecodeFile(const wchar_t* path, UINT maxPx); // tries scaled jpeg decode first
+ComPtr<ID2D1Bitmap> BakeBlur(ID2D1DeviceContext* ctx, ID2D1Bitmap1* source, float sigma); // blurred copy, baked once
 
 }
 
@@ -69,6 +70,7 @@ public:
     void Icon(int glyph, D2D1_POINT_2F center, float size, Color c, bool filled = false);
 
     void Image(ID2D1Bitmap* bmp, const D2D1_RECT_F& r, float radius, float opacity = 1); // cover fit, rounded
+    void Art(ID2D1Bitmap* bmp, ID2D1Bitmap* backdrop, const D2D1_RECT_F& r, float radius, float opacity = 1); // square art fills, wide art shown whole over backdrop
 
     void PushClip(const D2D1_RECT_F& r);
     void PopClip();
@@ -92,6 +94,8 @@ private:
     std::unordered_map<uint64_t, ComPtr<ID2D1LinearGradientBrush>> grads;
     std::unordered_map<uint64_t, ComPtr<ID2D1RadialGradientBrush>> glows;
     std::unordered_multimap<uint64_t, TextLay> layouts; // multimap: hash collisions resolved by full compare
+    std::vector<std::pair<ID2D1Bitmap*, ComPtr<ID2D1BitmapBrush>>> bmpBrushes; // cover + its blur, oldest evicted
+    ID2D1BitmapBrush* BitmapBrush(ID2D1Bitmap* bmp);
     uint32_t frame = 0;
 };
 

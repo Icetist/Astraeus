@@ -1,5 +1,8 @@
 #include "gfx.h"
 
+#include <d2d1_1helper.h>
+#include <d2d1effects.h>
+
 #include <cmath>
 #include <utility>
 
@@ -113,6 +116,30 @@ DWRITE_TEXT_ALIGNMENT ToDw(Align a) {
 }
 
 namespace gfx {
+
+ComPtr<ID2D1Bitmap> BakeBlur(ID2D1DeviceContext* ctx, ID2D1Bitmap1* source, float sigma) {
+    ComPtr<ID2D1Effect> blur;
+    ComPtr<ID2D1Bitmap1> out;
+    ComPtr<ID2D1Image> was;
+    D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
+    if (FAILED(ctx->CreateEffect(CLSID_D2D1GaussianBlur, &blur)) || FAILED(ctx->CreateBitmap(source->GetPixelSize(), nullptr, 0, bp, &out))) return nullptr;
+    blur->SetInput(0, source);
+    blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, sigma);
+    blur->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD); // no dark fade at edges
+    float dx, dy;
+    ctx->GetDpi(&dx, &dy);
+    ctx->GetTarget(&was);
+    ctx->SetDpi(96, 96);
+    ctx->SetTarget(out.Get()); // bake once, not every frame
+    ctx->BeginDraw();
+    ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
+    ctx->DrawImage(blur.Get());
+    ctx->EndDraw();
+    ctx->SetTarget(was.Get());
+    ctx->SetDpi(dx, dy);
+    return out;
+}
 
 bool Init(const std::wstring& fontDir) {
     if (g) return true;
@@ -423,6 +450,18 @@ void Canvas::Icon(int glyph, D2D1_POINT_2F center, float size, Color c, bool fil
     rt->DrawTextW(&ch, 1, f, r, Brush(c), D2D1_DRAW_TEXT_OPTIONS_NONE);
 }
 
+ID2D1BitmapBrush* Canvas::BitmapBrush(ID2D1Bitmap* bmp) {
+    for (auto& [key, b] : bmpBrushes)
+        if (key == bmp) return b.Get(); // brush holds a ref, so the pointer can't be reused while cached
+    ComPtr<ID2D1BitmapBrush> b;
+    if (FAILED(rt->CreateBitmapBrush(bmp, &b))) return nullptr; // brush lets us fill a rounded rect
+    b->SetInterpolationMode(D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    constexpr size_t kMaxBmpBrushes = 2; // a frame only draws the cover and its blur
+    if (bmpBrushes.size() >= kMaxBmpBrushes) bmpBrushes.erase(bmpBrushes.begin()); // drops the old cover's gpu copy too
+    bmpBrushes.emplace_back(bmp, b);
+    return b.Get();
+}
+
 void Canvas::Image(ID2D1Bitmap* bmp, const D2D1_RECT_F& r, float radius, float opacity) {
     if (!bmp || opacity <= 0) return;
     D2D1_SIZE_F s = bmp->GetSize();
@@ -430,12 +469,31 @@ void Canvas::Image(ID2D1Bitmap* bmp, const D2D1_RECT_F& r, float radius, float o
     float scale = (std::max)(Width(r) / s.width, Height(r) / s.height); // cover fit, crop overflow
     float ox = r.left + (Width(r) - s.width * scale) / 2;
     float oy = r.top + (Height(r) - s.height * scale) / 2;
-    ComPtr<ID2D1BitmapBrush> b;
-    if (FAILED(rt->CreateBitmapBrush(bmp, &b))) return; // brush lets us fill a rounded rect
-    b->SetInterpolationMode(D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    ID2D1BitmapBrush* b = BitmapBrush(bmp);
+    if (!b) return;
     b->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale) * D2D1::Matrix3x2F::Translation(ox, oy));
     b->SetOpacity(opacity);
-    rt->FillRoundedRectangle({r, radius, radius}, b.Get());
+    rt->FillRoundedRectangle({r, radius, radius}, b);
+}
+
+void Canvas::Art(ID2D1Bitmap* bmp, ID2D1Bitmap* backdrop, const D2D1_RECT_F& r, float radius, float opacity) {
+    if (!bmp || opacity <= 0) return;
+    D2D1_SIZE_F s = bmp->GetSize();
+    if (s.width <= 0 || s.height <= 0 || Width(r) <= 0 || Height(r) <= 0) return;
+    const float kSquarish = 0.15f; // album covers: within 15% of the box shape, crop to fill
+    float rel = (s.width / s.height) / (Width(r) / Height(r));
+    if (rel > 1 - kSquarish && rel < 1 + kSquarish) {
+        Image(bmp, r, radius, opacity);
+        return;
+    }
+    Image(backdrop ? backdrop : bmp, r, radius, opacity); // video frames: blurred copy fills the box
+    Fill(r, radius, Color{0, 0, 0, 0.25f * opacity}); // dim it so the real frame stands out
+    float scale = (std::min)(Width(r) / s.width, Height(r) / s.height); // contain fit, nothing cropped
+    float w = s.width * scale, h = s.height * scale;
+    D2D1_RECT_F fit = {r.left + (Width(r) - w) / 2, r.top + (Height(r) - h) / 2, 0, 0};
+    fit.right = fit.left + w;
+    fit.bottom = fit.top + h;
+    Image(bmp, fit, radius * 0.5f, opacity);
 }
 
 void Canvas::PushClip(const D2D1_RECT_F& r) {

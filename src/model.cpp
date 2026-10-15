@@ -12,7 +12,22 @@ unsigned long long Ticks(const FILETIME& f) { // filetime -> 100ns count
 
 }
 
-Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()) {}
+namespace {
+constexpr wchar_t kLookVal[] = L"Appearance";
+constexpr int kLooks = 3;
+}
+
+Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::ReadNum(kLookVal, 0)) {
+    if (look < 0 || look >= kLooks) look = 0; // unknown value: back to dark
+    glassBlur = (std::clamp)(sys::ReadNum(L"GlassBlur", 100), 0, 100);
+    edge = (std::clamp)(sys::ReadNum(L"Edge", 0), 0, 2);
+    screens = (std::clamp)(sys::ReadNum(L"Screens", 0), 0, 1);
+    screen = sys::ReadText(L"Screen");
+    int iniHex = ((int)(cfg.themeCol.r * 255 + 0.5f) << 16) | ((int)(cfg.themeCol.g * 255 + 0.5f) << 8) | (int)(cfg.themeCol.b * 255 + 0.5f);
+    accentMode = (std::clamp)(sys::ReadNum(L"AccentMode", cfg.wallTheme ? 0 : 1), 0, 1); // settings override the ini once used
+    accentHex = sys::ReadNum(L"AccentHex", iniHex) & 0xFFFFFF;
+    notifyPills = (std::clamp)(sys::ReadNum(L"NotifyPills", 0), 0, 1);
+}
 
 Model::~Model() {
     {
@@ -25,13 +40,16 @@ Model::~Model() {
 
 void Model::Start(HWND hwnd) {
     notify = hwnd;
+    share.Notify(hwnd, WM_APP_SHARE);
+    if (notifyPills) notifyWatch.Start(hwnd, WM_APP_NOTIFY);
     media.Start(hwnd, WM_APP_MEDIA);
     radios.Start(hwnd, WM_APP_RADIOS);
-    Tick(); // seed cpu baseline before first real tick
+    Sample(0); // seed cpu/net baselines, pushes nothing
     worker = std::thread([this] { Worker(); });
 }
 
 void Model::SetLive(bool active, bool processes) {
+    shown = active; // ui thread: Tick samples every second only while shown
     {
         std::lock_guard<std::mutex> guard(lock);
         bool wakeNow = active && (!pollOn || (processes && !wantProcs)); // wake only if newly on or procs newly wanted
@@ -71,22 +89,34 @@ void Model::OnStats() {
 }
 
 void Model::Tick() {
+    if (timerOn && GetTickCount64() >= timerEnd) { // timer checked at tick granularity
+        timerOn = false;
+        timerDone = true; // ui consumes via TimerDone()
+    }
+    constexpr int kClosedEvery = 5; // closed: sample every 5s, nobody is looking at the graphs
+    if (++unsampled < (shown ? 1 : kClosedEvery)) return;
+    Sample(unsampled);
+    unsampled = 0;
+}
+
+void Model::Sample(int seconds) {
     FILETIME idle, kernel, user;
     if (GetSystemTimes(&idle, &kernel, &user)) {
         unsigned long long i = Ticks(idle), t = Ticks(kernel) + Ticks(user); // kernel time includes idle
-        if (lastTotal != 0 && t > lastTotal) cpuHist.Push(1.0f - (float)(i - lastIdle) / (float)(t - lastTotal)); // busy = 1 - idle delta / total delta
+        if (lastTotal != 0 && t > lastTotal) { // busy = 1 - idle delta / total delta, averaged over the gap
+            float busy = 1.0f - (float)(i - lastIdle) / (float)(t - lastTotal);
+            for (int k = 0; k < seconds; ++k) cpuHist.Push(busy);
+        }
         lastIdle = i;
         lastTotal = t;
     }
     MEMORYSTATUSEX m = {sizeof(m)}; // dwLength must be set first
-    if (GlobalMemoryStatusEx(&m)) ramHist.Push(m.dwMemoryLoad / 100.0f); // percent -> 0..1
-    net = netSrc.Sample();
-    upHist.Push((float)net.upBps);
-    downHist.Push((float)net.downBps);
-
-    if (timerOn && GetTickCount64() >= timerEnd) { // timer checked at tick granularity
-        timerOn = false;
-        timerDone = true; // ui consumes via TimerDone()
+    if (GlobalMemoryStatusEx(&m))
+        for (int k = 0; k < seconds; ++k) ramHist.Push(m.dwMemoryLoad / 100.0f); // percent -> 0..1
+    net = netSrc.Sample(shown); // rates are averaged over the gap by the sampler's own clock
+    for (int k = 0; k < seconds; ++k) {
+        upHist.Push((float)net.upBps);
+        downHist.Push((float)net.downBps);
     }
 }
 
@@ -127,9 +157,12 @@ void Model::OnWx() {
 
 void Model::OpenBt() {
     if (btOpen) return;
+    CloseWifi(); // one sheet at a time
+    CloseSettings();
     btOpen = true;
     bt.Open(notify, WM_APP_BT);
     OnBt();
+    OnShare(); // reopened on the shared-audio tab
 }
 
 void Model::CloseBt() {
@@ -144,6 +177,45 @@ void Model::OnBt() {
     if (!btOpen) return; // late posts after close
     bt.Snap(btDevs);
     btScan = bt.Scanning();
+}
+
+void Model::OnShare() {
+    if (!btOpen || !shareTab) return; // listing probes every endpoint, only worth it while visible
+    shareOuts = share.List();
+}
+
+void Model::OpenWifi() {
+    if (wifiOpen) return;
+    CloseBt(); // one sheet at a time
+    CloseSettings();
+    wifiOpen = true;
+    wifi.Open(notify, WM_APP_WIFI);
+    OnWifi();
+}
+
+void Model::CloseWifi() {
+    if (!wifiOpen) return;
+    wifiOpen = wifiScan = false;
+    wifi.Close(); // list stays until the fade-out ends, see DropWifiList
+}
+
+void Model::ReopenWifi() {
+    if (!wifiOpen) return;
+    wifi.Close();
+    wifi.Open(notify, WM_APP_WIFI);
+}
+
+void Model::DropWifiList() {
+    if (wifiOpen || wifiNets.empty()) return;
+    wifiNets.clear();
+    wifiNets.shrink_to_fit(); // give the memory back
+}
+
+void Model::OnWifi() {
+    if (!wifiOpen) return; // late posts after close
+    wifi.Snap(wifiNets);
+    wifiScan = wifi.Scanning();
+    wifiState = wifi.State();
 }
 
 void Model::SetVol(float v) {
@@ -176,6 +248,65 @@ void Model::SetBright(float v) {
 void Model::SetAwake(bool on) {
     awake = on;
     sys::SetAwake(on);
+}
+
+void Model::SetPref(int& field, const wchar_t* key, int value) {
+    field = value;
+    sys::SaveNum(key, value);
+}
+
+void Model::OpenSettings() {
+    if (settingsOpen) return;
+    CloseBt(); // one sheet at a time
+    CloseWifi();
+    settingsOpen = true;
+    screenList = sys::ListScreens(); // monitors may have changed since last time
+}
+
+void Model::PickScreen(const std::wstring& name) {
+    screen = name;
+    sys::SaveText(L"Screen", name);
+    SetPref(screens, L"Screens", 0);
+}
+
+void Model::CloseSettings() {
+    settingsOpen = false;
+    hexFocus = false;
+}
+
+void Model::SetNotifyPills(bool on) {
+    SetPref(notifyPills, L"NotifyPills", on ? 1 : 0);
+    if (on) notifyWatch.Start(notify, WM_APP_NOTIFY);
+    else notifyWatch.Stop();
+}
+
+void Model::SetAccent(int mode, int hex) {
+    SetPref(accentMode, L"AccentMode", mode ? 1 : 0);
+    SetPref(accentHex, L"AccentHex", hex & 0xFFFFFF);
+}
+
+bool Model::ParseHex(const std::wstring& text, int& rgb) {
+    std::wstring h;
+    for (wchar_t c : text)
+        if (iswxdigit(c)) h += c;
+        else if (c != L'#' && !iswspace(c)) return false; // anything else isn't a color
+    if (h.size() == 3) h = {h[0], h[0], h[1], h[1], h[2], h[2]}; // #abc -> #aabbcc
+    if (h.size() != 6) return false;
+    rgb = (int)wcstoul(h.c_str(), nullptr, 16);
+    return true;
+}
+
+bool Model::CommitHex() {
+    hexFocus = false;
+    int rgb = 0;
+    if (!ParseHex(hexEdit, rgb)) return false;
+    SetAccent(1, rgb);
+    return true;
+}
+
+void Model::SetLook(int v) {
+    look = v < 0 || v >= kLooks ? 0 : v;
+    sys::SaveNum(kLookVal, look);
 }
 
 namespace {

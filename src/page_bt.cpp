@@ -1,26 +1,15 @@
-#include <d2d1_1helper.h>
-
 #include <algorithm>
-#include <cmath>
 #include <cwchar>
 
 #include "anim.h"
 #include "glyphs.h"
-#include "pages.h"
+#include "page_sheet.h"
+
+using namespace sheet;
 
 namespace {
 
-constexpr float kPi = 3.14159265f;
-constexpr float kHero = 236; // left column width
-constexpr float kRowH = 54, kRowGap = 6, kHeadH = 30, kNoteH = 40; // list item heights
-const Color kDanger = Color::Rgb(0xFF8A80); // soft red for forget
 float scrollTo = 0; // wheel target, eased into "bt.scroll"
-
-int Key(const std::wstring& s) { // stable per-device ui id, survives re-sorting
-    uint32_t h = 2166136261u;
-    for (wchar_t ch : s) h = (h ^ ch) * 16777619u; // fnv-1a
-    return static_cast<int>(h & 0x7fffffff);
-}
 
 int IconOf(int kind) {
     switch (kind) {
@@ -48,73 +37,15 @@ const wchar_t* KindName(int kind) {
     }
 }
 
-void Spinner(Canvas& c, D2D1_POINT_2F o, float r, Color col, double now) {
-    float a = static_cast<float>(std::fmod(now * 5.5, 2 * kPi)); // ~0.9 turns/s
-    c.Arc(o, r, a, kPi * 1.3f, col, 2);
-}
-
-void Radar(Ui& ui, const Theme& t, D2D1_POINT_2F o, bool on, bool scanning) {
+bool Tab(Ui& ui, const Theme& t, const char* idName, const D2D1_RECT_F& r, const wchar_t* label, bool on) { // list header tab
+    uint32_t id = Ui::Id(idName);
+    Ui::Hit h = ui.Button(id, r);
+    float lit = ui.Smooth(id, on ? 1.0f : 0, 14);
+    float hover = ui.Smooth(id + 1, h.hover ? 1.0f : 0, 16);
     Canvas& c = ui.C();
-    float scan = ui.Smooth(Ui::Id("bt.radar"), scanning ? 1.0f : 0, 6);
-    float lit = ui.Smooth(Ui::Id("bt.lit"), on ? 1.0f : 0, 10);
-    c.Glow(o, 96, 80, t.accent.Alpha(0.05f + 0.13f * lit)); // soft halo behind the badge
-    if (scan > 0.01f) {
-        float ph = static_cast<float>(std::fmod(ui.Now() * 0.55, 1.0)); // ring cycle ~1.8s
-        for (int i = 0; i < 3; ++i) {
-            float f = std::fmod(ph + i / 3.0f, 1.0f); // 3 staggered rings expand and fade
-            c.Ring(o, 34 + f * 22, t.accent.Alpha((1 - f) * 0.5f * scan), 1.5f); // stays clear of the title
-        }
-        ui.KeepAlive(); // ambient rate is plenty for rings
-    }
-    c.Dot(o, 32, t.track.Mix(t.accent.Alpha(0.24f), lit));
-    c.Ring(o, 32, t.hairTop.Mix(t.accentHi.Alpha(0.45f), lit), 1);
-    int g = scanning ? glyph::BtSearch : on ? glyph::Bluetooth : glyph::BluetoothOff;
-    c.Icon(g, o, 30, t.textDim.Mix(t.accentHi, lit), on); // filled glyph when on
-}
-
-bool AddBtn(Ui& ui, const Theme& t, const D2D1_RECT_F& r, bool scanning, bool enabled) {
-    uint32_t id = Ui::Id("bt.add");
-    Ui::Hit h = enabled ? ui.Button(id, r) : Ui::Hit{};
-    float hover = ui.Smooth(id, h.hover ? 1.0f : 0, 16);
-    float press = ui.Smooth(id + 1, h.down ? 1.0f : 0, 26);
-    float sc = ui.Smooth(id + 2, scanning ? 1.0f : 0, 12); // morphs primary pill -> ghost pill
-    float a = enabled ? 1.0f : 0.4f;
-    Canvas& c = ui.C();
-    D2D1_RECT_F b = Inset(r, 1.5f * press, 1.5f * press); // press shrink
-    float rad = Height(b) / 2;
-    if (sc < 0.999f) {
-        float k = (1 - sc) * a;
-        c.Fill(Inset(b, -4, -4), rad + 4, t.accent.Alpha((0.10f + 0.14f * hover) * k)); // halo grows on hover
-        c.FillH(b, rad, t.accent.Alpha(k), t.accentHi.Mix(t.accent, 0.4f * (1 - hover)).Alpha(k));
-    }
-    if (sc > 0.001f) {
-        c.Fill(b, rad, t.cardHi.Mix(t.track, 0.5f * hover).Alpha(sc * a));
-        c.Stroke(b, rad, t.hairTop.Mix(t.accent.Alpha(0.5f), 0.5f).Alpha(sc), 1);
-    }
-    Color ink = t.onAccent.Mix(t.text, sc).Alpha(a); // dark on accent, light on ghost
-    const wchar_t* label = scanning ? L"Stop scanning" : L"Add device";
-    float est = std::wcslen(label) * 7.0f; // rough text width, keeps icon+label centered
-    float x0 = (b.left + b.right) / 2 - (est + 26) / 2, cy = (b.top + b.bottom) / 2;
-    if (scanning) Spinner(c, {x0 + 8, cy}, 7, ink, ui.Now());
-    else c.Icon(glyph::Add, {x0 + 8, cy}, 20, ink);
-    c.Text(label, Rect(x0 + 24, b.top, est + 12, Height(b)), Weight::Medium, 13, ink);
-    if (scanning) ui.KeepAlive();
-    return h.clicked;
-}
-
-bool Act(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const wchar_t* label, bool primary, bool busy, bool live) {
-    Ui::Hit h = live && !busy ? ui.Button(id, r) : Ui::Hit{}; // no clicks while pending
-    float hover = ui.Smooth(id, h.hover ? 1.0f : 0, 16);
-    float pr = ui.Smooth(id + 1, primary ? 1.0f : 0, 12); // filled accent vs quiet outline
-    Canvas& c = ui.C();
-    float rad = Height(r) / 2;
-    Color base = t.track.Mix(t.accent, pr);
-    Color hi = t.track.Mix(t.text, 0.12f).Mix(t.accentHi, pr);
-    c.Fill(r, rad, base.Mix(hi, 0.6f * hover)); // brighten on hover
-    if (pr < 0.99f) c.Stroke(r, rad, t.hairTop.Alpha(1 - pr), 1);
-    Color ink = t.text.Mix(t.onAccent, pr);
-    if (busy) Spinner(c, {(r.left + r.right) / 2, (r.top + r.bottom) / 2}, 7, ink, ui.Now());
-    else c.Text(label, r, Weight::Medium, 12, ink, Align::Center);
+    c.TextSp(label, {r.left + 4, r.top + 8, r.right, r.top + 22}, Weight::Medium, 10, t.textLow.Mix(t.text, 0.5f * hover).Mix(t.accent, lit), 1.4f);
+    float len = (r.right - r.left - 8) * lit; // underline grows in under the active tab
+    if (len > 2) c.Line({r.left + 4, r.top + 27}, {r.left + 4 + len, r.top + 27}, t.accent, 2);
     return h.clicked;
 }
 
@@ -178,18 +109,6 @@ void Row(PageCtx& p, const D2D1_RECT_F& r, const D2D1_RECT_F& view, const sys::B
     if (busy) ui.KeepAlive(); // spinner + deadline expiry need frames
 }
 
-void Head(Ui& ui, const Theme& t, const D2D1_RECT_F& r, const wchar_t* label, bool spin) {
-    ui.C().TextSp(label, {r.left + 4, r.top + 8, r.left + 160, r.top + 22}, Weight::Medium, 10, t.textLow, 1.4f);
-    if (spin) Spinner(ui.C(), {r.left + 14 + std::wcslen(label) * 8.0f, r.top + 15}, 5, t.accent, ui.Now());
-}
-
-void Empty(Canvas& c, const Theme& t, const D2D1_RECT_F& v, int g, const wchar_t* title, const wchar_t* sub) {
-    float cx = (v.left + v.right) / 2, cy = (v.top + v.bottom) / 2 - 10;
-    c.Icon(g, {cx, cy - 26}, 34, t.textLow);
-    c.Text(title, {v.left, cy - 2, v.right, cy + 20}, Weight::Medium, 14, t.text, Align::Center);
-    c.Text(sub, {v.left, cy + 22, v.right, cy + 40}, Weight::Light, 12, t.textDim, Align::Center);
-}
-
 }
 
 void DrawBt(PageCtx& p, float k) {
@@ -198,46 +117,40 @@ void DrawBt(PageCtx& p, float k) {
     const Theme& t = p.shell;
     Model& m = p.m;
     const D2D1_RECT_F& s = p.area;
-
-    ComPtr<ID2D1DeviceContext> dc;
-    bool layered = k < 0.999f && SUCCEEDED(c.Target()->QueryInterface(IID_PPV_ARGS(&dc))); // layer only while animating
-    D2D1_MATRIX_3X2_F base;
-    c.Target()->GetTransform(&base);
-    c.Target()->SetTransform(D2D1::Matrix3x2F::Translation(0, (1 - k) * 16) * *D2D1::Matrix3x2F::ReinterpretBaseType(&base)); // rise in
-    if (layered) dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-                                                      D2D1::IdentityMatrix(), k), nullptr);
-
-    c.Fill(Inset(s, -10, -10), 30, Color{0, 0, 0, 0.5f}); // dim what's behind
-    c.Fill(s, 24, t.card); // sheet body
-    c.PushClip(s);
-    c.Glow({s.left + kHero / 2, s.top + 84}, 200, 160, t.accent.Alpha(0.09f)); // tint the hero side
-    c.PopClip();
-    c.FillV({s.left, s.top, s.right, s.top + 80}, 24, Color{1, 1, 1, 0.035f}, Color{1, 1, 1, 0}); // top sheen
-    c.StrokeV(s, 24, t.hairTop, t.hairBot, 1);
-    c.Line({s.left + kHero, s.top + 22}, {s.left + kHero, s.bottom - 22}, Color{1, 1, 1, 0.06f}, 1, false);
+    Frame frame = Begin(p, k);
 
     bool on = m.radios.BtOn();
     int paired = 0, conn = 0;
     for (const auto& d : m.btDevs)
         if (d.paired) ++paired, conn += d.on ? 1 : 0;
 
-    float hx = s.left + kHero / 2; // hero column center
-    Radar(ui, t, {hx, s.top + 84}, on, on && m.btScan);
-    c.Text(L"Bluetooth", Rect(s.left + 16, s.top + 134, kHero - 32, 28), Weight::Medium, 21, t.text, Align::Center);
+    Radar(ui, t, "bt.radar", frame.badge, on, on && m.btScan, glyph::Bluetooth, glyph::BluetoothOff, glyph::BtSearch);
+    c.Text(L"Bluetooth", frame.title, Weight::Medium, frame.titleSize, t.text, frame.align);
     std::wstring sub = !on ? L"Turned off" : paired == 0 ? L"No devices yet"
                                                           : std::to_wstring(conn) + L" connected  ·  " + std::to_wstring(paired) + L" paired";
-    c.Text(sub, Rect(s.left + 16, s.top + 162, kHero - 32, 18), Weight::Light, 12, t.textDim, Align::Center);
-    if (w::Switch(ui, t, Ui::Id("bt.power"), {hx, s.top + 204}, on, m.radios.HasBt())) {
+    c.Text(sub, frame.sub, Weight::Light, 12, t.textDim, frame.align);
+    if (w::Switch(ui, t, Ui::Id("bt.power"), frame.sw, on, m.radios.HasBt())) {
         if (on) m.bt.Scan(false); // no point scanning with the radio off
         m.radios.SetBt(!on);
     }
-    if (AddBtn(ui, t, Rect(s.left + 28, s.bottom - 62, kHero - 56, 38), m.btScan, on)) {
+    D2D1_RECT_F pill = frame.pill;
+    if (m.shareTab) {
+        bool sharing = m.share.Active();
+        if (ScanBtn(ui, t, "bt.stopshare", pill, false, sharing, glyph::Stop, sharing ? L"Stop sharing" : L"Not sharing", L"")) {
+            m.share.StopAll(); // thread ends, every extra device is released
+            m.OnShare();
+        }
+    } else if (ScanBtn(ui, t, "bt.add", pill, m.btScan, on, glyph::Add, L"Add device", L"Stop scanning")) {
         m.bt.Scan(!m.btScan);
         m.OnBt();
     }
 
-    D2D1_RECT_F list = {s.left + kHero + 18, s.top + 16, s.right - 16, s.bottom - 14};
-    c.TextSp(L"DEVICES", Rect(list.left + 4, list.top + 8, 200, 14), Weight::Medium, 10, t.textLow, 1.4f);
+    D2D1_RECT_F list = frame.list;
+    if (Tab(ui, t, "bt.tab.dev", {list.left, list.top, list.left + 80, list.top + 30}, L"DEVICES", !m.shareTab)) m.shareTab = false;
+    if (Tab(ui, t, "bt.tab.share", {list.left + 88, list.top, list.left + 214, list.top + 30}, L"SHARED AUDIO", m.shareTab) && !m.shareTab) {
+        m.shareTab = true;
+        m.OnShare();
+    }
     if (w::IconBtn(ui, t, Ui::Id("bt.close"), {list.right - 14, list.top + 14}, 30, glyph::Close, 18)) m.CloseBt();
     if (w::IconBtn(ui, t, Ui::Id("bt.more"), {list.right - 48, list.top + 14}, 30, glyph::OpenNew, 16)) {
         p.wantClose = true; // hand off to windows settings
@@ -245,7 +158,9 @@ void DrawBt(PageCtx& p, float k) {
     }
     D2D1_RECT_F view = {list.left, list.top + 34, list.right, list.bottom}; // scrollable area under header
 
-    if (!on) {
+    if (m.shareTab) {
+        DrawShare(p, view); // plays what the main output plays on more devices
+    } else if (!on) {
         Empty(c, t, view, glyph::BluetoothOff, L"Bluetooth is off", L"Turn it on to see your devices");
     } else {
         struct Item { int type; const sys::BtDev* d; const wchar_t* text; }; // 0 head, 1 device, 2 note
@@ -263,10 +178,7 @@ void DrawBt(PageCtx& p, float k) {
         }
         float total = 0; // content height for scroll clamp
         for (const Item& it : items) total += it.type == 1 ? kRowH + kRowGap : it.type == 0 ? kHeadH : kNoteH;
-        float maxS = (std::max)(0.0f, total - Height(view));
-        float notches = ui.Wheel(view);
-        scrollTo = (std::clamp)(scrollTo - notches * 60, 0.0f, maxS); // 60 dips per notch
-        float scroll = ui.Smooth(Ui::Id("bt.scroll"), scrollTo, 18);
+        float scroll = Scroll(ui, "bt.scroll", scrollTo, view, total);
 
         uint64_t nowMs = GetTickCount64(); // for pending op deadlines
         c.PushClip(view);
@@ -282,11 +194,9 @@ void DrawBt(PageCtx& p, float k) {
             y += h;
         }
         c.PopClip();
-        if (scroll > 1) c.FillV({view.left, view.top, view.right, view.top + 18}, 0, t.card, t.card.Alpha(0)); // fade hints more above
-        if (scroll < maxS - 1) c.FillV({view.left, view.bottom - 18, view.right, view.bottom}, 0, t.card.Alpha(0), t.card);
+        Fades(c, t, view, scroll, total);
     }
 
     if (ui.RClick(s)) m.CloseBt(); // right click again closes
-    if (layered) dc->PopLayer();
-    c.Target()->SetTransform(base);
+    End(p, frame);
 }

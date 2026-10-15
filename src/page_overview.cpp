@@ -14,34 +14,50 @@ void Player(PageCtx& p, const D2D1_RECT_F& r) {
     w::Card(ui, t, r);
     if (p.coverBlur) { // blurred art as card backdrop
         c.Image(p.coverBlur, r, 22, 0.55f * p.artFade);
-        c.FillH(r, 22, Color{0, 0, 0, 0.20f}, Color{0, 0, 0, 0.68f}); // darken toward bottom for text contrast
+        c.FillH(r, 22, t.veil.Alpha(0.20f), t.veil.Alpha(0.68f)); // wash toward bottom for text contrast
         c.StrokeV(r, 22, t.hairTop, t.hairBot, 1);
     } else {
         c.FillH(r, 22, t.accent.Alpha(0.10f), Color{0, 0, 0, 0}); // no art: faint accent wash
     }
     VizGlow(p, r, 1.15f); // glow scaled up a bit for small card
 
-    const float pad = 20;
+    const float pad = Height(r) < 160 ? 16.0f : 20.0f; // sidebar card is shorter
     float side = Height(r) - 2 * pad; // square art fills card height
+    float k = (std::min)(1.0f, (Height(r) - 2 * pad) / 126); // text and transport rows squeeze with the card
     D2D1_RECT_F art = Rect(r.left + pad, r.top + pad, side, side);
     c.Fill(art, 16, t.cardHi);
-    if (p.cover) c.Image(p.cover, art, 16, p.artFade);
+    if (p.cover) c.Art(p.cover, p.coverBlur, art, 16, p.artFade);
     else c.Icon(glyph::Music, {(art.left + art.right) / 2, (art.top + art.bottom) / 2}, 40, t.textLow); // placeholder note, centered
 
     float tx = art.right + 20, tw = r.right - pad - tx; // text column right of art
-    c.TextSp(fmt::Upper(has ? tr.app : L"Idle"), Rect(tx, r.top + 24, tw, 16), Weight::Medium, 10.5f, t.accent, 1.4f);
-    c.Text(has && !tr.title.empty() ? tr.title : L"Nothing playing", Rect(tx, r.top + 45, tw, 24), Weight::Medium, 17, t.text);
-    c.Text(has ? tr.artist : L"Play something in any app", Rect(tx, r.top + 71, tw, 20), Weight::Light, 13, t.textDim);
+    float ty = r.top + pad + 4 * k;
+    c.TextSp(fmt::Upper(has ? tr.app : L"Idle"), Rect(tx, ty, tw, 16), Weight::Medium, 10.5f, t.accent, 1.4f);
+    c.Text(has && !tr.title.empty() ? tr.title : L"Nothing playing", Rect(tx, ty + 21 * k, tw, 24), Weight::Medium, 17, t.text);
+    c.Text(has ? tr.artist : L"Play something in any app", Rect(tx, ty + 21 * k + 25, tw, 20), Weight::Light, 13, t.textDim);
 
-    float cy = r.top + 117; // transport row under text
-    if (w::IconBtn(ui, t, Ui::Id("ov.prev"), {tx + 16, cy}, 38, glyph::Prev, 24, has && tr.canPrev)) p.m.media.Previous(); // buttons 54px apart
-    if (w::PlayBtn(ui, t, Ui::Id("ov.play"), {tx + 70, cy}, 44, has && tr.playing, has)) p.m.media.TogglePlay();
-    if (w::IconBtn(ui, t, Ui::Id("ov.next"), {tx + 124, cy}, 38, glyph::Next, 24, has && tr.canNext)) p.m.media.Next();
+    float cy = (std::min)(r.top + 117, r.bottom - pad - 22); // transport row under text, clear of the progress line
+    bool slim = Height(r) < 160; // sidebar card: a lighter transport row
+    float bs = slim ? 0.78f : 1.0f, step = 54 * bs;
+    if (w::IconBtn(ui, t, Ui::Id("ov.prev"), {tx + 16 * bs, cy}, 38 * bs, glyph::Prev, 24 * bs, has && tr.canPrev)) p.m.media.Previous();
+    if (w::PlayBtn(ui, t, Ui::Id("ov.play"), {tx + 16 * bs + step, cy}, 44 * bs, has && tr.playing, has)) p.m.media.TogglePlay();
+    if (w::IconBtn(ui, t, Ui::Id("ov.next"), {tx + 16 * bs + 2 * step, cy}, 38 * bs, glyph::Next, 24 * bs, has && tr.canNext)) p.m.media.Next();
 
+    if (has && tr.duration <= 0) return; // app reports no length, a stuck empty bar would mislead
     float y = r.bottom - pad + 4, x1 = r.right - pad; // progress line hugs card bottom
-    c.Line({tx, y}, {x1, y}, t.track, 3);
-    float f = has ? (float)tr.Progress() : 0;
-    if (f > 0.002f) c.Line({tx, y}, {tx + (x1 - tx) * f, y}, t.accent, 3); // skip near-zero, avoids stray cap dot
+    static float preview = -1; // drag preview, committed on release like the media page
+    uint32_t id = Ui::Id("ov.seek");
+    float f = preview >= 0 ? preview : has ? (float)tr.Progress() : 0;
+    if (has && tr.canSeek && ui.Slider(id, {tx, y - 9, x1, y + 9}, f, false)) preview = f; // a tall grab zone around the thin line
+    if (ui.IsActive(id) && ui.In().released) {
+        p.m.media.Seek(f);
+        preview = -1;
+    }
+    if (!ui.IsActive(id)) preview = -1;
+    float grow = ui.Smooth(id + 1, ui.IsActive(id) || (has && tr.canSeek && Inside({tx, y - 9, x1, y + 9}, ui.In().mouse)) ? 1.0f : 0, 16);
+    float thick = 3 + 2 * grow; // line thickens under the mouse, a knob shows where it is
+    c.Line({tx, y}, {x1, y}, t.track, thick);
+    if (f > 0.002f) c.Line({tx, y}, {tx + (x1 - tx) * f, y}, t.accent, thick); // skip near-zero, avoids stray cap dot
+    if (grow > 0.01f) c.Dot({tx + (x1 - tx) * f, y}, 5.5f * grow, t.accentHi);
 }
 
 void WxCard(PageCtx& p, const D2D1_RECT_F& r) {
@@ -57,16 +73,33 @@ void WxCard(PageCtx& p, const D2D1_RECT_F& r) {
         GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &st, L"dddd", day, 64, nullptr); // locale-aware day name
         GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &st, L"d MMMM", date, 64, nullptr);
         c.TextSp(fmt::Upper(day), Rect(r.left + 18, r.top + 20, 160, 16), Weight::Medium, 10.5f, t.accent, 1.4f);
-        c.Text(date, Rect(r.left + 16, r.top + 44, 170, 50), Weight::Thin, 34, t.text);
-        c.Text(p.m.cfg.weather ? L"Fetching weather…" : L"Weather is off", Rect(r.left + 18, r.top + 118, 160, 18),
-               Weight::Light, 12, t.textDim);
+        bool compact = Height(r) < 140; // sidebar tile: smaller date, no status line
+        c.Text(date, Rect(r.left + 16, r.top + 44, Width(r) - 24, 50), Weight::Thin, compact ? 28.0f : 34.0f, t.text);
+        if (!compact)
+            c.Text(p.m.cfg.weather ? L"Fetching weather…" : L"Weather is off", Rect(r.left + 18, r.top + 118, 160, 18), Weight::Light, 12, t.textDim);
         return;
     }
     c.Icon(fmt::WxIcon(wx.code, wx.isDay), {r.left + 32, r.top + 34}, 30, t.accent, true); // day/night icon variant
-    c.Text(fmt::Temp(wx.tempC, p.m.cfg.fahr), Rect(r.left + 14, r.top + 52, 170, 62), Weight::Thin, 52, t.text);
-    c.Text(fmt::WxText(wx.code), Rect(r.left + 18, r.top + 110, 160, 18), Weight::Regular, 13, t.text);
-    std::wstring sub = wx.place + L"  ·  " + fmt::Temp(wx.highC, p.m.cfg.fahr) + L" / " + fmt::Temp(wx.lowC, p.m.cfg.fahr); // place · hi / lo
-    c.Text(sub, Rect(r.left + 18, r.top + 129, 162, 16), Weight::Light, 11.5f, t.textDim);
+    bool clock = Height(r) >= 120 && Width(r) >= 170; // room for the stacked clock in the card's empty right strip
+    if (clock) {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        wchar_t fmt24[4] = {};
+        bool h24 = GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, LOCALE_ITIME, fmt24, 4) > 0 && fmt24[0] == L'1'; // the user's 12/24 hour choice
+        int hour = h24 ? st.wHour : (st.wHour + 11) % 12 + 1;
+        wchar_t hh[4], mm[4];
+        swprintf_s(hh, L"%02d", hour);
+        swprintf_s(mm, L"%02d", st.wMinute);
+        float fs = (std::min)((Height(r) - 16) / 2 * 1.08f, 72.0f), cw = fs * 1.2f, cx = r.right - 8 - cw / 2; // two lines fill the card's height
+        float half = Height(r) / 2, lh = fs * 1.25f;
+        c.Text(hh, Rect(cx - cw / 2, r.top + half * 0.52f - lh / 2 + 4, cw, lh), Weight::Thin, fs, t.text, Align::Center);
+        c.Text(mm, Rect(cx - cw / 2, r.top + half * 1.48f - lh / 2 - 4, cw, lh), Weight::Thin, fs, t.accent, Align::Center);
+    }
+    float textW = clock ? Width(r) - (std::min)((Height(r) - 16) / 2 * 1.08f, 72.0f) * 1.2f - 22 : 162; // weather keeps left of the clock
+    c.Text(fmt::Temp(wx.tempC, p.m.cfg.fahr), Rect(r.left + 14, r.top + 52, textW + 8, 62), Weight::Thin, 52, t.text);
+    c.Text(fmt::WxText(wx.code), Rect(r.left + 18, r.top + 110, textW, 18), Weight::Regular, 13, t.text);
+    std::wstring sub = clock ? wx.place : wx.place + L"  ·  " + fmt::Temp(wx.highC, p.m.cfg.fahr) + L" / " + fmt::Temp(wx.lowC, p.m.cfg.fahr); // place · hi / lo
+    c.Text(sub, Rect(r.left + 18, r.top + 129, textW, 16), Weight::Light, 11.5f, t.textDim);
 }
 
 void Toggles(PageCtx& p, const D2D1_RECT_F& r) {
@@ -81,10 +114,11 @@ void Toggles(PageCtx& p, const D2D1_RECT_F& r) {
     std::wstring wifiTxt = !m.radios.HasWifi() ? L"Unavailable" : !wifi ? L"Off" : m.net.ssid.empty() ? L"On" : m.net.ssid; // ssid when connected
     if (w::Tile(ui, t, Ui::Id("tg.wifi"), cells[0], wifi ? glyph::Wifi : glyph::WifiOff, L"Wi-Fi", wifiTxt, wifi, m.radios.HasWifi()))
         m.radios.SetWifi(!wifi);
+    if (m.radios.HasWifi() && ui.RClick(cells[0])) m.OpenWifi(); // right click: network picker
 
     bool bt = m.radios.BtOn();
     if (w::Tile(ui, t, Ui::Id("tg.bt"), cells[1], bt ? glyph::Bluetooth : glyph::BluetoothOff, L"Bluetooth",
-                m.radios.HasBt() ? (bt ? L"On" : L"Off") : L"Unavailable", bt, m.radios.HasBt()))
+                m.radios.HasBt() ? (m.share.Active() ? L"Sharing audio" : bt ? L"On" : L"Off") : L"Unavailable", bt, m.radios.HasBt()))
         m.radios.SetBt(!bt);
     if (m.radios.HasBt() && ui.RClick(cells[1])) m.OpenBt(); // right click: device menu
 
@@ -149,7 +183,7 @@ void Stat(PageCtx& p, const D2D1_RECT_F& r, const wchar_t* label, const std::wst
     w::Card(ui, t, r, 20);
     c.TextSp(label, Rect(r.left + 14, r.top + 14, Width(r) - 28, 14), Weight::Medium, 10, t.textLow, 1.4f);
     c.Text(value, Rect(r.left + 13, r.top + 30, Width(r) - 26, 30), Weight::Light, 22, t.text);
-    D2D1_RECT_F chart = {r.left + 1, r.bottom - 58, r.right - 1, r.bottom - 10}; // sparkline in bottom 48px
+    D2D1_RECT_F chart = {r.left + 1, (std::max)(r.bottom - 58, r.top + 62), r.right - 1, r.bottom - 10}; // sparkline in the bottom 48px, never over the value
     c.PushClip(Inset(r, 1, 1)); // keep fill inside card border
     w::Spark(c, chart, h.Values(), h.Version(), maxV, t.accent);
     c.PopClip();
@@ -160,6 +194,24 @@ void Stat(PageCtx& p, const D2D1_RECT_F& r, const wchar_t* label, const std::wst
 void DrawHome(PageCtx& p) {
     const D2D1_RECT_F& a = p.area;
     float x = a.left, y = a.top;
+    if (Height(a) > Width(a)) { // sidebar: one column, most-used first
+        const float g = 12, wd = Width(a), half = (wd - g) / 2;
+        float row = (Height(a) - 4 * g) / 5.45f; // five rows, the player taller so its controls clear the text
+        Model& m = p.m;
+        Player(p, Rect(x, y, wd, row * 1.45f));
+        y += row * 1.45f + g;
+        Toggles(p, Rect(x, y, wd, row));
+        y += row + g;
+        Sliders(p, Rect(x, y, wd, row));
+        y += row + g;
+        WxCard(p, Rect(x, y, half, row));
+        Stat(p, Rect(x + half + g, y, half, row), L"CPU", w::Pct(m.cpuHist.Last()), m.cpuHist, 1);
+        y += row + g;
+        float netMax = (std::max)(m.downHist.Max(), 64.0f * 1024);
+        Stat(p, Rect(x, y, half, a.bottom - y), L"MEMORY", w::Pct(m.ramHist.Last()), m.ramHist, 1);
+        Stat(p, Rect(x + half + g, y, half, a.bottom - y), L"DOWNLOAD", fmt::Rate(m.downHist.Last()), m.downHist, netMax);
+        return;
+    }
     const float topRow = 166, gap = 12; // fixed top row, bottom row takes rest
     Player(p, Rect(x, y, 388, topRow)); // columns at x 0 / 400 / 600
     WxCard(p, Rect(x + 400, y, 188, topRow));

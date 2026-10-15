@@ -4,7 +4,7 @@
 
 # Astraeus
 
-**A native bezel dashboard for Windows that drips open from the top of your screen.**
+**A native bezel dashboard for Windows that drips open from the edge of your screen.**
 
 [![Latest release](https://img.shields.io/github/v/release/Icetist/Astraeus?style=flat-square&color=9F8CFF)](https://github.com/Icetist/Astraeus/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Icetist/Astraeus/total?style=flat-square&color=9F8CFF)](https://github.com/Icetist/Astraeus/releases)
@@ -24,7 +24,7 @@
 
 </div>
 
-Astraeus lives in a thin strip at the top edge of your screen. Hover it and a liquid panel springs down with your music, quick toggles, system stats and everyday tools. Move away and it tucks itself back in, hands the GPU back and goes back to using almost nothing.
+Astraeus lives in a thin strip at the edge of your screen, at the top by default or as a sidebar on the left or right. Hover it and a liquid panel springs out with your music, quick toggles, system stats and everyday tools. Move away and it tucks itself back in, hands the GPU back and goes back to using almost nothing.
 
 No Electron, no web view, no runtime to install. Just one small native executable written in C++ with Direct2D and DirectComposition.
 
@@ -32,16 +32,21 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 
 ## ✨ Features
 
-- **Media player** with album art, a wavy seek bar and a glow that pulses with the music. Works with Spotify, browsers, Media Player and anything else that talks to Windows media controls.
+- **Media player** with album art, a wavy seek bar and a glow that pulses with the music. Works with Spotify, browsers, Media Player and anything else that talks to Windows media controls. Loop and restart work even for players that don't offer them, like YouTube in Firefox-based browsers.
+- **Fullscreen player.** Click the album cover to fill the screen with the cover, the song and a glow that moves with the music. Click it again or press Esc to leave.
+- **Shared audio.** Play the same sound on several outputs at once, Bluetooth and wired, each with its own delay and volume to keep them in sync.
 - **Quick toggles** for Wi-Fi, Bluetooth, microphone and output device (or power mode on laptops), plus volume, mic and brightness sliders.
 - **Bluetooth control center.** Right-click the Bluetooth tile to see paired devices, connect or disconnect them, scan for and pair new ones, or forget old ones.
+- **Wi-Fi network picker.** Right-click the Wi-Fi tile, or press **Networks** on the Network page, to see nearby networks and connect to saved or open ones.
 - **Live system stats:** CPU, GPU, memory, top processes, network throughput, local and public IP, all with smooth sparklines.
 - **Tools:** lock, sleep, sign out, restart and shut down (destructive actions are press-and-hold), a timer with notifications, a screenshot shortcut and keep-awake.
 - **Weather** for your location, in Celsius or Fahrenheit.
-- **Colors that follow you.** The palette is pulled from your wallpaper, or from the album art of whatever is playing.
+- **Colors that follow you.** The palette is pulled from your wallpaper, or from the album art of whatever is playing, or from any accent you pick. Three looks: dark (the default), light, and glass, a live frosted blur of whatever is behind the panel.
+- **Settings you touch.** Pick the edge it lives on, which monitor (or all of them), your accent color and look from small pictures of the real thing.
+- **The island.** Over a maximized window, a small pill shows what's playing instead of dropping the whole panel over your work. Windows notifications can arrive as pills too.
 - **Gets out of the way.** Hides itself when a game or video goes fullscreen.
-- **Stays up to date.** New releases install themselves silently in the background.
-- **Lightweight.** Nothing renders while the panel is closed, the GPU is released after a few seconds and the process drops into Windows efficiency mode.
+- **Stays up to date.** New releases install themselves silently in the background, and only after their SHA-256 matches the one published with the release.
+- **Lightweight.** Nothing renders while the panel is closed, the GPU is released after a few seconds and the process drops into Windows efficiency mode. Glass, shared audio and the fullscreen player only load while you use them.
 
 ## 📸 Screenshots
 
@@ -71,13 +76,13 @@ Astraeus is built to cost nothing while you are not looking at it. Measured on a
 
 | | Closed (idle) | Open | After closing |
 | --- | --- | --- | --- |
-| **Memory (working set)** | 16.8 MB | ~38 MB | 16.7 MB |
+| **Memory (working set)** | 16.4 MB | ~38 MB | 16.7 MB |
 | **CPU** | 0.04% | ~3.7% | ~0% |
 | **GPU** | 0% | ~12% | 0% |
 
 | | |
 | --- | --- |
-| **Executable size** | 1.3 MB, single file, fonts embedded |
+| **Executable size** | 1.5 MB, single file, fonts embedded |
 | **Startup to ready** | 430 ms |
 | **Install size** | 1 file, no runtime, no installer |
 
@@ -86,7 +91,8 @@ How it stays this light:
 - Frames are only drawn while something is actually moving. A closed panel renders nothing at all.
 - Direct3D, Direct2D and the swap chain are released a few seconds after the panel closes and rebuilt on demand when it opens again.
 - While closed, the process runs in Windows 11 efficiency mode (EcoQoS) with low memory priority, so Windows can park it on efficiency cores and trim it first.
-- Stats, Bluetooth and network workers only run while the panel is open. Bluetooth does nothing at all until you open its menu.
+- Stats, Bluetooth and network workers only run while the panel is open. Bluetooth does nothing at all until you open its menu, and while closed, stats are sampled only every 5 seconds.
+- The glass blur, shared audio, the fullscreen player and the notification watcher are built only when you use them and torn down afterwards.
 - The once-a-second housekeeping timer is coalescable, so Windows can batch its wakeups with others.
 - Icon fonts are subset to the glyphs that are actually used (3 MB down to 33 KB) and served straight from the executable without copying.
 
@@ -107,10 +113,14 @@ Updates are automatic. Astraeus checks GitHub shortly after launch and every few
 
 ## 🖱️ Usage
 
-- **Open the panel** by hovering the middle of the top edge of your screen, or by clicking the tray icon.
+- **Open the panel** by hovering the middle of the edge it lives on (the top unless you moved it), or by clicking the tray icon. Over a maximized window the island pill shows first; click it to open the panel.
 - **Close it** by moving the mouse away, clicking the tray icon again or dragging the panel back up.
-- **Switch pages** with the rail on the left: Home, Media, System, Network and Tools.
+- **Switch pages** with the rail: Home, Media, System, Network and Tools.
+- **Fullscreen player:** click the album cover on the Media page. Click it again, press **Esc** or right-click to leave.
+- **Shared audio:** open the Bluetooth menu and switch to the **Shared audio** tab.
 - **Bluetooth devices:** right-click the Bluetooth tile on the Home page.
+- **Wi-Fi networks:** right-click the Wi-Fi tile on the Home page, or press **Networks** on the Network page.
+- **Settings:** the **Settings** tile on the Tools page, for the look (dark, light, glass), accent color, edge, screens and notification pills.
 - **Tray menu:** right-click the tray icon for the dashboard, config, start with Windows, restart and exit.
 
 ## ⚙️ Configuration
@@ -158,7 +168,7 @@ The result is a single self-contained `build\Astraeus.exe`.
 <details>
 <summary><b>How do I uninstall it?</b></summary>
 
-Turn off **Start with Windows** in the tray menu, exit Astraeus, then delete `%LOCALAPPDATA%\Programs\Astraeus`. Optionally remove the `HKCU\Software\Astraeus` registry key, which holds a couple of small preferences.
+Turn off **Start with Windows** in the tray menu, exit Astraeus, then delete `%LOCALAPPDATA%\Programs\Astraeus`. Optionally remove the `HKCU\Software\Astraeus` registry key, which holds your settings.
 
 </details>
 

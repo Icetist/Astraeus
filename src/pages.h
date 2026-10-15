@@ -15,9 +15,14 @@ struct PageCtx {
     float artFade; // 0..1 crossfade on cover change
     D2D1_RECT_F area; // page content rect below tabs
     bool wantClose = false; // page asks drawer to retract
+    bool wantStage = false; // media page asks for the fullscreen stage
+    const wchar_t* hint = nullptr; // a short tip the drawer shows just outside the panel, next to hintRect
+    D2D1_RECT_F hintRect{};
+    float hintFade = 0;
 };
 
 void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale); // audio-reactive glow behind art
+void WaveLine(Canvas& c, float a0, float a1, float cy, float amp, double now, Color col, float width, float wavelen); // the played part of the seek line, rippling
 
 void DrawHome(PageCtx& p);
 void DrawMedia(PageCtx& p);
@@ -25,6 +30,9 @@ void DrawSys(PageCtx& p);
 void DrawNet(PageCtx& p);
 void DrawTools(PageCtx& p);
 void DrawBt(PageCtx& p, float t); // bluetooth menu overlay, t = open anim 0..1
+void DrawWifi(PageCtx& p, float t); // wi-fi network picker overlay, same sheet style
+void DrawShare(PageCtx& p, const D2D1_RECT_F& view); // shared-audio tab inside the bluetooth sheet
+void DrawSettings(PageCtx& p, float t); // astraeus settings sheet
 
 namespace fmt {
 std::wstring Rate(double bps); // auto-scaled bytes/s units

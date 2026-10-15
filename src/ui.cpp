@@ -144,7 +144,7 @@ void Card(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float radius) {
     Canvas& c = ui.C();
     c.Fill(r, radius, t.card);
     c.FillV(D2D1_RECT_F{r.left, r.top, r.right, r.top + (std::min)(Height(r), 70.0f)}, radius, // top sheen, max 70px tall
-                   Color{1, 1, 1, 0.035f}, Color{1, 1, 1, 0});
+                   t.sheen, t.sheen.Alpha(0));
     c.StrokeV(r, radius, t.hairTop, t.hairBot, 1); // hairline brighter on top, fake bevel
 }
 
@@ -202,9 +202,9 @@ bool Tile(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, 
     }
     D2D1_POINT_2F ic = {body.left + 26, (body.top + body.bottom) / 2}; // wide tile: icon left, two text rows right
     c.Icon(glyph, ic, 21, iconInk, on);
-    float tx = body.left + 46;
-    c.Text(label, {tx, body.top + 9, body.right - 8, (body.top + body.bottom) / 2 + 2}, Weight::Medium, 13, ink);
-    c.Text(detail, {tx, (body.top + body.bottom) / 2 - 1, body.right - 8, body.bottom - 8}, Weight::Light, 11.5f, sub);
+    float tx = body.left + 46, mid = (body.top + body.bottom) / 2; // label and detail stay one block, centered, however tall the tile
+    c.Text(label, {tx, mid - 19, body.right - 8, mid + 1}, Weight::Medium, 13, ink);
+    c.Text(detail, {tx, mid + 1, body.right - 8, mid + 19}, Weight::Light, 11.5f, sub);
     return h.clicked;
 }
 

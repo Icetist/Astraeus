@@ -35,6 +35,11 @@ constexpr uint64_t kCoverRetry = 4000; // ms to keep refetching art after track 
 constexpr uint32_t kMaxCover = 16u << 20; // 16 MB cap on thumbnail
 constexpr uint32_t kChunk = 64u << 10; // read size when stream size unknown
 constexpr auto kDebounce = std::chrono::milliseconds(40); // debounce bursts of winrt events
+constexpr auto kSettleFirst = std::chrono::milliseconds(600); // follow-up reads after a song change, catch late metadata
+constexpr auto kSettleLast = std::chrono::milliseconds(1400); // second one lands 2 s after the change
+constexpr uint64_t kLoopLeadMs = 1000; // loop restarts this far before the end, ahead of players auto-advancing
+constexpr double kLoopEndMs = 250; // paused this close to the end counts as finished, not paused by the user
+constexpr uint64_t kLoopSlackMs = 250; // re-arm only when the restart time moves more than this
 
 void Log(const wchar_t* where, const wchar_t* what) noexcept {
     wchar_t buf[512];
@@ -137,6 +142,7 @@ struct MediaSt {
     std::atomic<HWND> notify{nullptr};
     std::atomic<UINT> msg{0};
     std::atomic<bool> closed{false}, started{false}, running{false}, pending{false}; // pending/running drive the worker
+    std::atomic<uint64_t> settleGen{0}; // bumps per song/app change, older follow-up reads drop out
 
     mutable std::mutex mu; // guards everything below
     Manager manager{nullptr};
@@ -154,6 +160,11 @@ struct MediaSt {
     std::wstring coverKey; // worker-only, no lock needed
     uint64_t keyTick = 0; // when coverKey last changed
     uint64_t seq = 0; // coverId source
+
+    bool loop = false; // our own loop, for apps with no repeat of their own (guarded by mu)
+    std::wstring loopSel; // session the loop was turned on for
+    uint64_t loopGen = 0; // bumps to cancel a pending restart
+    uint64_t loopDue = 0; // tick ms the pending restart fires, 0 = none
 };
 using MediaP = std::shared_ptr<MediaSt>;
 
@@ -162,6 +173,30 @@ void Poke(const MediaP& s) noexcept;
 void Kick(const std::weak_ptr<MediaSt>& w) noexcept { // weak so handlers don't keep state alive
     try {
         if (auto s = w.lock()) Poke(s);
+    } catch (...) {
+        LogErr(L"kick");
+    }
+}
+
+winrt::fire_and_forget Settle(std::weak_ptr<MediaSt> w, uint64_t gen) { // apps like spotify publish a new song in steps: read again once it has landed
+    try {
+        for (int step = 0; step < 2; ++step) {
+            co_await winrt::resume_after(step == 0 ? kSettleFirst : kSettleLast);
+            auto s = w.lock();
+            if (!s || s->closed.load() || s->settleGen.load() != gen) co_return; // a newer change restarted the schedule
+            Poke(s);
+        }
+    } catch (...) {
+        LogErr(L"settle");
+    }
+}
+
+void KickSettle(const std::weak_ptr<MediaSt>& w) noexcept { // song or app changed: read now and twice more shortly after
+    try {
+        if (auto s = w.lock()) {
+            Poke(s);
+            Settle(w, ++s->settleGen);
+        }
     } catch (...) {
         LogErr(L"kick");
     }
@@ -203,7 +238,7 @@ void Hook(const MediaP& s, const Session& sel) { // swap event handlers to the n
     if (sel) {
         std::weak_ptr<MediaSt> w = s;
         try { // register outside the lock, winrt calls can block
-            a = sel.MediaPropertiesChanged(winrt::auto_revoke, [w](auto&&, auto&&) { Kick(w); });
+            a = sel.MediaPropertiesChanged(winrt::auto_revoke, [w](auto&&, auto&&) { KickSettle(w); }); // new song: metadata may still be landing
             b = sel.PlaybackInfoChanged(winrt::auto_revoke, [w](auto&&, auto&&) { Kick(w); });
             c = sel.TimelinePropertiesChanged(winrt::auto_revoke, [w](auto&&, auto&&) { Kick(w); });
         } catch (...) {
@@ -291,6 +326,8 @@ WF::IAsyncAction ReadThumb(SS::IRandomAccessStreamReference thumb,
     reader.Close();
 }
 
+winrt::fire_and_forget ArmLoop(MediaP s);
+
 WF::IAsyncAction Refresh(MediaP s) { // pull full state, publish if changed
     Manager mgr{nullptr};
     std::shared_ptr<const std::vector<uint8_t>> oldCover;
@@ -344,6 +381,16 @@ WF::IAsyncAction Refresh(MediaP s) { // pull full state, publish if changed
             t.stamp = nowMs; // ReadTl may throw before setting it
             LogErr(L"timeline");
         }
+        if (t.duration <= 0) { // firefox-based browsers blank the timeline ~1s after each real report: keep the last real one running
+            std::lock_guard lock(s->mu);
+            const Track& old = s->track;
+            if (s->has && selId == s->selId && old.duration > 0 && old.title == t.title && old.artist == t.artist) {
+                t.position = ElapsedAt(old, nowMs);
+                t.duration = old.duration;
+                t.stamp = nowMs;
+            }
+        }
+        t.canSeek = t.canSeek && t.duration > 0; // nothing to seek against until the app reports a length
 
         std::wstring key = t.app + L'\x1f' + t.title + L'\x1f' + t.artist + L'\x1f' + t.album; // unit separator, can't clash with text
         const bool newKey = key != s->coverKey;
@@ -371,10 +418,16 @@ WF::IAsyncAction Refresh(MediaP s) { // pull full state, publish if changed
     }
     t.coverId = t.cover == oldCover ? oldCoverId : ++s->seq; // new id lets ui re-decode only on change
 
-    bool changed = false;
+    bool changed = false, rearm = false;
     {
         std::lock_guard lock(s->mu);
         if (s->closed.load()) co_return;
+        if (s->loop && selId != s->loopSel) s->loop = false; // loop belongs to the session it was turned on for
+        if (!t.canRep && t.canSeek) { // no repeat of its own: we loop it by seeking back
+            t.canRep = true;
+            t.repeat = s->loop ? 1 : 0;
+        }
+        if (!t.canPrev && t.canSeek) t.canPrev = true; // no previous of its own: restart the track, like music players
         changed = !s->sent || has != s->has || selId != s->selId || !SameTrack(s->track, t); // skip redundant repaints
         if (changed) {
             s->track = std::move(t);
@@ -382,8 +435,10 @@ WF::IAsyncAction Refresh(MediaP s) { // pull full state, publish if changed
             s->has = has;
             s->sent = true;
         }
+        rearm = s->loop && s->has;
     }
     if (changed) Ping(*s); // ping outside the lock
+    if (rearm) ArmLoop(s); // timeline may have moved, reschedule the restart
 }
 
 winrt::fire_and_forget Worker(MediaP s) { // single refresh loop, holds a strong ref
@@ -424,8 +479,8 @@ winrt::fire_and_forget StartMedia(MediaP s) {
         Manager mgr = co_await Manager::RequestAsync();
         if (!mgr) co_return;
         std::weak_ptr<MediaSt> w = s;
-        auto r1 = mgr.SessionsChanged(winrt::auto_revoke, [w](auto&&, auto&&) { Kick(w); });
-        auto r2 = mgr.CurrentSessionChanged(winrt::auto_revoke, [w](auto&&, auto&&) { Kick(w); });
+        auto r1 = mgr.SessionsChanged(winrt::auto_revoke, [w](auto&&, auto&&) { KickSettle(w); });
+        auto r2 = mgr.CurrentSessionChanged(winrt::auto_revoke, [w](auto&&, auto&&) { KickSettle(w); });
         {
             std::lock_guard lock(s->mu);
             if (s->closed.load()) co_return; // closed meanwhile, revokers unhook on return
@@ -436,6 +491,73 @@ winrt::fire_and_forget StartMedia(MediaP s) {
         Poke(s); // initial read
     } catch (...) {
         LogErr(L"start");
+    }
+}
+
+WF::IAsyncOperation<bool> SeekTicks(MediaP s, Session sel, int64_t rel) { // rel = ticks from track start
+    const auto tl = sel.GetTimelineProperties();
+    const int64_t start = tl && tl.EndTime().count() > tl.StartTime().count() ? tl.StartTime().count() : 0; // blanked timeline starts at 0
+    const bool ok = co_await sel.TryChangePlaybackPositionAsync(start + rel); // absolute, so add start back
+    if (ok) {
+        bool post = false;
+        {
+            std::lock_guard lock(s->mu);
+            if (!s->closed.load() && s->has && s->track.duration > 0) {
+                s->track.position = std::min(rel, s->track.duration); // optimistic update, app event lags
+                s->track.stamp = GetTickCount64();
+                post = true;
+            }
+        }
+        if (post) Ping(*s);
+    }
+    co_return ok;
+}
+
+double LeftMs(const Track& t) { // real time until the track ends, at its playback rate
+    return static_cast<double>(t.duration - ElapsedAt(t, GetTickCount64())) / kMsTicks / t.rate;
+}
+
+winrt::fire_and_forget ArmLoop(MediaP s) { // one pending restart per loop cycle, a newer arm cancels the older
+    try {
+        uint64_t gen = 0, waitMs = 0;
+        {
+            std::lock_guard lock(s->mu);
+            if (s->closed.load() || !s->loop || !s->has || s->track.duration <= 0) co_return;
+            const double left = LeftMs(s->track);
+            if (!s->track.playing && left > kLoopEndMs) { // paused by the user: nothing pending, play re-arms
+                ++s->loopGen;
+                s->loopDue = 0;
+                co_return;
+            }
+            waitMs = left > kLoopLeadMs ? static_cast<uint64_t>(left) - kLoopLeadMs : 0;
+            const uint64_t due = GetTickCount64() + waitMs;
+            const uint64_t drift = due > s->loopDue ? due - s->loopDue : s->loopDue - due;
+            if (s->loopDue && drift < kLoopSlackMs) co_return; // pending restart still on time, don't stack another
+            gen = ++s->loopGen;
+            s->loopDue = due;
+        }
+        co_await winrt::resume_after(std::chrono::milliseconds(waitMs));
+        Session sel{nullptr};
+        bool replay = false, early = false;
+        {
+            std::lock_guard lock(s->mu);
+            if (s->closed.load() || !s->loop || gen != s->loopGen || !s->has) co_return; // turned off or re-armed meanwhile
+            s->loopDue = 0;
+            const double left = LeftMs(s->track);
+            if (!s->track.playing && left > kLoopEndMs) co_return; // paused by the user while we waited: leave it
+            early = left > 2.0 * kLoopLeadMs; // timeline moved while we waited
+            replay = !s->track.playing; // ran to the end and stopped
+            sel = s->session;
+        }
+        if (early) {
+            ArmLoop(s);
+            co_return;
+        }
+        if (!sel || !co_await SeekTicks(s, sel, 0)) co_return;
+        if (replay) co_await sel.TryPlayAsync();
+        ArmLoop(s); // next cycle
+    } catch (...) {
+        LogErr(L"loop");
     }
 }
 
@@ -464,28 +586,22 @@ winrt::fire_and_forget RunCmd(MediaP s, Cmd cmd, double arg) { // by value: keep
                 break;
             }
             case Cmd::Next: ok = co_await sel.TrySkipNextAsync(); break;
-            case Cmd::Previous: ok = co_await sel.TrySkipPreviousAsync(); break;
+            case Cmd::Previous: {
+                const auto pb = sel.GetPlaybackInfo();
+                if (pb && pb.Controls() && pb.Controls().IsPreviousEnabled()) ok = co_await sel.TrySkipPreviousAsync();
+                else ok = co_await SeekTicks(s, sel, 0); // no previous of its own: restart the track
+                break;
+            }
             case Cmd::Seek: {
                 const auto tl = sel.GetTimelineProperties(); // fresh read, cached track may be stale
-                if (!tl) break;
-                const int64_t start = tl.StartTime().count();
-                const int64_t dur = tl.EndTime().count() - start; // ticks
+                int64_t dur = tl ? tl.EndTime().count() - tl.StartTime().count() : 0; // ticks
+                if (dur <= 0) { // timeline blanked between reports, use the last real length
+                    std::lock_guard lock(s->mu);
+                    dur = s->track.duration;
+                }
                 if (dur <= 0) break; // unknown length, can't map fraction
                 const double f = std::clamp(arg, 0.0, 1.0);
-                const int64_t rel = static_cast<int64_t>(f * static_cast<double>(dur));
-                ok = co_await sel.TryChangePlaybackPositionAsync(start + rel); // absolute, so add start back
-                if (ok) {
-                    bool post = false;
-                    {
-                        std::lock_guard lock(s->mu);
-                        if (!s->closed.load() && s->has && s->track.duration > 0) {
-                            s->track.position = std::min(rel, s->track.duration); // optimistic update, app event lags
-                            s->track.stamp = GetTickCount64();
-                            post = true;
-                        }
-                    }
-                    if (post) Ping(*s);
-                }
+                ok = co_await SeekTicks(s, sel, static_cast<int64_t>(f * static_cast<double>(dur)));
                 break;
             }
             case Cmd::Shuffle: {
@@ -498,6 +614,22 @@ winrt::fire_and_forget RunCmd(MediaP s, Cmd cmd, double arg) { // by value: keep
             }
             case Cmd::Repeat: {
                 const auto pb = sel.GetPlaybackInfo();
+                if (!(pb && pb.Controls() && pb.Controls().IsRepeatEnabled())) { // no repeat of its own: we loop it
+                    bool on = false;
+                    {
+                        std::lock_guard lock(s->mu);
+                        if (s->closed.load()) co_return;
+                        on = s->loop = !s->loop;
+                        s->loopSel = s->selId;
+                        ++s->loopGen; // cancel any pending restart
+                        s->loopDue = 0;
+                        if (s->has && s->track.canRep) s->track.repeat = on ? 1 : 0; // show it right away
+                    }
+                    Ping(*s);
+                    if (on) ArmLoop(s);
+                    ok = true;
+                    break;
+                }
                 RepeatMode cur = RepeatMode::None;
                 if (pb)
                     if (auto v = pb.AutoRepeatMode()) cur = v.Value();
