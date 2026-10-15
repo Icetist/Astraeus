@@ -253,18 +253,20 @@ void Drawer::DrawBody(float h, float dt, double now) {
     if (pageT < 1) pageT = (std::min)(1.0f, pageT + dt / 0.38f); // 380ms page switch
     float e = anim::EaseOut(pageT);
     float slide = (1 - e) * 26 * (page > prevPage ? 1 : -1); // slide 26 dips in the nav direction
-    bool fading = e < 0.999f;
-    ctx->SetTransform(D2D1::Matrix3x2F::Translation(0, slide) * base);
-    if (fading) ctx->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-                                                      D2D1::IdentityMatrix(), e), nullptr); // opacity follows slide
-    float fade = ui.SmoothFrom(Ui::Id("cover.fade", (int)coverId), 1, 0, 6); // id per cover restarts fade on track change
-    PageCtx pc{ui, model, shellNow, mediaNow, cover.Get(), coverBlur.Get(), fade,
-                   D2D1_RECT_F{area.left, area.top - slide, area.right, area.bottom - slide}}; // undo slide so hit rects stay put
     float sheet = ui.Smooth(Ui::Id("bt.sheet"), model.btOpen ? 1.0f : 0, 14); // bt menu open anim
     float wsheet = ui.Smooth(Ui::Id("wifi.sheet"), model.wifiOpen ? 1.0f : 0, 14); // wi-fi picker open anim
     float ssheet = ui.Smooth(Ui::Id("set.sheet"), model.settingsOpen ? 1.0f : 0, 14); // settings open anim
+    float under = 1 - anim::Clamp01((std::max)((std::max)(sheet, wsheet), ssheet) * 1.6f); // the page fades out as a sheet fades in, a crossfade, not a stack
+    float pageAlpha = e * under;
+    bool fading = pageAlpha < 0.999f;
+    ctx->SetTransform(D2D1::Matrix3x2F::Translation(0, slide) * base);
+    if (fading) ctx->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                      D2D1::IdentityMatrix(), pageAlpha), nullptr); // opacity follows slide and sheets
+    float fade = ui.SmoothFrom(Ui::Id("cover.fade", (int)coverId), 1, 0, 6); // id per cover restarts fade on track change
+    PageCtx pc{ui, model, shellNow, mediaNow, cover.Get(), coverBlur.Get(), fade,
+                   D2D1_RECT_F{area.left, area.top - slide, area.right, area.bottom - slide}}; // undo slide so hit rects stay put
     ui.Block(sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f); // page under a sheet takes no input
-    if ((std::max)((std::max)(sheet, wsheet), ssheet) < 0.999f) { // a fully open sheet hides the page, skip drawing it
+    if (under > 0.001f) { // a sheet that has taken over hides the page, skip drawing it
         switch (page) {
         case 0: DrawHome(pc); break;
         case 1: DrawMedia(pc); break;
@@ -428,22 +430,33 @@ bool Drawer::DrawIslandSide(float h, float a) {
         canvas->Text(mm, {X(dc) - 14, mid + 1, X(dc) + 14, mid + 17}, Weight::Medium, 12, mt.accentHi.Alpha(a), Align::Center);
         return false;
     }
-    D2D1_RECT_F art = {X(dc) - 10, mid - 34, X(dc) + 10, mid - 14}; // thumbnail above, bars below
+    // reads like a book spine: bottom to top on the left edge, top to bottom on the right, cover first, bars last
+    float inner = kIslandSide - 2 * cfg.fillet - 20, dir = left ? -1.0f : 1.0f;
+    float start = mid - dir * inner / 2, end = mid + dir * inner / 2;
+    float artC = start + dir * 10, barsC = end - dir * 11;
+    D2D1_RECT_F art = {X(dc) - 10, artC - 10, X(dc) + 10, artC + 10};
     if (cover) {
         canvas->Art(cover.Get(), coverBlur.Get(), art, 5, a);
     } else {
         canvas->Fill(art, 5, mt.cardHi.Alpha(a));
-        canvas->Icon(glyph::Music, {X(dc), mid - 24}, 12, mt.accentHi.Alpha(a), true);
+        canvas->Icon(glyph::Music, {X(dc), artC}, 12, mt.accentHi.Alpha(a), true);
     }
+    float t0 = artC + dir * 17, t1 = barsC - dir * 17, len = std::fabs(t1 - t0), tc = (t0 + t1) / 2;
+    D2D1_MATRIX_3X2_F was;
+    ctx->GetTransform(&was);
+    ctx->SetTransform(D2D1::Matrix3x2F::Rotation(left ? -90.0f : 90.0f) * D2D1::Matrix3x2F::Translation(X(dc), tc) * was); // turned text, centered in its stretch
+    canvas->Text(model.track.title, Rect(-len / 2, -12, len, 14), Weight::Medium, 10.5f, t.text.Alpha(a));
+    if (!model.track.artist.empty()) canvas->Text(model.track.artist, Rect(-len / 2, 1, len, 12), Weight::Light, 9.5f, t.textDim.Alpha(a));
+    ctx->SetTransform(was);
     if (islandHot) { // chevron pointing into the screen: tap opens the full panel
         Color ink = mt.accentHi.Alpha(a);
-        float s = left ? 1.0f : -1.0f, y = mid + 16;
-        canvas->Line({X(dc) - 3 * s, y - 6}, {X(dc) + 3 * s, y}, ink, 2);
-        canvas->Line({X(dc) + 3 * s, y}, {X(dc) - 3 * s, y + 6}, ink, 2);
+        float s = left ? 1.0f : -1.0f;
+        canvas->Line({X(dc) - 3 * s, barsC - 6}, {X(dc) + 3 * s, barsC}, ink, 2);
+        canvas->Line({X(dc) + 3 * s, barsC}, {X(dc) - 3 * s, barsC + 6}, ink, 2);
         return false;
     }
     for (int i = 0; i < 4; ++i) { // bars grow across the pill
-        float v = islandBars[i], bl = 3 + 11 * v, y = mid + 6 + i * 6;
+        float v = islandBars[i], bl = 3 + 11 * v, y = barsC - 11 + i * 6;
         canvas->Fill({X(dc) - bl / 2, y, X(dc) + bl / 2, y + 3.5f}, 1.75f, mt.accent.Mix(mt.accentHi, v).Alpha(a));
     }
     return true;

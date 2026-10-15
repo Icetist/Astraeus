@@ -32,7 +32,7 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 
 ## ✨ Features
 
-- **Media player** with album art, a wavy seek bar and a glow that pulses with the music. Works with Spotify, browsers, Media Player and anything else that talks to Windows media controls. Loop and restart work even for players that don't offer them, like YouTube in Firefox-based browsers.
+- **Media player** with album art, a wavy seek bar and soft light that swells up from below with the music, bass to treble. Works with Spotify, browsers, Media Player and anything else that talks to Windows media controls. Loop and restart work even for players that don't offer them, like YouTube in Firefox-based browsers.
 - **Fullscreen player.** Click the album cover to fill the screen with the cover, the song and a glow that moves with the music. Click it again or press Esc to leave.
 - **Shared audio.** Play the same sound on several outputs at once, Bluetooth and wired, each with its own delay and volume to keep them in sync.
 - **Quick toggles** for Wi-Fi, Bluetooth, microphone and output device (or power mode on laptops), plus volume, mic and brightness sliders.
@@ -92,7 +92,7 @@ How it stays this light:
 - Direct3D, Direct2D and the swap chain are released a few seconds after the panel closes and rebuilt on demand when it opens again.
 - While closed, the process runs in Windows 11 efficiency mode (EcoQoS) with low memory priority, so Windows can park it on efficiency cores and trim it first.
 - Stats, Bluetooth and network workers only run while the panel is open. Bluetooth does nothing at all until you open its menu, and while closed, stats are sampled only every 5 seconds.
-- The glass blur, shared audio, the fullscreen player and the notification watcher are built only when you use them and torn down afterwards.
+- The glass blur, shared audio, the fullscreen player, the audio analyser behind the visualizer and the notification watcher are built only when you use them and torn down afterwards.
 - The once-a-second housekeeping timer is coalescable, so Windows can batch its wakeups with others.
 - Icon fonts are subset to the glyphs that are actually used (3 MB down to 33 KB) and served straight from the executable without copying.
 

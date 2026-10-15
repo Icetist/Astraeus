@@ -7,6 +7,7 @@
 
 #include "model.h"
 #include "theme.h"
+#include "pages.h"
 #include "ui.h"
 
 // Fullscreen ambient player: the album art big over drifting audio-reactive light, controls that fade out when the mouse rests.
@@ -46,8 +47,11 @@ private:
     POINT lastPt = {-1, -1};
     float preview = -1; // seek drag preview
 
-    float left = 0, right = 0, slow = 0, beat = 0, drift = 0; // eased channel levels, running average, beat pulse, blob phase
+    float left = 0, right = 0, slow = 0, beat = 0; // eased channel levels, running average, beat pulse
+    float frameDt = 1 / 60.0f;
     double lastBeat = 0;
+    static constexpr int kBlobs = 6;
+    Swell swell; // soft light rising along the bottom of the screen
 
     int mode = 0; // the panel's appearance when the stage opened: 0 dark, 1 light, 2 glass
     Theme look; // that appearance in the media's hue

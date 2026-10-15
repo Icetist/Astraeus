@@ -22,6 +22,12 @@ struct PageCtx {
 };
 
 void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale); // audio-reactive glow behind art
+struct Swell { // soft blobs of light that rise from the bottom and swell with the music
+    static constexpr int kMax = 8;
+    float level[kMax] = {}, gain[kMax] = {}, heat = 0; // eased blob sizes, each blob's recent loudest, overall warmth
+};
+bool StepSwell(Swell& s, Model& m, float dt, bool playing, int blobs); // true while anything still glows
+void DrawSwell(Canvas& c, const Swell& s, int blobs, const D2D1_RECT_F& r, const Theme& t, double now); // glows up from r's bottom
 void WaveLine(Canvas& c, float a0, float a1, float cy, float amp, double now, Color col, float width, float wavelen); // the played part of the seek line, rippling
 
 void DrawHome(PageCtx& p);

@@ -8,6 +8,7 @@
 
 #include "config.h"
 #include "media.h"
+#include "spectrum.h"
 #include "sys.h"
 #include "bt.h"
 #include "wifi.h"
@@ -102,6 +103,10 @@ public:
     std::vector<sys::OutDev> outs;
     std::wstring outId;
     sys::Meter meter; // peak meter for visualizer
+    std::unique_ptr<sys::Spectrum> spectrum; // frequency bands, only while a visualizer is on screen
+    ULONGLONG spectrumAsked = 0;
+    void Bands(float (&out)[sys::Spectrum::kBands]); // starts the analyser on first use
+    void IdleSpectrum(); // stops it once nothing has asked for a few seconds
     void StartTimer(int seconds);
     void StopTimer();
     bool TimerDone();

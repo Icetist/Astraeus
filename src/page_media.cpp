@@ -36,45 +36,16 @@ void Wave(PageCtx& p, const D2D1_RECT_F& r, float fraction, bool playing, bool c
     c.Fill({x - 2, cy - 11 - 3 * grow, x + 2, cy + 11 + 3 * grow}, 2, t.accentHi); // vertical bar playhead
 }
 
-struct Ambient {
-    double lastBeat = 0;
-    float slow = 0, beat = 0, phase = 0;
-};
-Ambient amb;
+constexpr int kBlobs = 5; // a few big soft blobs across the media card
+Swell vizSwell;
 
-void DrawViz(PageCtx& p, const D2D1_RECT_F& r) {
+void DrawViz(PageCtx& p, const D2D1_RECT_F& r) { // soft light swelling up from the bottom of the card: bass on the left, treble on the right
     if (!p.m.cfg.viz || !p.m.hasTrack) return;
     Ui& ui = p.ui;
-    bool playing = p.m.track.playing;
-    float left = 0, right = 0;
-    if (playing) p.m.meter.Read(left, right); // paused: levels decay via envelope
-    float l = ui.Env(Ui::Id("viz.l"), std::sqrt(left)); // sqrt lifts quiet levels
-    float rr = ui.Env(Ui::Id("viz.r"), std::sqrt(right));
-    float level = (l + rr) / 2;
-
-    float dt = ui.Dt();
-    double now = ui.Now();
-    amb.slow += (level - amb.slow) * (std::min)(1.0f, dt * 2.5f); // slow running avg of level
-    if (playing && level > amb.slow * 1.22f + 0.035f && now - amb.lastBeat > 0.24) { // beat = level spike over slow avg, 240ms cooldown
-        amb.beat = 1;
-        amb.lastBeat = now;
-    }
-    amb.beat *= std::exp(-dt * 5); // beat pulse decays exponentially
-    amb.phase = std::fmod(amb.phase + dt * (0.12f + 0.55f * level), 2 * kPi * 100); // louder = faster drift
-
-    if (playing || l > 0.01f || rr > 0.01f || amb.beat > 0.01f) ui.KeepAlive(); // animate until fully faded
-    float glow = (std::max)(level, amb.beat * 0.5f);
-    if (glow < 0.005f) return;
-
-    const Theme& t = p.media;
+    if (StepSwell(vizSwell, p.m, ui.Dt(), p.m.track.playing, kBlobs)) ui.KeepAlive(); // animate until fully faded
     Canvas& c = ui.C();
-    float w = Width(r), h = Height(r), ph = amb.phase, swell = 1 + 0.18f * amb.beat; // beat swells blobs 18%
-    D2D1_POINT_2F a = {r.left + w * (0.30f + 0.16f * std::sin(ph * 0.9f)), r.top + h * (0.62f + 0.30f * std::sin(ph * 1.3f + 1.0f))}; // two blobs wander on lissajous paths
-    D2D1_POINT_2F b = {r.left + w * (0.72f + 0.16f * std::sin(ph * 0.7f + 2.1f)), r.top + h * (0.38f + 0.30f * std::cos(ph * 1.1f))};
-    c.PushClip(r);
-    c.Glow(a, w * (0.30f + 0.22f * l) * swell, h * (0.60f + 0.45f * l) * swell, t.accent.Alpha(0.10f + 0.38f * l + 0.12f * amb.beat)); // left channel drives blob a, right drives b
-    c.Glow(b, w * (0.26f + 0.20f * rr) * swell, h * (0.55f + 0.40f * rr) * swell,
-           t.accentHi.Alpha(0.06f + 0.30f * rr + 0.10f * amb.beat));
+    c.PushClip(Inset(r, 1, 1));
+    DrawSwell(c, vizSwell, kBlobs, r, p.media, ui.Now());
     c.PopClip();
 }
 
@@ -101,6 +72,43 @@ void WaveLine(Canvas& c, float a0, float a1, float cy, float amp, double now, Co
     sink->EndFigure(D2D1_FIGURE_END_OPEN);
     sink->Close();
     c.StrokeGeo(path.Get(), col, width); // shared round-cap style + brush, no per-frame com objects
+}
+
+bool StepSwell(Swell& s, Model& m, float dt, bool playing, int blobs) {
+    float raw[sys::Spectrum::kBands] = {};
+    if (playing) m.Bands(raw); // paused: the light sinks away and the analyser stops by itself
+    const int first = 2, span = 52; // ~40 Hz to ~10 kHz, where music actually lives
+    float sum = 0;
+    bool alive = false;
+    for (int i = 0; i < blobs; ++i) {
+        int b0 = first + i * span / blobs, b1 = (std::max)(b0 + 1, first + (i + 1) * span / blobs);
+        float want = 0;
+        for (int b = b0; b < b1; ++b) want += raw[b];
+        want /= (b1 - b0); // average: blobs swell, they don't spike
+        float& g = s.gain[i];
+        g = (std::max)(want, g - dt * 0.12f); // its recent loudest, slowly forgotten: every blob uses its whole range at any volume
+        want = anim::Clamp01((want / (std::max)(g, 0.18f) - 0.30f) / 0.70f); // relative to that: quiet sinks, every hit stands up
+        float& v = s.level[i];
+        v += (want - v) * (std::min)(1.0f, dt * (want > v ? 16.0f : 3.2f)); // swells fast, sinks soon after
+        sum += v;
+        alive = alive || v > 0.005f;
+    }
+    s.heat += (sum / blobs - s.heat) * (std::min)(1.0f, dt * 2.0f);
+    return alive || s.heat > 0.003f;
+}
+
+void DrawSwell(Canvas& c, const Swell& s, int blobs, const D2D1_RECT_F& r, const Theme& t, double now) {
+    float w = Width(r), h = Height(r), slot = w / blobs, tm = (float)now; // two glow colors, alpha varies: the brush cache stays tiny
+    if (s.heat > 0.003f) c.Glow({(r.left + r.right) / 2, r.bottom}, w * 0.70f, h * (0.25f + 0.45f * s.heat), t.accent.Alpha(0.14f + 0.40f * s.heat)); // warm wash along the floor
+    for (int i = 0; i < blobs; ++i) {
+        float v = s.level[i];
+        if (v < 0.01f) continue;
+        float drift = std::sin(tm * 0.22f + i * 2.3f) * slot * 0.35f; // each blob wanders slowly along the floor
+        float x = r.left + slot * (i + 0.5f) + drift, base = r.bottom + h * 0.06f; // sits just below the edge, so only its top shows
+        float rise = h * (0.35f + 1.05f * v);
+        c.Glow({x, base}, slot * 1.6f * (0.85f + 0.35f * v), rise, t.accent.Alpha(0.16f + 0.62f * v)); // big and soft, melting into its neighbours
+        c.Glow({x, base}, slot * 0.85f, rise * 0.70f, t.accentHi.Alpha(0.45f * v)); // a brighter heart
+    }
 }
 
 void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale) {
@@ -138,6 +146,11 @@ D2D1_RECT_F ArtHover(PageCtx& p, const D2D1_RECT_F& art) { // hover: the cover l
     }
     float g = Width(art) * 0.025f * lift; // very slightly bigger
     return Inset(art, -g, -g);
+}
+
+void OnDot(PageCtx& p, const char* id, D2D1_POINT_2F btn, bool on) { // a small dot under shuffle or repeat while it's on, not just a color change
+    float k = p.ui.Smooth(Ui::Id(id, 7), on ? 1.0f : 0, 14);
+    if (k > 0.01f) p.ui.C().Dot({btn.x, btn.y + 17}, 2.2f * k, p.media.accent.Alpha(k));
 }
 
 void MediaTall(PageCtx& p) { // sidebar: big centered art, everything else stacked under it
@@ -183,6 +196,8 @@ void MediaTall(PageCtx& p) { // sidebar: big centered art, everything else stack
     if (w::IconBtn(ui, t, Ui::Id("md.repeat"), {cx + 132, cy}, 40, has && tr.repeat == 1 ? glyph::RepeatOne : glyph::Repeat, 22, has && tr.canRep,
                    has && tr.repeat != 0))
         p.m.media.CycleRepeat();
+    OnDot(p, "md.shuffle", {cx - 132, cy}, has && tr.shuffle);
+    OnDot(p, "md.repeat", {cx + 132, cy}, has && tr.repeat != 0);
 }
 
 void DrawMedia(PageCtx& p) {
@@ -242,4 +257,6 @@ void DrawMedia(PageCtx& p) {
     if (w::IconBtn(ui, t, Ui::Id("md.repeat"), {cx + 132, cy}, 40, has && tr.repeat == 1 ? glyph::RepeatOne : glyph::Repeat, 22,
                       has && tr.canRep, repeating))
         p.m.media.CycleRepeat();
+    OnDot(p, "md.shuffle", {cx - 132, cy}, has && tr.shuffle);
+    OnDot(p, "md.repeat", {cx + 132, cy}, has && tr.repeat != 0);
 }

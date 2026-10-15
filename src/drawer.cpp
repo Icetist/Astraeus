@@ -319,6 +319,7 @@ void Drawer::SyncHide() {
 }
 
 void Drawer::OnSecond() {
+    model.IdleSpectrum();
     if (!opened) return;
     model.ReadAudio(); // volume only matters when visible
     Redraw();

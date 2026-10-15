@@ -23,7 +23,9 @@ public:
 
     bool Create(HINSTANCE instance);
     HWND Hwnd() const { return hwnd; }
-    const Theme& Shell() const { return shellNow; } // current palette, tray menu matches it
+    Theme Shell() const { // current palette for the tray menu and prompts: they're solid windows, so glass lends them its dark twin
+        return shellNow.glass ? Theme::From(Seed{shellSeed.hue, shellSeed.chroma, 0}) : shellNow;
+    }
     void Toggle();
     void Peek(const std::wstring& title, const std::wstring& detail, int icon = 0); // brief notification drop, 0 = timer icon
     void SetFull(bool on); // fullscreen app present, stay out of the way
@@ -86,7 +88,7 @@ private:
     D2D1_RECT_F hintRect{}; // window coords
     float hintFade = 0;
     bool DrawIsland(float h, float dt, double now); // true while its visualizer is moving
-    bool DrawIslandSide(float h, float a); // the side edges' vertical pill: art, bars, time, no text to turn sideways
+    bool DrawIslandSide(float h, float a); // the side edges' vertical pill: art, the song turned sideways, bars
     bool StepIslandBars(float dt, double now); // mini visualizer levels, true while moving
     float IslandSpan() const { return Side() ? kIslandSide : kIslandW; } // pill length along its edge
     void ShowIsland(); // small pill instead of the panel, over maximized apps
@@ -124,7 +126,7 @@ private:
     static constexpr float kPeekH = 66; // peek banner height in dips
     static constexpr float kPeekSide = 300; // peek reach on a side edge, room for its text
     static constexpr float kIslandH = 34, kIslandW = 260; // island pill size in dips, width includes the shoulders
-    static constexpr float kIslandSide = 156; // shorter on a side edge, it carries no text
+    static constexpr float kIslandSide = 240; // on a side edge the song runs along the pill like a book spine
     bool islandHot = false; // mouse over the island: show the expand hint
     float islandBars[4] = {}; // mini visualizer levels, eased per frame
     static constexpr UINT kIslandMs = 500; // dwell before the island shows over a maximized app

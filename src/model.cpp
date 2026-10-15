@@ -381,3 +381,13 @@ double Model::TimerFrac() const {
     if (!timerOn || timerTotal == 0) return 0;
     return 1.0 - TimerLeft() * 1000.0 / (double)timerTotal; // elapsed fraction for ring
 }
+
+void Model::Bands(float (&out)[sys::Spectrum::kBands]) {
+    spectrumAsked = GetTickCount64();
+    if (!spectrum) spectrum = std::make_unique<sys::Spectrum>();
+    spectrum->Read(out);
+}
+
+void Model::IdleSpectrum() {
+    if (spectrum && GetTickCount64() - spectrumAsked > 3000) spectrum.reset(); // page changed, panel closed or stage left: capture stops
+}

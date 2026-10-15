@@ -199,18 +199,9 @@ void Stage::Backdrop(double now) { // the media page's glow, scaled to the room:
         c.Image(coverBlur.Get(), {-gw, -gh, W + gw, H + gh}, 0, glassy ? 0.30f : light ? 0.55f : 0.7f); // glass keeps the desktop showing
     }
     c.Fill(full, 0, light ? Color{1, 1, 1, 0.38f} : Color{0, 0, 0, glassy ? 0.12f : 0.30f}); // wash so the type reads
-    float glow = (std::max)((left + right) / 2, beat * 0.5f);
-    if (glow > 0.005f) {
-        float ph = drift, swell = 1 + 0.22f * beat, l = left, r = right;
-        D2D1_POINT_2F a = {W * (0.28f + 0.18f * std::sin(ph * 0.9f)), H * (0.60f + 0.28f * std::sin(ph * 1.3f + 1.0f))}; // lissajous paths
-        D2D1_POINT_2F b = {W * (0.72f + 0.18f * std::sin(ph * 0.7f + 2.1f)), H * (0.38f + 0.28f * std::cos(ph * 1.1f))};
-        D2D1_POINT_2F d = {W * (0.50f + 0.30f * std::cos(ph * 0.55f + 0.7f)), H * (0.25f + 0.20f * std::sin(ph * 0.95f + 2.6f))};
-        D2D1_POINT_2F e = {W * (0.45f + 0.32f * std::sin(ph * 0.62f + 4.0f)), H * (0.82f + 0.12f * std::cos(ph * 1.2f))};
-        c.Glow(a, W * (0.30f + 0.22f * l) * swell, H * (0.55f + 0.40f * l) * swell, look.accent.Alpha(0.10f + 0.40f * l + 0.14f * beat)); // left channel
-        c.Glow(b, W * (0.27f + 0.20f * r) * swell, H * (0.52f + 0.38f * r) * swell, look.accentHi.Alpha(0.07f + 0.32f * r + 0.12f * beat)); // right channel
-        c.Glow(d, W * (0.20f + 0.14f * glow) * swell, H * (0.40f + 0.25f * glow), look.accent.Mix(look.accentHi, 0.5f).Alpha(0.05f + 0.22f * glow));
-        c.Glow(e, W * (0.24f + 0.16f * beat), H * (0.35f + 0.20f * beat), look.accentHi.Alpha(0.04f + 0.24f * beat)); // flares on the kick
-    }
+    StepSwell(swell, model, frameDt, model.hasTrack && model.track.playing, kBlobs);
+    if (beat > 0.01f) c.Glow({W / 2, H}, W * (0.45f + 0.15f * beat), H * 0.35f * beat, look.accent.Alpha(0.18f * beat)); // the kick blooms from the floor
+    DrawSwell(c, swell, kBlobs, {0, H * 0.25f, W, H}, look, now); // soft light swelling up from the floor
     Color floor = light ? Color{1, 1, 1, 1} : Color{0, 0, 0, 1};
     c.FillV(full, 0, floor.Alpha(light ? 0.05f : 0.10f), floor.Alpha(light ? 0.35f : glassy ? 0.30f : 0.45f)); // settles the bottom so the room doesn't feel lopsided
 }
@@ -287,13 +278,21 @@ void Stage::Player(float show) { // the cover big on the left, everything about 
 
     float alpha = 0.35f + 0.65f * show; // controls stay faintly visible, fully there when the mouse moves
     float ccx = tx + colW / 2; // controls centered under the wave
-    D2D1_RECT_F row = {ccx - 160 * k, y - 50 * k, ccx + 160 * k, y + 50 * k};
+    D2D1_RECT_F row = {ccx - 270 * k, y - 50 * k, ccx + 270 * k, y + 50 * k};
     bool layer = alpha < 0.999f;
     if (layer) ctx->PushLayer(D2D1::LayerParameters1(row, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), alpha), nullptr);
     float px = ccx - 100 * k;
     if (w::IconBtn(ui, look, Ui::Id("st.prev"), {px, y}, 60 * k, glyph::Prev, 38 * k, has && tr.canPrev)) model.media.Previous();
     if (w::PlayBtn(ui, look, Ui::Id("st.play"), {px + 100 * k, y}, 84 * k, has && tr.playing, has)) model.media.TogglePlay();
     if (w::IconBtn(ui, look, Ui::Id("st.next"), {px + 200 * k, y}, 60 * k, glyph::Next, 38 * k, has && tr.canNext)) model.media.Next();
+    D2D1_POINT_2F shuf = {px - 96 * k, y}, rep = {px + 296 * k, y};
+    if (w::IconBtn(ui, look, Ui::Id("st.shuffle"), shuf, 48 * k, glyph::Shuffle, 26 * k, has && tr.canShuf, has && tr.shuffle)) model.media.ToggleShuffle();
+    if (w::IconBtn(ui, look, Ui::Id("st.repeat"), rep, 48 * k, has && tr.repeat == 1 ? glyph::RepeatOne : glyph::Repeat, 26 * k, has && tr.canRep,
+                   has && tr.repeat != 0))
+        model.media.CycleRepeat();
+    float sOn = ui.Smooth(Ui::Id("st.shuffle", 7), has && tr.shuffle ? 1.0f : 0, 14), rOn = ui.Smooth(Ui::Id("st.repeat", 7), has && tr.repeat != 0 ? 1.0f : 0, 14);
+    if (sOn > 0.01f) c.Dot({shuf.x, shuf.y + 22 * k}, 2.8f * k * sOn, look.accent.Alpha(sOn)); // on: a dot under it, not just a color change
+    if (rOn > 0.01f) c.Dot({rep.x, rep.y + 22 * k}, 2.8f * k * rOn, look.accent.Alpha(rOn));
     if (layer) ctx->PopLayer();
 }
 
@@ -321,7 +320,7 @@ void Stage::Frame(const Theme& media) {
         lastBeat = now;
     }
     beat *= std::exp(-dt * 6);
-    drift = std::fmod(drift + dt * (0.30f + 1.30f * level), 2 * kPi * 100); // louder = faster drift, about 2.5x the panel
+    frameDt = dt;
 
     bool paused = !model.hasTrack || !model.track.playing;
     float show = ui.Smooth(Ui::Id("st.show"), now - lastMove < kIdleSec || paused || ui.Captured() ? 1.0f : 0, 6);
