@@ -33,7 +33,7 @@ private:
     bool OpenGlass(UINT pxW, UINT pxH);
     void FreeGlass();
     void SyncCover();
-    void SyncTheme(const Theme& media);
+    void SyncTheme(const Theme& media, float dt);
     void Backdrop(double now);
     void Clock(float y, float k);
     void Player(float show);
@@ -54,8 +54,11 @@ private:
     Swell swell; // soft light rising along the bottom of the screen
 
     int mode = 0; // the panel's appearance when the stage opened: 0 dark, 1 light, 2 glass
-    Theme look; // that appearance in the media's hue
-    Color lookKey = {-1, -1, -1, -1};
+    Theme look, lookFrom, lookTo; // that appearance in the song's hue, crossfading from the last song's
+    float lookT = 1;
+    bool lookSet = false;
+    bool artSeeded = false; // colors come from this song's own cover, the panel isn't drawing to update them
+    Seed artSeed;
     Input input;
     Ui ui;
 

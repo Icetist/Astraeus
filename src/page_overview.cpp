@@ -90,10 +90,10 @@ void WxCard(PageCtx& p, const D2D1_RECT_F& r) {
         wchar_t hh[4], mm[4];
         swprintf_s(hh, L"%02d", hour);
         swprintf_s(mm, L"%02d", st.wMinute);
-        float fs = (std::min)((Height(r) - 16) / 2 * 1.08f, 72.0f), cw = fs * 1.2f, cx = r.right - 8 - cw / 2; // two lines fill the card's height
-        float half = Height(r) / 2, lh = fs * 1.25f;
-        c.Text(hh, Rect(cx - cw / 2, r.top + half * 0.52f - lh / 2 + 4, cw, lh), Weight::Thin, fs, t.text, Align::Center);
-        c.Text(mm, Rect(cx - cw / 2, r.top + half * 1.48f - lh / 2 - 4, cw, lh), Weight::Thin, fs, t.accent, Align::Center);
+        float fs = (std::min)((Height(r) - 16) / 2 * 1.08f, 72.0f), cw = fs * 1.7f, right = r.right - 10; // two lines fill the card's height
+        float half = Height(r) / 2, lh = fs * 1.25f; // a box wider than any two digits, right-aligned: 04 and 11 fit as well as 50
+        c.Text(hh, Rect(right - cw, r.top + half * 0.52f - lh / 2 + 4, cw, lh), Weight::Thin, fs, t.text, Align::Right);
+        c.Text(mm, Rect(right - cw, r.top + half * 1.48f - lh / 2 - 4, cw, lh), Weight::Thin, fs, t.accent, Align::Right);
     }
     float textW = clock ? Width(r) - (std::min)((Height(r) - 16) / 2 * 1.08f, 72.0f) * 1.2f - 22 : 162; // weather keeps left of the clock
     c.Text(fmt::Temp(wx.tempC, p.m.cfg.fahr), Rect(r.left + 14, r.top + 52, textW + 8, 62), Weight::Thin, 52, t.text);

@@ -171,20 +171,33 @@ void Stage::SyncCover() {
     uint64_t id = model.hasTrack ? model.track.coverId : 0;
     if (id == coverId) return;
     coverId = id;
+    artSeeded = false;
     cover.Reset();
     coverBlur.Reset();
     const auto& bytes = model.track.cover;
     if (!id || !bytes || bytes->empty()) return;
     ComPtr<IWICBitmapSource> src = gfx::Decode(bytes->data(), bytes->size(), 1024); // sharper than the panel's copy, the art is big here
     if (src && SUCCEEDED(ctx->CreateBitmapFromWicBitmap(src.Get(), nullptr, &cover))) coverBlur = gfx::BakeBlur(ctx.Get(), cover.Get(), 40.0f);
+    artSeeded = src && model.cfg.albumCol; // same rule as the media page: album colors unless turned off
+    if (artSeeded) artSeed = theme::FromBmp(src.Get());
 }
 
-void Stage::SyncTheme(const Theme& media) {
-    const Color& a = media.accent;
-    if (a.r == lookKey.r && a.g == lookKey.g && a.b == lookKey.b) return;
-    lookKey = a;
-    Seed s = theme::FromCol(a);
-    look = Theme::From(Seed{s.hue, s.chroma, mode}); // the panel's appearance, in the media's hue
+void Stage::SyncTheme(const Theme& media, float dt) {
+    Seed s = artSeeded ? artSeed : theme::FromCol(media.accent); // no art: whatever the panel's media palette is
+    Theme want = Theme::From(Seed{s.hue, s.chroma, mode});
+    if (!lookSet) { // first frame: start on the right colors
+        look = lookFrom = lookTo = want;
+        lookSet = true;
+        return;
+    }
+    const Color& a = want.accent, & b = lookTo.accent;
+    if (std::fabs(a.r - b.r) + std::fabs(a.g - b.g) + std::fabs(a.b - b.b) > 0.01f) { // a new song's colors: crossfade from where we are
+        lookFrom = look;
+        lookTo = want;
+        lookT = 0;
+    }
+    lookT = (std::min)(1.0f, lookT + dt / 0.8f);
+    look = lookFrom.Lerp(lookTo, anim::EaseOut(lookT));
 }
 
 void Stage::Backdrop(double now) { // the media page's glow, scaled to the room: four pools of light that chase the music
@@ -304,8 +317,8 @@ void Stage::Frame(const Theme& media) {
     double now = Seconds();
     float dt = lastFrame == 0 ? 1 / 60.0f : (float)(std::min)(now - lastFrame, 0.05);
     lastFrame = now;
-    SyncTheme(media);
-    SyncCover();
+    SyncCover(); // first: a new cover brings its colors
+    SyncTheme(media, dt);
 
     float pl = 0, pr = 0;
     bool playing = model.hasTrack && model.track.playing;
