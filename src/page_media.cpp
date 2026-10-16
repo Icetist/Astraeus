@@ -42,11 +42,15 @@ Swell vizSwell;
 void DrawViz(PageCtx& p, const D2D1_RECT_F& r) { // soft light swelling up from the bottom of the card: bass on the left, treble on the right
     if (!p.m.cfg.viz || !p.m.hasTrack) return;
     Ui& ui = p.ui;
-    if (StepSwell(vizSwell, p.m, ui.Dt(), p.m.track.playing, kBlobs)) ui.KeepAlive(); // animate until fully faded
+    if (!StepSwell(vizSwell, p.m, ui.Dt(), p.m.track.playing, kBlobs)) return; // nothing glowing: no layer, no work
+    ui.KeepAlive(); // animate until fully faded
     Canvas& c = ui.C();
-    c.PushClip(Inset(r, 1, 1));
+    ComPtr<ID2D1RoundedRectangleGeometry> card; // the light stays inside the card's rounded corners
+    if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(Inset(r, 1, 1), 23, 23), &card))) return;
+    ID2D1RenderTarget* rt = c.Target();
+    rt->PushLayer(D2D1::LayerParameters(r, card.Get()), nullptr); // bounded to the card, so only its pixels pay for the mask
     DrawSwell(c, vizSwell, kBlobs, r, p.media, ui.Now());
-    c.PopClip();
+    rt->PopLayer();
 }
 
 }
@@ -99,19 +103,19 @@ bool StepSwell(Swell& s, Model& m, float dt, bool playing, int blobs) {
 
 void DrawSwell(Canvas& c, const Swell& s, int blobs, const D2D1_RECT_F& r, const Theme& t, double now) {
     float w = Width(r), h = Height(r), slot = w / blobs, tm = (float)now; // two glow colors, alpha varies: the brush cache stays tiny
-    if (s.heat > 0.003f) c.Glow({(r.left + r.right) / 2, r.bottom}, w * 0.70f, h * (0.25f + 0.45f * s.heat), t.accent.Alpha(0.14f + 0.40f * s.heat)); // warm wash along the floor
+    if (s.heat > 0.003f) c.Glow({(r.left + r.right) / 2, r.bottom}, w * 0.70f, h * (0.25f + 0.45f * s.heat), t.accent.Alpha(0.12f + 0.33f * s.heat)); // warm wash along the floor
     for (int i = 0; i < blobs; ++i) {
         float v = s.level[i];
         if (v < 0.01f) continue;
         float drift = std::sin(tm * 0.22f + i * 2.3f) * slot * 0.35f; // each blob wanders slowly along the floor
         float x = r.left + slot * (i + 0.5f) + drift, base = r.bottom + h * 0.06f; // sits just below the edge, so only its top shows
         float rise = h * (0.35f + 1.05f * v);
-        c.Glow({x, base}, slot * 1.6f * (0.85f + 0.35f * v), rise, t.accent.Alpha(0.16f + 0.62f * v)); // big and soft, melting into its neighbours
-        c.Glow({x, base}, slot * 0.85f, rise * 0.70f, t.accentHi.Alpha(0.45f * v)); // a brighter heart
+        c.Glow({x, base}, slot * 1.6f * (0.85f + 0.35f * v), rise, t.accent.Alpha(0.13f + 0.52f * v)); // big and soft, melting into its neighbours
+        c.Glow({x, base}, slot * 0.85f, rise * 0.70f, t.accentHi.Alpha(0.36f * v)); // a brighter heart
     }
 }
 
-void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale) {
+void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale, const Theme& t) {
     if (!p.m.cfg.viz || !p.m.hasTrack) return;
     Ui& ui = p.ui;
     bool playing = p.m.track.playing;
@@ -122,15 +126,17 @@ void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale) {
     if (playing || l > 0.01f || rr > 0.01f) ui.KeepAlive();
     if (l < 0.005f && rr < 0.005f) return;
 
-    const Theme& t = p.media;
     Canvas& c = ui.C();
     float w = Width(r), h = Height(r);
-    c.PushClip(r);
+    ComPtr<ID2D1RoundedRectangleGeometry> card; // inside the card's rounded corners, not its square bounds
+    if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(Inset(r, 1, 1), 21, 21), &card))) return;
+    ID2D1RenderTarget* rt = c.Target();
+    rt->PushLayer(D2D1::LayerParameters(r, card.Get()), nullptr);
     c.Glow({r.left + w * 0.22f, r.bottom - h * 0.05f}, w * (0.30f + 0.28f * l) * scale, h * (0.55f + 0.55f * l) * scale, // fixed corners: bottom-left / top-right
            t.accent.Alpha(0.08f + 0.42f * l));
     c.Glow({r.right - w * 0.18f, r.top + h * 0.10f}, w * (0.26f + 0.24f * rr) * scale, h * (0.50f + 0.50f * rr) * scale,
            t.accentHi.Alpha(0.05f + 0.32f * rr));
-    c.PopClip();
+    rt->PopLayer();
 }
 
 D2D1_RECT_F ArtHover(PageCtx& p, const D2D1_RECT_F& art) { // hover: the cover lifts and a tip offers fullscreen, a click goes there
@@ -150,7 +156,7 @@ D2D1_RECT_F ArtHover(PageCtx& p, const D2D1_RECT_F& art) { // hover: the cover l
 
 void OnDot(PageCtx& p, const char* id, D2D1_POINT_2F btn, bool on) { // a small dot under shuffle or repeat while it's on, not just a color change
     float k = p.ui.Smooth(Ui::Id(id, 7), on ? 1.0f : 0, 14);
-    if (k > 0.01f) p.ui.C().Dot({btn.x, btn.y + 17}, 2.2f * k, p.media.accent.Alpha(k));
+    if (k > 0.01f) p.ui.C().Dot({btn.x, btn.y + 17}, 2.2f * k, theme::Lift(p.media).accent.Alpha(k)); // same lifted color as the button above it
 }
 
 void MediaTall(PageCtx& p) { // sidebar: big centered art, everything else stacked under it
@@ -189,11 +195,12 @@ void MediaTall(PageCtx& p) { // sidebar: big centered art, everything else stack
         c.Text(total > 0 ? fmt::Clock(total) : L"--:--", Rect(seek.right - 80, seek.bottom, 80, 18), Weight::Regular, 11.5f, t.textDim, Align::Right);
     }
     float cy = (std::min)(seek.bottom + 50, r.bottom - 50), cx = (r.left + r.right) / 2; // controls right under the wave
-    if (w::IconBtn(ui, t, Ui::Id("md.shuffle"), {cx - 132, cy}, 40, glyph::Shuffle, 22, has && tr.canShuf, has && tr.shuffle)) p.m.media.ToggleShuffle();
-    if (w::IconBtn(ui, t, Ui::Id("md.prev"), {cx - 72, cy}, 46, glyph::Prev, 30, has && tr.canPrev)) p.m.media.Previous();
-    if (w::PlayBtn(ui, t, Ui::Id("md.play"), {cx, cy}, 60, has && tr.playing, has)) p.m.media.TogglePlay();
-    if (w::IconBtn(ui, t, Ui::Id("md.next"), {cx + 72, cy}, 46, glyph::Next, 30, has && tr.canNext)) p.m.media.Next();
-    if (w::IconBtn(ui, t, Ui::Id("md.repeat"), {cx + 132, cy}, 40, has && tr.repeat == 1 ? glyph::RepeatOne : glyph::Repeat, 22, has && tr.canRep,
+    const Theme ct = theme::Lift(t); // the play button leans toward the ink, so it stands clear of the glow behind it
+    if (w::IconBtn(ui, ct, Ui::Id("md.shuffle"), {cx - 132, cy}, 40, glyph::Shuffle, 22, has && tr.canShuf, has && tr.shuffle)) p.m.media.ToggleShuffle();
+    if (w::IconBtn(ui, ct, Ui::Id("md.prev"), {cx - 72, cy}, 46, glyph::Prev, 30, has && tr.canPrev)) p.m.media.Previous();
+    if (w::PlayBtn(ui, ct, Ui::Id("md.play"), {cx, cy}, 60, has && tr.playing, has)) p.m.media.TogglePlay();
+    if (w::IconBtn(ui, ct, Ui::Id("md.next"), {cx + 72, cy}, 46, glyph::Next, 30, has && tr.canNext)) p.m.media.Next();
+    if (w::IconBtn(ui, ct, Ui::Id("md.repeat"), {cx + 132, cy}, 40, has && tr.repeat == 1 ? glyph::RepeatOne : glyph::Repeat, 22, has && tr.canRep,
                    has && tr.repeat != 0))
         p.m.media.CycleRepeat();
     OnDot(p, "md.shuffle", {cx - 132, cy}, has && tr.shuffle);
@@ -238,6 +245,7 @@ void DrawMedia(PageCtx& p) {
 
     D2D1_RECT_F seek = Rect(x, y0 + 102, wdt, 28); // the wave right under the artist
     float cy = seek.bottom + 48, cx = x + wdt / 2; // controls right under the wave, centered in text column, 60/72px steps
+    const Theme ct = theme::Lift(t); // the play button leans toward the ink, so it stands clear of the glow behind it
     bool known = !has || tr.duration > 0; // some apps (firefox-based browsers) never report length or position
     Wave(p, seek, has ? (float)tr.Progress() : 0, has && tr.playing, has && tr.canSeek, known);
     double elapsed = has ? tr.Elapsed() / 1e7 : 0, total = has ? tr.duration / 1e7 : 0; // 100ns units -> seconds
@@ -248,13 +256,13 @@ void DrawMedia(PageCtx& p) {
                t.textDim, Align::Right);
     }
 
-    if (w::IconBtn(ui, t, Ui::Id("md.shuffle"), {cx - 132, cy}, 40, glyph::Shuffle, 22, has && tr.canShuf, has && tr.shuffle))
+    if (w::IconBtn(ui, ct, Ui::Id("md.shuffle"), {cx - 132, cy}, 40, glyph::Shuffle, 22, has && tr.canShuf, has && tr.shuffle))
         p.m.media.ToggleShuffle();
-    if (w::IconBtn(ui, t, Ui::Id("md.prev"), {cx - 72, cy}, 46, glyph::Prev, 30, has && tr.canPrev)) p.m.media.Previous();
-    if (w::PlayBtn(ui, t, Ui::Id("md.play"), {cx, cy}, 60, has && tr.playing, has)) p.m.media.TogglePlay();
-    if (w::IconBtn(ui, t, Ui::Id("md.next"), {cx + 72, cy}, 46, glyph::Next, 30, has && tr.canNext)) p.m.media.Next();
+    if (w::IconBtn(ui, ct, Ui::Id("md.prev"), {cx - 72, cy}, 46, glyph::Prev, 30, has && tr.canPrev)) p.m.media.Previous();
+    if (w::PlayBtn(ui, ct, Ui::Id("md.play"), {cx, cy}, 60, has && tr.playing, has)) p.m.media.TogglePlay();
+    if (w::IconBtn(ui, ct, Ui::Id("md.next"), {cx + 72, cy}, 46, glyph::Next, 30, has && tr.canNext)) p.m.media.Next();
     bool repeating = has && tr.repeat != 0;
-    if (w::IconBtn(ui, t, Ui::Id("md.repeat"), {cx + 132, cy}, 40, has && tr.repeat == 1 ? glyph::RepeatOne : glyph::Repeat, 22,
+    if (w::IconBtn(ui, ct, Ui::Id("md.repeat"), {cx + 132, cy}, 40, has && tr.repeat == 1 ? glyph::RepeatOne : glyph::Repeat, 22,
                       has && tr.canRep, repeating))
         p.m.media.CycleRepeat();
     OnDot(p, "md.shuffle", {cx - 132, cy}, has && tr.shuffle);

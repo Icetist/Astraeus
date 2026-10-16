@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <charconv>
+#include <cstdio>
 #include <mutex>
 #include <string_view>
 #include <thread>
@@ -12,7 +13,8 @@ namespace sys {
 namespace {
 
 constexpr ULONGLONG kCacheMs = 30 * 60 * 1000;  // refetch every 30 min
-constexpr ULONGLONG kRetryMs = 2 * 60 * 1000;  // backoff after failure
+constexpr ULONGLONG kRetryMs = 30 * 1000;  // backoff after failure, short: a dropped request shouldn't leave the card empty for long
+constexpr ULONGLONG kGeoMs = 6 * 60 * 60 * 1000;  // where you are barely changes: look it up every few hours, not every refresh
 constexpr wchar_t kGeoUrl[] = L"http://ip-api.com/json/?fields=status,city,lat,lon";  // free tier is http only
 
 void SkipWs(std::string_view s, size_t& i) {
@@ -126,6 +128,16 @@ struct WxSvc::Impl {
     std::atomic<bool> busy{false};  // single fetch in flight
     std::atomic<bool> stop{false};
     std::atomic<void*> request{nullptr};  // live http handle for cancel
+    double lat = 0, lon = 0;  // remembered location, worker thread only
+    std::wstring city;
+    ULONGLONG geoAt = 0;  // when it was looked up this run, 0 = only known from the last run
+
+    Impl() {  // the last run's location: the first fetch is a single request
+        std::wstring saved = ReadText(L"WxPlace");
+        wchar_t place[64] = {};
+        if (swscanf_s(saved.c_str(), L"%lf|%lf|%63[^\n]", &lat, &lon, place, (unsigned)_countof(place)) >= 2) city = place;
+        else lat = lon = 0;
+    }
 
     ~Impl() {
         detail::HttpCancel(stop, request);  // abort blocking read so join returns
@@ -135,12 +147,23 @@ struct WxSvc::Impl {
     void Fetch(HWND notify, UINT msg) {
         try {
             std::string body;
-            double lat = 0, lon = 0;
-            std::wstring city;
-            if (!detail::HttpGet(kGeoUrl, body, stop, request) || !ParseGeo(body, lat, lon, city)) {  // step 1: ip geolocation
-                OutputDebugStringW(L"[sys] weather: geolocation failed\n");
-                busy.store(false);  // nextOk already set to retry time
-                return;
+            bool known = lat != 0 || lon != 0;
+            if (!known || !geoAt || GetTickCount64() - geoAt > kGeoMs) {  // step 1: ip geolocation, refreshed now and then
+                double la = 0, lo = 0;
+                std::wstring c;
+                if (!known) {  // nothing remembered: the forecast has to wait for it
+                    if (!detail::HttpGet(kGeoUrl, body, stop, request) || !ParseGeo(body, la, lo, c)) {
+                        OutputDebugStringW(L"[sys] weather: geolocation failed\n");
+                        busy.store(false);  // nextOk already set to retry time
+                        return;
+                    }
+                } else if (!(detail::HttpGet(kGeoUrl, body, stop, request) && ParseGeo(body, la, lo, c))) {
+                    la = lat, lo = lon, c = city;  // lookup failed but we know roughly where you are: carry on with that
+                }
+                lat = la, lon = lo, city = std::move(c), geoAt = GetTickCount64();
+                wchar_t saved[128];
+                swprintf_s(saved, L"%.4f|%.4f|%s", lat, lon, city.c_str());
+                SaveText(L"WxPlace", saved);  // next launch skips straight to the forecast
             }
             std::wstring url = L"https://api.open-meteo.com/v1/forecast?latitude=";  // step 2: forecast, no api key
             AddCoord(url, lat);
@@ -154,7 +177,7 @@ struct WxSvc::Impl {
                 busy.store(false);
                 return;
             }
-            w.place = std::move(city);
+            w.place = city;
             {
                 std::lock_guard<std::mutex> lock(m);
                 data = std::move(w);

@@ -8,12 +8,14 @@
 #include <memory>
 
 #include "glyphs.h"
+#include "version.h"
 
 namespace tray {
 namespace {
 
 constexpr float kW = 252, kPad = 6, kHead = 56, kRow = 38, kSep = 9; // layout in dips
 constexpr UINT_PTR kAnimTimer = 1; // drives the switch slide
+constexpr UINT_PTR kSpinTimer = 2; // drives the update spinner
 constexpr int kSepCmd = 0;
 const Color kDanger = Color::Rgb(0xFF8A80); // exit hover tint
 
@@ -25,6 +27,7 @@ struct Item {
 const Item kItems[] = {{kOpen, glyph::Overview, L"Open dashboard"},
                        {kConfig, glyph::Edit, L"Edit config"},
                        {kStartup, glyph::Rocket, L"Start with Windows"},
+                       {kUpdate, glyph::Update, L"Check for updates"},
                        {kSepCmd, 0, nullptr},
                        {kRestart, glyph::Restart, L"Restart"},
                        {kExit, glyph::Power, L"Exit"}};
@@ -42,6 +45,33 @@ struct Menu {
     std::unique_ptr<Canvas> canvas;
 };
 Menu* g = nullptr; // one menu at a time, null while hidden
+Upd upd = Upd::Idle; // outlives the menu: reopening it mid-check still shows the check
+std::wstring updTag;
+
+bool UpdBusy() { return upd == Upd::Checking || upd == Upd::Downloading || upd == Upd::Installed; }
+
+std::wstring UpdLabel() {
+    switch (upd) {
+    case Upd::Checking: return L"Checking\u2026";
+    case Upd::Downloading: return L"Downloading " + updTag + L"\u2026";
+    case Upd::Installed: return L"Updating to " + updTag + L"\u2026";
+    case Upd::Current: return L"You're up to date";
+    case Upd::Failed: return L"Couldn't reach GitHub";
+    default: return L"Check for updates";
+    }
+}
+
+void UpdRow(Canvas& c, const Theme& t, const D2D1_RECT_F& r, float cy) { // right side of the update row: version, spinner or a tick
+    if (UpdBusy()) {
+        float a = (float)(GetTickCount64() % 900) / 900.0f * 360.0f;
+        c.Ring({r.right - 24, cy}, 7, t.track, 2);
+        c.Arc({r.right - 24, cy}, 7, a, 100, t.accentHi, 2);
+    } else if (upd == Upd::Current) {
+        c.Icon(glyph::Check, {r.right - 24, cy}, 18, t.accentHi, true);
+    } else {
+        c.Text(L"v" APP_VER_W, {r.right - 80, r.top, r.right - 12, r.bottom}, Weight::Regular, 11, t.textLow, Align::Right);
+    }
+}
 
 float Top(int i) { // y of item i
     float y = kHead;
@@ -116,8 +146,11 @@ void Paint() {
         Color ink = hot && danger ? kDanger : t.text;
         Color icon = hot ? (danger ? kDanger : t.accentHi) : t.textDim;
         c.Icon(it.glyph, {r.left + 22, cy}, 19, icon, hot);
-        c.Text(it.label, {r.left + 44, r.top, r.right - 56, r.bottom}, Weight::Regular, 13, ink);
+        bool upRow = it.cmd == kUpdate;
+        if (upRow && upd == Upd::Failed) ink = hot ? kDanger : t.textDim;
+        c.Text(upRow ? UpdLabel() : it.label, {r.left + 44, r.top, r.right - 56, r.bottom}, Weight::Regular, 13, ink);
         if (it.cmd == kStartup) Switch(c, t, {r.right - 30, cy}, g->knob);
+        if (upRow) UpdRow(c, t, r, cy);
     }
     c.StrokeV({0, 0, kW, h}, 8, t.hairTop, t.hairBot, 1); // inner rim, dwm rounds the outside
     if (g->rt->EndDraw() == D2DERR_RECREATE_TARGET) { // gpu reset, rebuild next paint
@@ -129,6 +162,12 @@ void Paint() {
 void Pick(int i) {
     if (i < 0) return;
     UINT cmd = kItems[i].cmd;
+    if (cmd == kUpdate) { // checks in place: the row tells how it went
+        if (UpdBusy()) return;
+        SetUpdate(Upd::Checking);
+        PostMessageW(g->owner, WM_COMMAND, cmd, 0);
+        return;
+    }
     PostMessageW(g->owner, WM_COMMAND, cmd, 0); // same ids the old menu used
     if (cmd == kStartup) { // toggle in place, animate the switch
         g->startup = !g->startup;
@@ -177,6 +216,11 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == VK_RETURN || wp == VK_SPACE) Pick(g->hover);
         return 0;
     case WM_TIMER: {
+        if (wp == kSpinTimer) {
+            if (!UpdBusy()) KillTimer(hwnd, kSpinTimer);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         float target = g->startup ? 1.0f : 0.0f;
         g->knob += (target - g->knob) * 0.3f; // ease toward target each tick
         if (std::fabs(target - g->knob) < 0.01f) {
@@ -221,6 +265,7 @@ void Show(HWND owner, const Theme& t, bool startup) {
     MONITORINFO mi = {sizeof(mi)};
     GetMonitorInfoW(MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST), &mi);
 
+    if (upd == Upd::Current || upd == Upd::Failed) upd = Upd::Idle; // last answer is old news
     g = new Menu();
     g->owner = owner;
     g->t = t;
@@ -246,6 +291,15 @@ void Show(HWND owner, const Theme& t, bool startup) {
     DwmSetWindowAttribute(g->hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border)); // subtle themed edge
     SetWindowPos(g->hwnd, HWND_TOPMOST, x, y, w, h, SWP_SHOWWINDOW);
     SetForegroundWindow(g->hwnd); // needed so clicking elsewhere deactivates and closes it
+    if (UpdBusy()) SetTimer(g->hwnd, kSpinTimer, 16, nullptr);
+}
+
+void SetUpdate(Upd state, const std::wstring& tag) {
+    upd = state;
+    if (!tag.empty()) updTag = tag;
+    if (!g) return;
+    if (UpdBusy()) SetTimer(g->hwnd, kSpinTimer, 16, nullptr); // spinner turns while waiting
+    InvalidateRect(g->hwnd, nullptr, FALSE);
 }
 
 namespace {

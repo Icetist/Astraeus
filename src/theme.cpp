@@ -7,6 +7,13 @@ namespace {
 
 float Clamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
+float Lin(float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); }
+
+int Rgb(Color c) {
+    auto ch = [](float v) { return (int)(Clamp(v, 0, 1) * 255 + 0.5f); };
+    return (ch(c.r) << 16) | (ch(c.g) << 8) | ch(c.b);
+}
+
 void ToHsl(float r, float g, float b, float& h, float& s, float& l) {
     float mx = (std::max)(r, (std::max)(g, b)), mn = (std::min)(r, (std::min)(g, b));
     float d = mx - mn;
@@ -42,7 +49,20 @@ Color Hsl(float h, float s, float l, float a) {
 Seed FromCol(Color c) {
     float h, s, l;
     ToHsl(c.r, c.g, c.b, h, s, l);
-    return {h, s};
+    Seed seed{h, s};
+    seed.rgb = Rgb(c);
+    return seed;
+}
+
+float Luma(Color c) { return 0.2126f * Lin(c.r) + 0.7152f * Lin(c.g) + 0.0722f * Lin(c.b); }
+
+Theme Lift(const Theme& t) {
+    Theme v = t;
+    v.accent = t.accent.Mix(t.text, 0.45f); // pale and tinted on dark looks, deep on light ones: away from the glow either way
+    v.accentHi = t.accentHi.Mix(t.text, 0.55f);
+    v.onAccent = Luma(v.accent) > 0.30f ? Color{0.07f, 0.07f, 0.08f, 1} : Color{0.98f, 0.98f, 0.98f, 1};
+    v.glow = v.accent.Alpha(0.16f);
+    return v;
 }
 
 Seed FromBmp(IWICBitmapSource* source) {
@@ -137,7 +157,7 @@ Theme Theme::From(Seed seed) {
     if (seed.look == 2) { // liquid glass: clear tinted surfaces over the blur, glossy light on every edge
         t.text = Hsl(h, 0.08f * k, 0.98f);
         t.textDim = Hsl(h, 0.10f * k, 0.84f); // brighter than dark mode, the background shows through
-        t.textLow = Hsl(h, 0.08f * k, 0.64f);
+        t.textLow = Hsl(h, 0.08f * k, 0.78f); // labels stay readable over the blur and over smoked glass on bright pages
         t.card = Hsl(h, 0.25f * k, 0.92f).Alpha(0.10f); // clear glass pieces, not solid cards
         t.cardHi = Hsl(h, 0.25f * k, 0.92f).Alpha(0.17f);
         t.track = Color{1, 1, 1, 0.20f};
@@ -154,6 +174,34 @@ Theme Theme::From(Seed seed) {
         t.accent = Hsl(h, 0, lightLook ? 0.20f : 0.86f);
         t.accentHi = Hsl(h, 0, lightLook ? 0.08f : 0.97f);
         t.onAccent = Hsl(h, 0, lightLook ? 0.98f : 0.07f);
+    }
+    if (seed.look == 3) { // custom: the background the user picked, ink that reads on it, their accent kept legible against it
+        Color bg = Color::Rgb((uint32_t)seed.bg);
+        bool dark = theme::Luma(bg) < 0.18f; // where white and black ink read equally well
+        float bh, bs, bl;
+        ToHsl(bg.r, bg.g, bg.b, bh, bs, bl);
+        auto step = [&](float d) { return Hsl(bh, bs, Clamp(bl + (dark ? d : -d), 0, 1)); }; // surfaces lift off the background
+        t.bg = bg;
+        t.card = step(0.05f);
+        t.cardHi = step(0.09f);
+        t.track = step(0.16f);
+        t.text = dark ? Color{0.96f, 0.96f, 0.97f, 1} : Color{0.07f, 0.07f, 0.08f, 1}; // plain white or black ink, whichever reads on it
+        t.textDim = t.text.Mix(bg, 0.30f);
+        t.textLow = t.text.Mix(bg, 0.50f);
+        t.hairTop = dark ? Color{1, 1, 1, 0.11f} : Color{0, 0, 0, 0.10f};
+        t.hairBot = dark ? Color{1, 1, 1, 0.02f} : Color{0, 0, 0, 0.04f};
+        t.line = dark ? Color{1, 1, 1, 0.06f} : Color{0, 0, 0, 0.08f};
+        t.sheen = dark ? Color{1, 1, 1, 0.035f} : Color{1, 1, 1, 0.45f};
+        t.veil = bg;
+        t.glass = false;
+        Color a = seed.rgb >= 0 ? Color::Rgb((uint32_t)seed.rgb)
+                : seed.chroma < 0.08f ? Hsl(h, 0, dark ? 0.86f : 0.20f)
+                                      : Hsl(h, (std::max)(0.62f, 0.85f * k), dark ? 0.68f : 0.45f);
+        float ah, as, al;
+        ToHsl(a.r, a.g, a.b, ah, as, al);
+        t.accent = a; // exactly what was picked, no second-guessing
+        t.accentHi = Hsl(ah, (std::min)(1.0f, as + 0.08f), Clamp(al + (dark ? 0.10f : -0.10f), 0.03f, 0.97f));
+        t.onAccent = theme::Luma(a) > 0.30f ? Color{0.07f, 0.07f, 0.08f, 1} : Color{0.98f, 0.98f, 0.98f, 1}; // ink on the accent, same rule
     }
     t.glow = t.accent.Alpha(0.20f);
     return t;

@@ -33,7 +33,8 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 ## ✨ Features
 
 - **Media player** with album art, a wavy seek bar and soft light that swells up from below with the music, bass to treble. Works with Spotify, browsers, Media Player and anything else that talks to Windows media controls. Loop and restart work even for players that don't offer them, like YouTube in Firefox-based browsers.
-- **Fullscreen player.** Click the album cover to fill the screen with the cover, the song and a glow that moves with the music. Click it again or press Esc to leave.
+- **Fullscreen player.** Click the album cover to fill the screen with the cover, the song and a glow that moves with the music. Click it again or press Esc to leave, and you're back on the Media page.
+- **Synced lyrics.** For songs from music apps and sites (Spotify, Apple Music, YouTube Music, Tidal, Deezer, SoundCloud and more, in their apps or in the browser), the fullscreen player shows time-synced lyrics beside the cover, even for songs Spotify has no lyrics for. The sung line lights up as it's sung, the rest drift soft and out of focus, and you can click any line to jump there. Can be turned off in Settings.
 - **Shared audio.** Play the same sound on several outputs at once, Bluetooth and wired, each with its own delay and volume to keep them in sync.
 - **Quick toggles** for Wi-Fi, Bluetooth, microphone and output device (or power mode on laptops), plus volume, mic and brightness sliders.
 - **Bluetooth control center.** Right-click the Bluetooth tile to see paired devices, connect or disconnect them, scan for and pair new ones, or forget old ones.
@@ -41,11 +42,11 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 - **Live system stats:** CPU, GPU, memory, top processes, network throughput, local and public IP, all with smooth sparklines.
 - **Tools:** lock, sleep, sign out, restart and shut down (destructive actions are press-and-hold), a timer with notifications, a screenshot shortcut and keep-awake.
 - **Weather** for your location, in Celsius or Fahrenheit.
-- **Colors that follow you.** The palette is pulled from your wallpaper, or from the album art of whatever is playing, or from any accent you pick. Three looks: dark (the default), light, and glass, a live frosted blur of whatever is behind the panel.
+- **Colors that follow you.** The palette is pulled from your wallpaper, or from the album art of whatever is playing, or from any accent you pick. Four looks: dark (the default), light, glass (a live frosted blur of whatever is behind the panel), and custom, where a color wheel lets you pick any accent and any background, with text that turns white or black to suit.
 - **Settings you touch.** Pick the edge it lives on, which monitor (or all of them), your accent color and look from small pictures of the real thing.
-- **The island.** Over a maximized window, a small pill shows what's playing instead of dropping the whole panel over your work. Windows notifications can arrive as pills too.
+- **The island.** Over a maximized window, or tiled windows that fill the screen, a small pill shows what's playing instead of dropping the whole panel over your work. It can stay a moment, minutes, or always while music plays. Windows notifications can arrive as pills too.
 - **Gets out of the way.** Hides itself when a game or video goes fullscreen.
-- **Stays up to date.** New releases install themselves silently in the background, and only after their SHA-256 matches the one published with the release.
+- **Stays up to date.** New releases install themselves silently in the background, and only after their SHA-256 matches the one published with the release. **Check for updates** in the tray menu looks right away.
 - **Lightweight.** Nothing renders while the panel is closed, the GPU is released after a few seconds and the process drops into Windows efficiency mode. Glass, shared audio and the fullscreen player only load while you use them.
 
 ## 📸 Screenshots
@@ -95,6 +96,8 @@ How it stays this light:
 - The glass blur, shared audio, the fullscreen player, the audio analyser behind the visualizer and the notification watcher are built only when you use them and torn down afterwards.
 - The once-a-second housekeeping timer is coalescable, so Windows can batch its wakeups with others.
 - Icon fonts are subset to the glyphs that are actually used (3 MB down to 33 KB) and served straight from the executable without copying.
+- A resting island pill draws its still parts once into a cached image and repaints only its four little bars, and every frame works and presents only the part of the surface the window shows.
+- Lyrics are looked up once per song from two sources at once, and the soft focus of each line is baked once instead of blurred every frame.
 
 <sub>Averages over the sampling window, measured with Windows performance counters; CPU is a share of the whole processor. Idle was sampled over 60 seconds. The open column was captured with music playing and the audio visualizer animating, the heaviest case. With nothing moving, the open panel stops drawing entirely.</sub>
 
@@ -116,12 +119,12 @@ Updates are automatic. Astraeus checks GitHub shortly after launch and every few
 - **Open the panel** by hovering the middle of the edge it lives on (the top unless you moved it), or by clicking the tray icon. Over a maximized window the island pill shows first; click it to open the panel.
 - **Close it** by moving the mouse away, clicking the tray icon again or dragging the panel back up.
 - **Switch pages** with the rail: Home, Media, System, Network and Tools.
-- **Fullscreen player:** click the album cover on the Media page. Click it again, press **Esc** or right-click to leave.
+- **Fullscreen player:** click the album cover on the Media page. Click it again, press **Esc** or right-click to leave. With lyrics showing, scroll to look around, click a line to jump to it, and press **[** or **]** to nudge the lyrics earlier or later.
 - **Shared audio:** open the Bluetooth menu and switch to the **Shared audio** tab.
 - **Bluetooth devices:** right-click the Bluetooth tile on the Home page.
 - **Wi-Fi networks:** right-click the Wi-Fi tile on the Home page, or press **Networks** on the Network page.
-- **Settings:** the **Settings** tile on the Tools page, for the look (dark, light, glass), accent color, edge, screens and notification pills.
-- **Tray menu:** right-click the tray icon for the dashboard, config, start with Windows, restart and exit.
+- **Settings:** the **Settings** tile on the Tools page, for the look (dark, light, glass, custom), accent color, edge, screens, notification pills, the island and fullscreen lyrics.
+- **Tray menu:** right-click the tray icon for the dashboard, config, start with Windows, check for updates, restart and exit.
 
 ## ⚙️ Configuration
 
@@ -197,6 +200,7 @@ Yes. Set `AutoUpdate = false` in `astraeus.ini` and restart.
 
 - [Outfit](https://github.com/Outfitio/Outfit-Fonts) by the Outfit Project Authors, licensed under the [SIL Open Font License 1.1](./LICENSES/Outfit-OFL.txt).
 - [Material Symbols](https://github.com/google/material-design-icons) by Google, licensed under the [Apache License 2.0](./LICENSES/MaterialSymbols-Apache-2.0.txt).
+- Synced lyrics from [LRCLIB](https://lrclib.net) and NetEase Cloud Music.
 
 
 ---

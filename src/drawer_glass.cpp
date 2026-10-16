@@ -3,6 +3,9 @@
 // Only built while the glass appearance is active and the panel is shown; dark and light never load any of this.
 // windows headers first: they declare their own Color, which must not bind to ours from gfx.h
 #include <windows.h>
+#include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <dwmapi.h>
 #include <DispatcherQueue.h>
 #include <windows.graphics.interop.h>
@@ -10,6 +13,7 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Numerics.h>
 #include <winrt/Windows.Graphics.h>
+#include <winrt/Windows.Graphics.DirectX.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Composition.Desktop.h>
 #include <winrt/Windows.UI.Composition.h>
@@ -64,10 +68,12 @@ struct Drawer::Glass {
     WUC::Desktop::DesktopWindowTarget target{nullptr};
     WUC::SpriteVisual frost{nullptr}; // the blur layer, its opacity is the blur setting
     WUC::CompositionPathGeometry outline{nullptr}; // clips the blur to the panel shape
+    WUC::CompositionGraphicsDevice gfx{nullptr};
+    WUC::CompositionDrawingSurface surface{nullptr}; // our frame, updated in the same composition batch as the outline
     float blurShown = -1;
 };
 
-bool Drawer::OpenGlass(IDXGIFactory2*, const DXGI_SWAP_CHAIN_DESC1& desc) {
+bool Drawer::OpenGlass(const DXGI_SWAP_CHAIN_DESC1& desc) {
     try {
         if (!EnsureQueue()) return false;
         auto g = std::make_unique<Glass>();
@@ -77,9 +83,11 @@ bool Drawer::OpenGlass(IDXGIFactory2*, const DXGI_SWAP_CHAIN_DESC1& desc) {
         g->comp = WUC::Compositor();
         auto desk = g->comp.as<abi::Desktop::ICompositorDesktopInterop>();
         winrt::check_hresult(desk->CreateDesktopWindowTarget(hwnd, TRUE, reinterpret_cast<abi::Desktop::IDesktopWindowTarget**>(winrt::put_abi(g->target))));
-        auto interop = g->comp.as<abi::ICompositorInterop>();
-        WUC::ICompositionSurface main{nullptr};
-        winrt::check_hresult(interop->CreateCompositionSurfaceForSwapChain(swap.Get(), reinterpret_cast<abi::ICompositionSurface**>(winrt::put_abi(main))));
+        ComPtr<ID2D1Device> dev;
+        ctx->GetDevice(&dev);
+        winrt::check_hresult(g->comp.as<abi::ICompositorInterop>()->CreateGraphicsDevice(dev.Get(), reinterpret_cast<abi::ICompositionGraphicsDevice**>(winrt::put_abi(g->gfx))));
+        g->surface = g->gfx.CreateDrawingSurface({(float)desc.Width, (float)desc.Height}, winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                                                 winrt::Windows::Graphics::DirectX::DirectXAlphaMode::Premultiplied);
 
         winrt::Windows::Foundation::Numerics::float2 size{(float)desc.Width, (float)desc.Height};
         // what's behind the window, blurred by windows itself. a backdrop can't sit inside a mask brush, so the shape clips the visual instead
@@ -91,7 +99,7 @@ bool Drawer::OpenGlass(IDXGIFactory2*, const DXGI_SWAP_CHAIN_DESC1& desc) {
         frost.IsVisible(false); // until the first frame hands us a shape
         auto content = g->comp.CreateSpriteVisual(); // everything we draw, on top of the blur
         content.Size(size);
-        content.Brush(Pinned(g->comp, main));
+        content.Brush(Pinned(g->comp, g->surface));
         auto root = g->comp.CreateContainerVisual();
         root.Size(size);
         g->frost = frost;
@@ -111,12 +119,35 @@ void Drawer::GlassMask(ID2D1Geometry* shape) {
     ComPtr<ID2D1TransformedGeometry> placed; // same placement as the panel itself, in pixels like the visual
     ctx->GetFactory(&f);
     bool ok = shape && SUCCEEDED(f->CreateTransformedGeometry(shape, shapeXform * D2D1::Matrix3x2F::Scale(scale, scale), &placed));
+    D2D1_RECT_F box{};
+    ok = ok && SUCCEEDED(placed->GetBounds(nullptr, &box)) && box.right - box.left >= 4 && box.bottom - box.top >= 4; // a sliver of an outline makes composition fail fast, hide the blur instead
     try {
         if (ok) glass->outline.Path(WUC::CompositionPath(winrt::make<ShapeSource>(placed.Get())));
         glass->frost.IsVisible(ok);
     } catch (...) {
         glass->frost.IsVisible(false); // no clip, no blur: never frost the whole window
     }
+}
+
+void Drawer::GlassPresent() {
+    if (!glass || !glass->surface) return;
+    auto interop = glass->surface.as<abi::ICompositionDrawingSurfaceInterop>();
+    ComPtr<IDXGISurface> dst;
+    POINT off = {};
+    D2D1_RECT_F vis = Visible();
+    D2D1_SIZE_U full = backBuf->GetPixelSize();
+    RECT update = {0, 0, (LONG)(std::min)((UINT32)std::ceil(vis.right * scale), full.width), (LONG)(std::min)((UINT32)std::ceil(vis.bottom * scale), full.height)};
+    if (update.right <= 0 || update.bottom <= 0) return;
+    if (FAILED(interop->BeginDraw(&update, IID_PPV_ARGS(&dst), &off))) return; // only what the window shows; surface lost: the next frame tries again
+    D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                                                         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    ComPtr<ID2D1Bitmap1> into;
+    if (SUCCEEDED(ctx->CreateBitmapFromDxgiSurface(dst.Get(), &bp, &into))) {
+        D2D1_POINT_2U at = {(UINT32)off.x, (UINT32)off.y}; // the surface may live inside a shared atlas
+        D2D1_RECT_U src = {0, 0, (UINT32)update.right, (UINT32)update.bottom};
+        into->CopyFromBitmap(&at, backBuf.Get(), &src); // one small gpu copy, no drawing
+    }
+    interop->EndDraw();
 }
 
 void Drawer::GlassBlur(float amount) {
@@ -136,6 +167,7 @@ void Drawer::FreeGlass() {
 struct Stage::Glass {
     WUC::Compositor comp{nullptr};
     WUC::Desktop::DesktopWindowTarget target{nullptr};
+    WUC::ContainerVisual root{nullptr}; // the blur and the frame together, so they leave together
 };
 
 bool Stage::OpenGlass(UINT pxW, UINT pxH) {
@@ -162,10 +194,32 @@ bool Stage::OpenGlass(UINT pxW, UINT pxH) {
         root.Children().InsertAtBottom(frost);
         root.Children().InsertAtTop(content);
         g->target.Root(root);
+        g->root = root;
         glass = g.release();
         return true;
     } catch (...) {
         return false; // the caller falls back to the dark room
+    }
+}
+
+bool Stage::GlassLeave(float seconds, float cx, float cy) {
+    try {
+        auto& c = glass->comp;
+        auto out = c.CreateCubicBezierEasingFunction({0.2f, 0.0f}, {0.2f, 1.0f}); // quick, then settling
+        auto smooth = c.CreateCubicBezierEasingFunction({0.45f, 0.0f}, {0.55f, 1.0f});
+        auto span = std::chrono::duration_cast<winrt::Windows::Foundation::TimeSpan>(std::chrono::duration<float>(seconds));
+        glass->root.CenterPoint({cx, cy, 0});
+        auto shrink = c.CreateVector3KeyFrameAnimation(); // a few percent back toward the bezel as it fades
+        shrink.InsertKeyFrame(1.0f, {0.93f, 0.93f, 1.0f}, out);
+        shrink.Duration(span);
+        auto fade = c.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(1.0f, 0.0f, smooth);
+        fade.Duration(span);
+        glass->root.StartAnimation(L"Scale", shrink);
+        glass->root.StartAnimation(L"Opacity", fade);
+        return true;
+    } catch (...) {
+        return false;
     }
 }
 

@@ -166,8 +166,9 @@ public:
     ~Updater();
     Updater(const Updater&) = delete;
     Updater& operator=(const Updater&) = delete;
-    void Check(HWND notify, UINT msg); // background, posts msg once the new exe is in place
-    std::wstring Applied() const; // tag that was installed
+    enum Result : WPARAM { kInstalled, kCurrent, kFailed, kDownloading }; // wparam of msg; downloading only for manual checks
+    void Check(HWND notify, UINT msg, bool manual = false); // background; posts kInstalled once the new exe is in place, a manual check also posts the other outcomes
+    std::wstring Applied() const; // tag that was installed, or being fetched
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;
@@ -190,6 +191,7 @@ struct Screen {
 };
 std::vector<Screen> ListScreens();
 HMONITOR FindScreen(const std::wstring& name); // null if that screen isn't connected
+float Brightness(const RECT& r); // average luminance 0..1 of what's on screen there, from one tiny downscaled copy
 
 void SetEco(bool on); // efficiency mode + low memory priority while idle
 void SetAwake(bool on);  // keep display awake

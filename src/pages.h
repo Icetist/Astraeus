@@ -21,7 +21,7 @@ struct PageCtx {
     float hintFade = 0;
 };
 
-void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale); // audio-reactive glow behind art
+void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale, const Theme& t); // audio-reactive glow behind art, in t's accent
 struct Swell { // soft blobs of light that rise from the bottom and swell with the music
     static constexpr int kMax = 8;
     float level[kMax] = {}, gain[kMax] = {}, heat = 0; // eased blob sizes, each blob's recent loudest, overall warmth

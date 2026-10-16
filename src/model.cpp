@@ -14,19 +14,23 @@ unsigned long long Ticks(const FILETIME& f) { // filetime -> 100ns count
 
 namespace {
 constexpr wchar_t kLookVal[] = L"Appearance";
-constexpr int kLooks = 3;
+constexpr int kLooks = 4;
 }
 
 Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::ReadNum(kLookVal, 0)) {
     if (look < 0 || look >= kLooks) look = 0; // unknown value: back to dark
     glassBlur = (std::clamp)(sys::ReadNum(L"GlassBlur", 100), 0, 100);
+    customBg = sys::ReadNum(L"CustomBg", customBg) & 0xFFFFFF;
+    lyricOffsetMs = (std::clamp)(sys::ReadNum(L"LyricOffsetMs", 0), -3000, 3000);
     edge = (std::clamp)(sys::ReadNum(L"Edge", 0), 0, 2);
     screens = (std::clamp)(sys::ReadNum(L"Screens", 0), 0, 1);
     screen = sys::ReadText(L"Screen");
+    islandSecs = (std::clamp)(sys::ReadNum(L"IslandSecs", 0), -1, kIslandMaxSecs);
     int iniHex = ((int)(cfg.themeCol.r * 255 + 0.5f) << 16) | ((int)(cfg.themeCol.g * 255 + 0.5f) << 8) | (int)(cfg.themeCol.b * 255 + 0.5f);
     accentMode = (std::clamp)(sys::ReadNum(L"AccentMode", cfg.wallTheme ? 0 : 1), 0, 1); // settings override the ini once used
     accentHex = sys::ReadNum(L"AccentHex", iniHex) & 0xFFFFFF;
     notifyPills = (std::clamp)(sys::ReadNum(L"NotifyPills", 0), 0, 1);
+    fullLyrics = (std::clamp)(sys::ReadNum(L"FullLyrics", 1), 0, 1);
 }
 
 Model::~Model() {
@@ -120,6 +124,10 @@ void Model::Sample(int seconds) {
     }
 }
 
+void Model::Prefetch() {
+    if (cfg.weather) weather.Refresh(notify, WM_APP_WEATHER);
+}
+
 void Model::OnOpen() {
     spk.Refresh(); // device may have changed while hidden
     mic.Refresh();
@@ -145,6 +153,7 @@ void Model::ReadAudio() {
 
 void Model::OnMedia() {
     hasTrack = media.Snapshot(track);
+    if (fullLyrics && hasTrack && track.music && track.duration > 0) lyrics.Want(track.title, track.artist, track.album, track.duration / 1e7); // ready before fullscreen opens; no-op once known
 }
 
 void Model::OnBright(WPARAM value) {
@@ -300,7 +309,8 @@ bool Model::CommitHex() {
     hexFocus = false;
     int rgb = 0;
     if (!ParseHex(hexEdit, rgb)) return false;
-    SetAccent(1, rgb);
+    if (hexTarget == 1) SetPref(customBg, L"CustomBg", rgb & 0xFFFFFF);
+    else SetAccent(1, rgb);
     return true;
 }
 

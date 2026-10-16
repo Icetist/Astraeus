@@ -30,15 +30,18 @@ using RepeatMode = WM::MediaPlaybackAutoRepeatMode; // shared with SMTC enums
 
 constexpr int64_t kMsTicks = 10000; // winrt ticks are 100ns
 constexpr int64_t kDayTicks = 24LL * 3600 * 1000 * kMsTicks;
-constexpr int64_t kDrift = 1000 * kMsTicks; // 1s tolerance before position counts as changed
-constexpr uint64_t kCoverRetry = 4000; // ms to keep refetching art after track change
+constexpr int64_t kDrift = 250 * kMsTicks; // tolerance before position counts as changed; lyrics notice a quarter second
+constexpr uint64_t kCoverRetry = 9000; // ms to keep refetching art after track change, some apps swap it in late
 constexpr uint32_t kMaxCover = 16u << 20; // 16 MB cap on thumbnail
 constexpr uint32_t kChunk = 64u << 10; // read size when stream size unknown
 constexpr auto kDebounce = std::chrono::milliseconds(40); // debounce bursts of winrt events
 constexpr auto kSettleFirst = std::chrono::milliseconds(600); // follow-up reads after a song change, catch late metadata
 constexpr auto kSettleLast = std::chrono::milliseconds(1400); // second one lands 2 s after the change
+constexpr auto kSettleMore = std::chrono::milliseconds(2500); // then, only while the art is still missing, a few more
+constexpr int kSettleSteps = 6; // up to ~12 s after the change, never forever
 constexpr uint64_t kLoopLeadMs = 1000; // loop restarts this far before the end, ahead of players auto-advancing
 constexpr double kLoopEndMs = 250; // paused this close to the end counts as finished, not paused by the user
+constexpr uint64_t kMusicLookMs = 12000; // a browser tab's title can lag the song: keep looking this long
 constexpr uint64_t kLoopSlackMs = 250; // re-arm only when the restart time moves more than this
 
 void Log(const wchar_t* where, const wchar_t* what) noexcept {
@@ -120,8 +123,59 @@ int64_t ElapsedAt(const Track& t, uint64_t tickMs) { // extrapolate position fro
     return static_cast<int64_t>(pos);
 }
 
+bool MusicApp(const std::wstring& id) { // the players people listen to music in, by their app id
+    static const wchar_t* const kApps[] = {L"spotify", L"applemusic", L"itunes", L"tidal", L"deezer", L"amazonmusic", L"amazon music", L"youtube-music",
+                                           L"youtubemusic", L"soundcloud", L"pandora", L"qobuz", L"cider", L"plexamp", L"foobar2000", L"musicbee",
+                                           L"aimp", L"winamp", L"zunemusic", L"dopamine", L"anghami", L"jiosaavn",
+                                           L"cinhimbnkkaeohfgghhklpknlkffjgod", L"pjibgclleladliembfgfagdaldikeohf"}; // youtube music and spotify installed as web apps
+    const std::wstring low = Lower(id);
+    for (const wchar_t* k : kApps)
+        if (low.find(k) != std::wstring::npos) return true;
+    return false;
+}
+
+bool Browser(const std::wstring& name) {
+    for (const wchar_t* b : {L"Browser", L"Chrome", L"Edge", L"Firefox", L"Zen", L"Brave", L"Opera", L"Vivaldi"})
+        if (name == b) return true;
+    return false;
+}
+
+struct TabScan {
+    std::wstring title; // the song, lowercased
+    bool found = false;
+};
+
+BOOL CALLBACK ScanTab(HWND h, LPARAM lp) { // a browser window showing a music site, or spotify's "song • artist" tab
+    auto& scan = *reinterpret_cast<TabScan*>(lp);
+    wchar_t cls[64] = {};
+    if (!IsWindowVisible(h) || !GetClassNameW(h, cls, 64)) return TRUE;
+    if (wcscmp(cls, L"Chrome_WidgetWin_1") != 0 && wcscmp(cls, L"MozillaWindowClass") != 0) return TRUE;
+    wchar_t text[512] = {};
+    if (!GetWindowTextW(h, text, 512)) return TRUE;
+    const std::wstring low = Lower(text);
+    static const wchar_t* const kSites[] = {L"spotify", L"youtube music", L"soundcloud", L"apple music", L"deezer", L"tidal", L"amazon music",
+                                            L"pandora", L"bandcamp", L"qobuz", L"audiomack", L"anghami", L"jiosaavn", L"yandex music"};
+    for (const wchar_t* k : kSites)
+        if (low.find(k) != std::wstring::npos) {
+            scan.found = true;
+            return FALSE;
+        }
+    if (!scan.title.empty() && low.rfind(scan.title, 0) == 0 && low.find(L" • ") != std::wstring::npos) { // spotify web while playing
+        scan.found = true;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+bool MusicSite(const Track& t) { // a browser can't say which site plays: the window titles and the song's metadata can
+    if (!t.album.empty() && t.album != t.artist) return true; // music sites fill in the album, plain video sites don't
+    TabScan scan{Lower(t.title)};
+    EnumWindows(ScanTab, reinterpret_cast<LPARAM>(&scan));
+    return scan.found;
+}
+
 bool SameTrack(const Track& a, const Track& b) { // true = nothing worth repainting
-    if (a.app != b.app || a.title != b.title || a.artist != b.artist || a.album != b.album) return false;
+    if (a.app != b.app || a.title != b.title || a.artist != b.artist || a.album != b.album || a.music != b.music) return false;
     if (a.playing != b.playing || a.canPrev != b.canPrev || a.canNext != b.canNext || a.canSeek != b.canSeek ||
         a.canShuf != b.canShuf || a.canRep != b.canRep || a.shuffle != b.shuffle ||
         a.repeat != b.repeat || a.rate != b.rate || a.duration != b.duration ||
@@ -159,6 +213,8 @@ struct MediaSt {
 
     std::wstring coverKey; // worker-only, no lock needed
     uint64_t keyTick = 0; // when coverKey last changed
+    bool music = false; // worker-only: this song is from a music app or site
+    uint64_t tlSig = 0; // the app's last timeline report, to tell a fresh one from a re-read of the old (guarded by mu)
     uint64_t seq = 0; // coverId source
 
     bool loop = false; // our own loop, for apps with no repeat of their own (guarded by mu)
@@ -180,10 +236,14 @@ void Kick(const std::weak_ptr<MediaSt>& w) noexcept { // weak so handlers don't 
 
 winrt::fire_and_forget Settle(std::weak_ptr<MediaSt> w, uint64_t gen) { // apps like spotify publish a new song in steps: read again once it has landed
     try {
-        for (int step = 0; step < 2; ++step) {
-            co_await winrt::resume_after(step == 0 ? kSettleFirst : kSettleLast);
+        for (int step = 0; step < kSettleSteps; ++step) {
+            co_await winrt::resume_after(step == 0 ? kSettleFirst : step == 1 ? kSettleLast : kSettleMore);
             auto s = w.lock();
             if (!s || s->closed.load() || s->settleGen.load() != gen) co_return; // a newer change restarted the schedule
+            if (step >= 2) { // past the usual two: keep going only while the song still has no art
+                std::lock_guard lock(s->mu);
+                if (!s->has || s->track.cover) co_return;
+            }
             Poke(s);
         }
     } catch (...) {
@@ -287,10 +347,10 @@ void ReadPb(Track& t, const MC::GlobalSystemMediaTransportControlsSessionPlaybac
     }
 }
 
-void ReadTl(Track& t, const MC::GlobalSystemMediaTransportControlsSessionTimelineProperties& tl,
-                  uint64_t nowMs) {
+uint64_t ReadTl(Track& t, const MC::GlobalSystemMediaTransportControlsSessionTimelineProperties& tl,
+                  uint64_t nowMs) { // returns a signature of the app's report, the same until it reports again
     t.stamp = nowMs; // default: position valid now
-    if (!tl) return;
+    if (!tl) return 0;
     const int64_t start = tl.StartTime().count();
     const int64_t end = tl.EndTime().count();
     t.duration = std::max<int64_t>(0, end - start); // normalise to start = 0
@@ -302,6 +362,7 @@ void ReadTl(Track& t, const MC::GlobalSystemMediaTransportControlsSessionTimelin
         const uint64_t ageMs = static_cast<uint64_t>(age / kMsTicks);
         t.stamp = ageMs < nowMs ? nowMs - ageMs : 1; // backdate stamp so extrapolation catches up
     }
+    return (uint64_t)tl.Position().count() * 1000003u ^ (uint64_t)last.time_since_epoch().count() ^ (uint64_t)end;
 }
 
 WF::IAsyncAction ReadThumb(SS::IRandomAccessStreamReference thumb,
@@ -375,8 +436,9 @@ WF::IAsyncAction Refresh(MediaP s) { // pull full state, publish if changed
             LogErr(L"playback info");
         }
         const uint64_t nowMs = GetTickCount64();
+        uint64_t tlSig = 0;
         try {
-            ReadTl(t, sel.GetTimelineProperties(), nowMs);
+            tlSig = ReadTl(t, sel.GetTimelineProperties(), nowMs);
         } catch (...) {
             t.stamp = nowMs; // ReadTl may throw before setting it
             LogErr(L"timeline");
@@ -390,6 +452,15 @@ WF::IAsyncAction Refresh(MediaP s) { // pull full state, publish if changed
                 t.stamp = nowMs;
             }
         }
+        if (tlSig && t.duration > 0) { // spotify and chromium report position only on play, pause, seek and song change
+            std::lock_guard lock(s->mu);
+            const Track& old = s->track;
+            if (tlSig == s->tlSig && s->has && selId == s->selId && old.title == t.title && old.artist == t.artist) {
+                t.position = ElapsedAt(old, nowMs); // nothing new reported: that old position is stale, keep our clock running
+                t.stamp = nowMs;
+            }
+            s->tlSig = tlSig;
+        }
         t.canSeek = t.canSeek && t.duration > 0; // nothing to seek against until the app reports a length
 
         std::wstring key = t.app + L'\x1f' + t.title + L'\x1f' + t.artist + L'\x1f' + t.album; // unit separator, can't clash with text
@@ -398,6 +469,8 @@ WF::IAsyncAction Refresh(MediaP s) { // pull full state, publish if changed
             s->coverKey = std::move(key);
             s->keyTick = nowMs;
         }
+        if (newKey || (!s->music && nowMs - s->keyTick < kMusicLookMs)) s->music = MusicApp(selId) || (Browser(t.app) && MusicSite(t));
+        t.music = s->music;
         t.cover = newKey ? nullptr : oldCover; // drop stale art on track change
         const bool want = thumb && (newKey || !oldCover || nowMs - s->keyTick < kCoverRetry); // apps often send art late
         if (want) {

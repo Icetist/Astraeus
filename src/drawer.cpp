@@ -13,6 +13,8 @@
 namespace {
 
 constexpr UINT_PTR kHoverTimer = 1, kCloseTimer = 2, kReleaseTimer = 3, kPeekTimer = 4;
+
+bool PillStays(const Model& m) { return m.IslandAlways() && m.hasTrack && m.track.playing; } // always means: while something is playing
 constexpr float kStrip = 3; // idle bezel height in dips, just enough to catch the mouse
 constexpr float kFling = 800; // dips/s, fast flick decides open/close
 constexpr float kOpenAt = 0.4f; // slow drag past 40% height opens
@@ -34,6 +36,7 @@ Drawer::Drawer(const Config& c, Model& m) : cfg(c), model(m) {
     accentHexNow = model.accentHex;
     shellSeed = mediaSeed = accentModeNow ? theme::FromCol(Color::Rgb((uint32_t)accentHexNow)) : Seed{}; // wallpaper theme fills in later
     lookNow = model.look;
+    bgNow = model.customBg;
     edgeNow = model.edge;
     screensNow = model.screens;
     screenNow = model.screen;
@@ -80,7 +83,7 @@ void Drawer::Place() {
     DWM_TIMING_INFO ti = {sizeof(ti)};
     if (SUCCEEDED(DwmGetCompositionTimingInfo(nullptr, &ti)) && ti.rateRefresh.uiDenominator > 0) { // 144hz+ screens would otherwise run ambient at 72-120 fps
         constexpr double kAmbientFps = 30;
-        double hz = (double)ti.rateRefresh.uiNumerator / ti.rateRefresh.uiDenominator;
+        hz = (double)ti.rateRefresh.uiNumerator / ti.rateRefresh.uiDenominator;
         ambientSync = (UINT)(std::clamp)((int)std::lround(hz / kAmbientFps), 1, 4); // dxgi caps sync interval at 4
     }
     sideH = (std::min)(kSideMaxH, (mi.rcMonitor.bottom - mi.rcMonitor.top) / scale - 2 * cfg.fillet - 60); // sidebar fits the screen
@@ -107,10 +110,34 @@ bool Drawer::MaximizedBelow() const {
     MONITORINFO mi = {sizeof(mi)};
     if (!GetWindowRect(root, &r) || !GetMonitorInfoW(MonitorFromWindow(root, MONITOR_DEFAULTTONULL), &mi)) return false;
     bool spans = r.left <= mi.rcWork.left && r.right >= mi.rcWork.right && r.top <= mi.rcWork.top; // fills the screen from the top: maximized in all but name
-    return edgeNow == 0 ? spans : spans && r.bottom >= mi.rcWork.bottom;
+    if (edgeNow == 0 ? spans : spans && r.bottom >= mi.rcWork.bottom) return true;
+    return TiledEdge(mi.rcWork); // snapped or tiled windows that together cover the edge: the same as one maximized app
+}
+
+bool Drawer::TiledEdge(const RECT& work) const { // samples along the docked edge: every point an app window that reaches the edge
+    LONG in = (LONG)(6 * scale), slack = (LONG)(10 * scale);
+    constexpr int kSamples = 9;
+    for (int i = 0; i < kSamples; ++i) {
+        float f = (i + 0.5f) / kSamples;
+        POINT q = edgeNow == 0 ? POINT{work.left + (LONG)((work.right - work.left) * f), work.top + in}
+                : edgeNow == 1 ? POINT{work.left + in, work.top + (LONG)((work.bottom - work.top) * f)}
+                               : POINT{work.right - in, work.top + (LONG)((work.bottom - work.top) * f)};
+        HWND w = WindowFromPoint(q);
+        HWND root = w ? GetAncestor(w, GA_ROOT) : nullptr;
+        if (!root || root == hwnd || IsIconic(root)) return false;
+        wchar_t cls[32] = {};
+        GetClassNameW(root, cls, 32);
+        if (!wcscmp(cls, L"Progman") || !wcscmp(cls, L"WorkerW") || !wcscmp(cls, L"Shell_TrayWnd")) return false; // desktop or taskbar shows through
+        RECT r;
+        if (!GetWindowRect(root, &r)) return false;
+        bool touches = edgeNow == 0 ? r.top <= work.top + slack : edgeNow == 1 ? r.left <= work.left + slack : r.right >= work.right - slack;
+        if (!touches) return false; // a floating window with a gap above it: the bezel still has room
+    }
+    return true;
 }
 
 void Drawer::ShowIsland() {
+    if (model.look == 2) SampleBehind();
     if (hidden || opened || peeking || !EnsureDev()) return;
     KillTimer(hwnd, kReleaseTimer); // keep gpu alive
     KillTimer(hwnd, kCloseTimer);
@@ -122,8 +149,25 @@ void Drawer::ShowIsland() {
     Redraw();
 }
 
+void Drawer::SampleBehind() {
+    int a = (int)(Span() * scale + 0.5f), d = (int)(Depth() * scale + 0.5f); // the panel's full open footprint
+    RECT r;
+    if (edgeNow == 0) {
+        LONG x = monitor.left + (monitor.right - monitor.left - a) / 2;
+        r = {x, monitor.top, x + a, monitor.top + d};
+    } else {
+        LONG y = monitor.top + (monitor.bottom - monitor.top - a) / 2;
+        r = edgeNow == 1 ? RECT{monitor.left, y, monitor.left + d, y + a} : RECT{monitor.right - d, y, monitor.right, y + a};
+    }
+    glassShade = anim::Clamp01((sys::Brightness(r) - 0.42f) / 0.38f); // dark and colorful stay clear, bright pages get a deeper tint
+}
+
 float Drawer::DepthOf(D2D1_POINT_2F p) const {
     return edgeNow == 0 ? p.y : edgeNow == 1 ? p.x : winH - p.x; // right edge: measured from the window's right side
+}
+
+D2D1_RECT_F Drawer::Visible() const { // the window's part of the surface, in dips: the top left corner, as big as the window
+    return Side() ? D2D1_RECT_F{0, 0, winH, winW} : D2D1_RECT_F{0, 0, winW, winH};
 }
 
 D2D1_MATRIX_3X2_F Drawer::EdgeXform() const {
@@ -244,6 +288,7 @@ bool Drawer::MouseIn() const {
 
 void Drawer::Open() {
     if (hidden) return;
+    if (model.look == 2 && spring.value < 1) SampleBehind(); // read the background before the panel covers it
     grow = grow || islandLook; // expanding out of the island: width morphs as it drops
     island = islandLook = false;
     if (!EnsureDev()) return; // gpu may have been freed while idle
@@ -286,6 +331,7 @@ void Drawer::Toggle() {
 }
 
 void Drawer::SetFull(bool on) {
+    if (on && stage) return; // that's our own fullscreen player, not a game: the panel comes back when it leaves
     fullApp = on;
     SyncHide();
 }
@@ -320,7 +366,14 @@ void Drawer::SyncHide() {
 
 void Drawer::OnSecond() {
     model.IdleSpectrum();
-    if (!opened) return;
+    if (!opened) {
+        bool always = PillStays(model);
+        if (always && !island && !peeking && !dragging && !hidden && !stage && spring.value <= 0.5f) ShowIsland(); // the pill comes back by itself
+        else if (!always && stayWasAlways && island && !MouseIn()) Close(); // always was just turned off
+        stayWasAlways = always;
+        if (island) Redraw(); // its clock keeps time
+        return;
+    }
     model.ReadAudio(); // volume only matters when visible
     Redraw();
 }
@@ -352,7 +405,7 @@ void Drawer::Peek(const std::wstring& title, const std::wstring& detail, int ico
     Resize(reach + overshoot, true);
     spring.target = reach; // drop only a short banner
     spring.damp = 0.55f; // extra bouncy to catch the eye
-    SetTimer(hwnd, kPeekTimer, 6000, nullptr); // auto retract after 6s
+    SetTimer(hwnd, kPeekTimer, model.notifyWatch.More() ? 3500 : 6000, nullptr); // auto retract after 6s, quicker when more are waiting
     Redraw();
 }
 
@@ -468,6 +521,13 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             islandHot = true;
             Redraw();
         }
+        if (island && !opened && PillStays(model) && cfg.hoverOpen && !armed) { // an always-on pill still opens on a pause, like the strip
+            islandNext = MaximizedBelow(); // over a maximized app it stays click-to-open
+            if (!islandNext) {
+                SetTimer(hwnd, kHoverTimer, (UINT)cfg.hoverMs, nullptr);
+                armed = true;
+            }
+        }
         input.mouse = p;
         D2D1_POINT_2F local = {p.x - cfg.fillet, p.y - (spring.value - H)}; // to panel space, panel slides down from -H
         if (ui.Captured() || ui.HitAt(local) != ui.Hovered()) Redraw(); // only redraw when hover target changes
@@ -479,7 +539,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         armed = false;
         islandHot = false;
         input.mouse = {-1e6f, -1e6f}; // park offscreen to clear hover
-        if ((opened || island) && !dragging && GetCapture() != hwnd) SetTimer(hwnd, kCloseTimer, (UINT)cfg.closeMs, nullptr); // close after grace period
+        if ((opened || island) && !dragging && GetCapture() != hwnd) {
+            bool pill = island && !opened;
+            if (!(pill && PillStays(model))) // always: the pill stays put
+                SetTimer(hwnd, kCloseTimer, pill ? model.IslandLingerMs((UINT)cfg.closeMs) : (UINT)cfg.closeMs, nullptr); // close after grace period, the pill can linger
+        }
         ReleaseLater(); // brushed the strip without opening: the hover warm-up made a device
         Redraw();
         return 0;
@@ -491,11 +555,12 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             else if (islandNext) ShowIsland(); // a maximized app below: the pill first, a tap opens the panel
             else Open();
         } else if (wp == kCloseTimer) {
-            if (!dragging && GetCapture() != hwnd && !MouseIn()) Close();
+            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && PillStays(model))) Close();
         } else if (wp == kReleaseTimer) {
             if (!opened && !peeking && spring.value <= 0) FreeDev(); // free gpu after idle
         } else if (wp == kPeekTimer) {
             if (peeking) Close();
+            if (model.notifyWatch.More()) PostMessageW(hwnd, WM_APP_NOTIFY, 0, 0); // next in line
         }
         return 0;
     case WM_LBUTTONDOWN: {
@@ -589,6 +654,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_APP_NOTIFY: { // a windows notification arrived and pills are on
         sys::Toast toast;
+        if (peeking) return 0; // one is showing: the rest wait their turn
         if (model.notifyWatch.Pop(toast) && !opened) // open panel: don't interrupt
             Peek(toast.title.empty() ? toast.app : toast.title, toast.body.empty() ? toast.app : toast.body, glyph::Sparkle);
         return 0;
@@ -641,10 +707,30 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+void Drawer::PaintShape(ID2D1Geometry* shape, float h) {
+    if (!shape) return;
+    canvas->FillGeometry(shape, shellNow.bg); // dark mode: black, blends with screen bezel
+    if (shellNow.glass && glassShade > 0.01f) // over a white page: neutral smoked glass under the highlights, the blur still shows through
+        canvas->FillGeometry(shape, Color{0, 0, 0, 0.42f * glassShade});
+    if (shellNow.glass) { // liquid glass: glossy light from above and a bright specular rim
+        canvas->FillGeoV(shape, {0, 0, W, (std::min)(h, 90.0f)}, shellNow.sheen, shellNow.sheen.Alpha(0));
+        canvas->FillGeoV(shape, {0, h - (std::min)(h * 0.5f, 34.0f), W, h}, Color{1, 1, 1, 0}, Color{1, 1, 1, 0.09f}); // light caught in the lower lip, like a drop of glass
+        canvas->StrokeGeo(shape, Color{1, 1, 1, 0.26f}, 1.2f);
+    }
+}
+
 void Drawer::Frame() {
     if (stage) { // stage paces the loop while it's up, the panel only draws if it's still retracting
         stage->Frame(mediaNow);
-        if (stage->Done()) stage.reset(); // its window, device and audio capture all go with it
+        if (stage->Leaving() && !stageBack) { // fullscreen fades out over the panel dropping open on the media page, where it came from
+            stageBack = true;
+            if (page != 2) SetPage(2);
+            Open();
+        }
+        if (stage->Done()) { // its window, device and audio capture all go with it
+            stage.reset();
+            stageBack = false;
+        }
         if (!needsFrame) return;
     }
     double now = Seconds();
@@ -679,8 +765,15 @@ void Drawer::Frame() {
     float h = (std::max)(0.0f, (std::min)(spring.value, Depth() + overshoot)); // clamp to window room
     double drawT0 = Seconds();
     canvas->NewFrame();
+    bool pillCached = false;
+    if (islandLook && !opened && !peeking && !Side() && !moving && !dragging && !themes && h > 0.5f && std::fabs(h - spring.target) < 0.01f) { // resting pill
+        shapeXform = EdgeXform();
+        pillCached = PillLayer(h, IslandSpan());
+    }
     ctx->BeginDraw();
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+    D2D1_RECT_F vis = Visible();
+    ctx->PushAxisAlignedClip(vis, D2D1_ANTIALIAS_MODE_ALIASED); // the surface is panel-sized, the window shows only this corner: work only there
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0)); // transparent, desktop shows through via dcomp
     bool uiBusy = false, ambient = false;
     ComPtr<ID2D1Geometry> outline; // this frame's shape, the glass blur is cut to it
@@ -691,21 +784,33 @@ void Drawer::Frame() {
         shapeXform = EdgeXform();
         ctx->SetTransform(shapeXform); // turned to the docked edge, centered in the window
         ComPtr<ID2D1Geometry> shape = Shape(h, shapeWide);
-        if (shape) canvas->FillGeometry(shape.Get(), shellNow.bg); // dark mode: black, blends with screen bezel
-        if (shape && shellNow.glass) { // liquid glass: glossy light from above and a bright specular rim
-            canvas->FillGeoV(shape.Get(), {0, 0, W, (std::min)(h, 90.0f)}, shellNow.sheen, shellNow.sheen.Alpha(0));
-            canvas->StrokeGeo(shape.Get(), Color{1, 1, 1, 0.26f}, 1.2f);
+        if (pillCached) { // a resting pill: its still parts come from the layer, only the bars are drawn fresh
+            ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+            ctx->DrawImage(pillLayer.Get());
+            ctx->SetTransform(shapeXform);
+        } else {
+            PaintShape(shape.Get(), h);
         }
         outline = shape;
+        if (glass && spring.vel < 0 && !dragging) { // going up: composition applies the blur's outline a frame or two late, so cut it a few frames ahead
+            float lead = (std::max)(0.0f, h + spring.vel * dt * 3); // never larger than the glass, so it can't trail below it
+            outline = lead > 0.5f ? BuildShape(lead, shapeWide) : nullptr;
+        }
         ctx->SetTransform(Side() ? D2D1::Matrix3x2F::Identity() : shapeXform);
         if (peeking) DrawPeek(h);
-        else if (islandLook) ambient = DrawIsland(h, dt, now); // bars bounce only while it shows and music plays
+        else if (islandLook) { // bars bounce only while it shows and music plays
+            pillPass = pillCached ? 2 : 0;
+            ambient = DrawIsland(h, dt, now);
+            pillPass = 0;
+        }
         else if (h > 24) { // too short for content, just shape
             DrawBody(h, dt, now);
             uiBusy = ui.Busy();
             ambient = ui.Ambient();
         }
     }
+    ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+    ctx->PopAxisAlignedClip();
     HRESULT hr = ctx->EndDraw();
     input.pressed = input.released = input.rclick = false;
     input.wheel = 0;
@@ -724,7 +829,22 @@ void Drawer::Frame() {
         ++perfWhy[why];
         Perf(Seconds() - drawT0);
     }
-    hr = swap->Present(fast ? 1 : ambientSync, 0); // ambient-only motion runs at ~30 fps
+    UINT calm = ambientSync; // ambient motion, the pill's bars included, at ~30 fps: any slower and they stop looking alive
+    if (glass) { // no swapchain: the frame lands with the blur outline, a timer paces the next one
+        GlassPresent();
+        LARGE_INTEGER due;
+        due.QuadPart = -(LONGLONG)((fast ? 1 : calm) * 1e7 / hz); // relative, 100 ns units
+        SetWaitableTimer(frameWait, &due, 0, nullptr, nullptr, FALSE);
+        hr = S_OK;
+    } else {
+        RECT dirty = {0, 0, (LONG)std::ceil(vis.right * scale), (LONG)std::ceil(vis.bottom * scale)}; // only what the window shows changed
+        DXGI_SWAP_CHAIN_DESC1 sd = {};
+        swap->GetDesc1(&sd);
+        dirty.right = (std::min)(dirty.right, (LONG)sd.Width);
+        dirty.bottom = (std::min)(dirty.bottom, (LONG)sd.Height);
+        DXGI_PRESENT_PARAMETERS pp = {1, &dirty, nullptr, nullptr};
+        hr = dirty.right > 0 && dirty.bottom > 0 ? swap->Present1(fast ? 1 : calm, 0, &pp) : swap->Present(fast ? 1 : calm, 0); // ambient-only motion runs at ~30 fps
+    }
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) { // driver reset / gpu switch
         FreeDev();
         needsFrame = true;

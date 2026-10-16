@@ -24,7 +24,7 @@ struct Color {
     D2D1_COLOR_F D2D() const { return {r, g, b, a}; }
 };
 
-enum class Weight { Thin = 200, Light = 300, Regular = 400, Medium = 500 }; // values = dwrite weights, cast directly
+enum class Weight { Thin = 200, Light = 300, Regular = 400, Medium = 500, Semi = 600 }; // values = dwrite weights, cast directly
 enum class Align { Left, Center, Right };
 
 namespace gfx {

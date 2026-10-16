@@ -45,6 +45,7 @@ bool Drawer::EnsureDev() {
     d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL; // flip-model swapchain for composition
     d.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED; // per-pixel transparency
     d.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT; // lets main loop sleep until vsync
+    if (lookNow == 2 && GlassDev(d)) return true; // glass: windows composition with a live backdrop blur, frames go straight into it
     if (FAILED(factory->CreateSwapChainForComposition(d3d.Get(), &d, nullptr, &sc)) || FAILED(sc.As(&swap))) {
         FreeDev();
         return false;
@@ -63,16 +64,32 @@ bool Drawer::EnsureDev() {
     ctx->SetDpi(96 * scale, 96 * scale); // draw in dips
     ctx->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE); // cleartype breaks on transparent bg
 
-    if (lookNow == 2 && OpenGlass(factory.Get(), d)) { // glass: windows composition with a live backdrop blur
-        canvas = std::make_unique<Canvas>(ctx.Get());
-        return true;
-    }
     if (FAILED(DCompositionCreateDevice(dxgi.Get(), IID_PPV_ARGS(&dcomp))) ||
         FAILED(dcomp->CreateTargetForHwnd(hwnd, TRUE, &target)) || FAILED(dcomp->CreateVisual(&visual)) || // topmost target on our hwnd
         FAILED(visual->SetContent(swap.Get())) || FAILED(target->SetRoot(visual.Get())) || FAILED(dcomp->Commit())) { // bind swapchain to window
         FreeDev();
         return false;
     }
+    canvas = std::make_unique<Canvas>(ctx.Get());
+    return true;
+}
+
+bool Drawer::GlassDev(const DXGI_SWAP_CHAIN_DESC1& d) {
+    D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, // drawn into, then copied to the composition surface
+                                                         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96 * scale, 96 * scale);
+    if (FAILED(ctx->CreateBitmap({d.Width, d.Height}, nullptr, 0, bp, &backBuf))) return false;
+    frameWait = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_MANUAL_RESET | CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!frameWait || !OpenGlass(d)) { // manual reset: stays signaled once due, so a later redraw never waits on a spent timer
+        if (frameWait) CloseHandle(frameWait);
+        frameWait = nullptr;
+        backBuf.Reset();
+        return false;
+    }
+    LARGE_INTEGER now = {};
+    SetWaitableTimer(frameWait, &now, 0, nullptr, nullptr, FALSE); // due at once: the first frame draws right away
+    ctx->SetTarget(backBuf.Get());
+    ctx->SetDpi(96 * scale, 96 * scale);
+    ctx->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
     canvas = std::make_unique<Canvas>(ctx.Get());
     return true;
 }
@@ -90,6 +107,7 @@ void Drawer::FreeDev() {
     target.Reset();
     dcomp.Reset();
     backBuf.Reset();
+    pillLayer.Reset(); // belongs to this device
     swap.Reset();
     ctx.Reset();
     d3d.Reset();
@@ -129,13 +147,15 @@ void Drawer::SyncWall() {
 
 Theme Drawer::Make(Seed s) const {
     s.look = lookNow;
+    s.bg = bgNow;
     return Theme::From(s);
 }
 
 void Drawer::SyncLook() {
-    if (model.look == lookNow) return;
+    if (model.look == lookNow && model.customBg == bgNow) return;
     bool rebuild = (model.look == 2) != (lookNow == 2) && ctx; // glass draws through a different pipeline
     lookNow = model.look;
+    bgNow = model.customBg;
     if (rebuild) FreeDev(); // the caller rebuilds it right away for the new appearance
     SetShell(Make(shellSeed)); // media follows unless album tinted
     if (coverSrc && cfg.albumCol) SetMedia(Make(mediaSeed));
@@ -360,20 +380,22 @@ bool Drawer::StepIslandBars(float dt, double now) {
 
 bool Drawer::DrawIsland(float h, float dt, double now) {
     const Theme& t = shellNow;
-    const Theme& mt = mediaNow; // album-tinted accent, matches the media page
+    const Theme& mt = mediaNow; // the wave in the album's colors
     float a = anim::Clamp01((h - 14) / 18); // fade in as the pill drops
     hand = true; // the whole pill is a button
     if (a <= 0) return false;
-    bool moving = model.hasTrack && !model.track.title.empty() && StepIslandBars(dt, now);
+    bool moving = pillPass != 1 && model.hasTrack && !model.track.title.empty() && StepIslandBars(dt, now); // the layer pass leaves the bars alone
     if (Side()) return DrawIslandSide(h, a) && moving;
+    bool still = pillPass != 2, bars = pillPass != 1; // which parts this pass draws
     float inner = kIslandW - 2 * cfg.fillet - 20; // usable width inside the shoulders
     float x0 = W / 2 - inner / 2, cy = h / 2 - 1; // content sits a little high, the handle takes the bottom
     float cx = W / 2;
 
     float hw = islandHot ? 26.0f : 16.0f; // handle bar: the "pull me down" hint, wider and brighter on hover
-    canvas->Line({cx - hw / 2, h - 3.5f}, {cx + hw / 2, h - 3.5f}, t.text.Alpha((islandHot ? 0.75f : 0.30f) * a), 2.5f);
+    if (still) canvas->Line({cx - hw / 2, h - 3.5f}, {cx + hw / 2, h - 3.5f}, t.text.Alpha((islandHot ? 0.75f : 0.30f) * a), 2.5f);
 
     if (!model.hasTrack || model.track.title.empty()) { // nothing playing: time and date
+        if (!still) return false;
         SYSTEMTIME st;
         GetLocalTime(&st);
         wchar_t clock[32] = {}, day[48] = {};
@@ -384,31 +406,88 @@ bool Drawer::DrawIsland(float h, float dt, double now) {
     }
 
     D2D1_RECT_F art = Rect(x0, cy - 10, 20, 20); // cover thumbnail, rounded like an app icon
-    if (cover) {
-        canvas->Art(cover.Get(), coverBlur.Get(), art, 5, a);
-    } else {
-        canvas->Fill(art, 5, mt.cardHi.Alpha(a));
-        canvas->Icon(glyph::Music, {art.left + 10, art.top + 10}, 12, mt.accentHi.Alpha(a), true);
-    }
-
     const float barsW = 22; // mini visualizer on the right, or the expand chevron on hover
     float tx = art.right + 7, tw = inner - (tx - x0) - barsW - 6;
-    canvas->Text(model.track.title, Rect(tx, cy - 12, tw, 14), Weight::Medium, 10.5f, t.text.Alpha(a));
-    if (!model.track.artist.empty()) canvas->Text(model.track.artist, Rect(tx, cy + 1, tw, 12), Weight::Light, 9.5f, t.textDim.Alpha(a));
+    if (still) {
+        if (cover) {
+            canvas->Art(cover.Get(), coverBlur.Get(), art, 5, a);
+        } else {
+            canvas->Fill(art, 5, mt.cardHi.Alpha(a));
+            canvas->Icon(glyph::Music, {art.left + 10, art.top + 10}, 12, mt.accentHi.Alpha(a), true);
+        }
+        canvas->Text(model.track.title, Rect(tx, cy - 12, tw, 14), Weight::Medium, 10.5f, t.text.Alpha(a));
+        if (!model.track.artist.empty()) canvas->Text(model.track.artist, Rect(tx, cy + 1, tw, 12), Weight::Light, 9.5f, t.textDim.Alpha(a));
+    }
 
     float bx = x0 + inner - barsW;
     if (islandHot) { // chevron: tap opens the full panel
+        if (!still) return false;
         float ccx = bx + barsW / 2;
         Color ink = mt.accentHi.Alpha(a);
         canvas->Line({ccx - 6, cy - 3}, {ccx, cy + 3}, ink, 2);
         canvas->Line({ccx, cy + 3}, {ccx + 6, cy - 3}, ink, 2);
         return false;
     }
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; bars && i < 4; ++i) {
         float v = islandBars[i], bh = 3 + 11 * v;
         canvas->Fill(Rect(bx + i * 6, cy - bh / 2, 3.5f, bh), 1.75f, mt.accent.Mix(mt.accentHi, v).Alpha(a));
     }
     return moving;
+}
+
+uint64_t Drawer::PillKey(float h) const {
+    uint64_t k = 1469598103934665603ull; // fnv-1a over everything the still parts are drawn from
+    auto mix = [&k](const void* p, size_t n) {
+        for (size_t i = 0; i < n; ++i) k = (k ^ ((const unsigned char*)p)[i]) * 1099511628211ull;
+    };
+    auto text = [&mix](const std::wstring& s) { mix(s.data(), s.size() * sizeof(wchar_t)); };
+    bool track = model.hasTrack && !model.track.title.empty();
+    if (track) {
+        text(model.track.title);
+        text(model.track.artist);
+    } else { // the clock and date show instead: the minute is part of it
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        mix(&st.wMinute, sizeof(st.wMinute));
+        mix(&st.wHour, sizeof(st.wHour));
+        mix(&st.wDay, sizeof(st.wDay));
+    }
+    void* art = cover.Get();
+    mix(&art, sizeof(art));
+    float f[] = {h, W, winW, winH, glassShade, (float)edgeNow, islandHot ? 1.0f : 0.0f, track ? 1.0f : 0.0f};
+    mix(f, sizeof(f));
+    for (const Color* c : {&shellNow.bg, &shellNow.text, &shellNow.textDim, &shellNow.sheen, &mediaNow.cardHi, &mediaNow.accentHi}) mix(c, sizeof(Color));
+    return k;
+}
+
+bool Drawer::PillLayer(float h, float shapeWide) { // before the frame: rebuilt only when something it shows changed
+    D2D1_SIZE_U px = ctx->GetPixelSize();
+    if (!px.width || !px.height) return false;
+    bool fits = pillLayer && pillLayer->GetPixelSize().width == px.width && pillLayer->GetPixelSize().height == px.height;
+    uint64_t key = PillKey(h);
+    if (fits && key == pillKey) return true;
+    if (!fits) {
+        pillLayer.Reset();
+        float dx = 96, dy = 96;
+        ctx->GetDpi(&dx, &dy);
+        D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dx, dy);
+        if (FAILED(ctx->CreateBitmap(px, nullptr, 0, bp, &pillLayer))) return false;
+    }
+    ComPtr<ID2D1Image> was;
+    ctx->GetTarget(&was);
+    ctx->SetTarget(pillLayer.Get());
+    ctx->BeginDraw();
+    ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
+    ctx->SetTransform(shapeXform);
+    PaintShape(Shape(h, shapeWide).Get(), h);
+    pillPass = 1;
+    DrawIsland(h, 0, 0);
+    pillPass = 0;
+    bool ok = SUCCEEDED(ctx->EndDraw());
+    ctx->SetTarget(was.Get());
+    pillKey = ok ? key : 0;
+    if (!ok) pillLayer.Reset();
+    return ok;
 }
 
 bool Drawer::DrawIslandSide(float h, float a) {

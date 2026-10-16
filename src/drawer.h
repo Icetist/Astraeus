@@ -62,6 +62,7 @@ private:
     void FreeDev(); // drop gpu objects when idle
     void ReleaseLater(); // schedule FreeDev if the panel stays shut
     UINT ambientSync = 2; // present interval for ambient-only motion, ~30 fps at any refresh rate
+    double hz = 60; // screen refresh, paces glass frames
     void SyncCover(); // reload album art on track change
     ComPtr<ID2D1Bitmap> Blur(ID2D1Bitmap1* source);
     ComPtr<ID2D1Geometry> Shape(float h, float w); // w = length along the edge incl. shoulders, centered
@@ -90,9 +91,17 @@ private:
     bool DrawIsland(float h, float dt, double now); // true while its visualizer is moving
     bool DrawIslandSide(float h, float a); // the side edges' vertical pill: art, the song turned sideways, bars
     bool StepIslandBars(float dt, double now); // mini visualizer levels, true while moving
+    void PaintShape(ID2D1Geometry* shape, float h); // the panel or pill body: fill, smoked glass, sheen, rim
+    D2D1_RECT_F Visible() const; // the corner of the surface the window shows
+    bool PillLayer(float h, float shapeWide); // a resting pill's still parts drawn once into a bitmap; false: draw it the normal way
+    uint64_t PillKey(float h) const; // everything the still parts depend on
+    int pillPass = 0; // 0 the whole pill, 1 only its still parts (into the layer), 2 only the moving bars
+    ComPtr<ID2D1Bitmap1> pillLayer; // the resting pill without its bars
+    uint64_t pillKey = 0;
     float IslandSpan() const { return Side() ? kIslandSide : kIslandW; } // pill length along its edge
     void ShowIsland(); // small pill instead of the panel, over maximized apps
     bool MaximizedBelow() const; // a maximized app sits under the hot zone
+    bool TiledEdge(const RECT& work) const; // tiled windows cover the whole docked edge between them
     void DrawRail(const Theme& t);
     void SyncWall();
     void Perf(double drawSec);
@@ -103,13 +112,18 @@ private:
     void SyncTyping(); // hex field focused: take the keyboard, give it back after
     struct Glass; // live blur behind the panel, only while the glass appearance is on
     Glass* glass = nullptr;
-    bool OpenGlass(IDXGIFactory2* factory, const DXGI_SWAP_CHAIN_DESC1& desc);
+    bool OpenGlass(const DXGI_SWAP_CHAIN_DESC1& desc); // the frame goes straight into composition, in step with the blur
+    bool GlassDev(const DXGI_SWAP_CHAIN_DESC1& desc); // glass device: a plain target bitmap and a frame timer, no swapchain
+    void GlassPresent(); // hand this frame to composition, it lands together with the blur outline
     void GlassMask(ID2D1Geometry* shape); // cut the blur to this frame's shape
     void FreeGlass();
     void GlassBlur(float amount); // 0 clear .. 1 fully frosted
+    void SampleBehind(); // glass: how bright the screen under the panel is
+    float glassShade = 0; // 0 .. 1, deepens the glass tint over bright backgrounds so white text stays readable
     void SetMedia(const Theme& t);
     void OpenStage(); // fullscreen ambient player, replaces the panel until it's left
     std::unique_ptr<Stage> stage;
+    bool stageBack = false; // the panel already reopened under a leaving stage
     bool StepTheme(float dt); // crossfade palettes, true while moving
 
     const Config& cfg;
@@ -128,6 +142,7 @@ private:
     static constexpr float kIslandH = 34, kIslandW = 260; // island pill size in dips, width includes the shoulders
     static constexpr float kIslandSide = 240; // on a side edge the song runs along the pill like a book spine
     bool islandHot = false; // mouse over the island: show the expand hint
+    bool stayWasAlways = false; // the island was set to always last second, to notice it being switched off
     float islandBars[4] = {}; // mini visualizer levels, eased per frame
     static constexpr UINT kIslandMs = 500; // dwell before the island shows over a maximized app
     anim::Spring spring;
@@ -166,6 +181,7 @@ private:
     Theme shellFrom, shellTo, shellNow, mediaFrom, mediaTo, mediaNow; // from/to lerp into now
     Seed shellSeed, mediaSeed; // what the palettes were built from, rebuilt on appearance change
     int lookNow = 0;
+    int bgNow = 0; // custom look background the themes were built with
     int accentModeNow = 0, accentHexNow = 0;
     bool typing = false;
     HWND typingFrom = nullptr; // window that had the keyboard before the hex field took it

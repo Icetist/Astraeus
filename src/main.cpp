@@ -183,6 +183,7 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == kSecTimer && app->model) {
             app->model->Tick(); // refresh stats, clock, timer
             ++app->ticks;
+            if (app->ticks == 3) app->model->Prefetch(); // weather is ready before the panel first opens
             if (app->cfg.autoUpdate && (app->ticks == 30 || app->ticks % 10800 == 0)) // 30s after launch, then every 3h
                 app->updater.Check(app->host, WM_APP_UPDATE);
             if (app->restartPending && !app->drawer->Busy()) Restart(app->exePath); // never yank the panel away mid-use
@@ -196,7 +197,15 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_APP_UPDATE:
-        app->restartPending = true;
+        switch (wp) {
+        case sys::Updater::kInstalled:
+            tray::SetUpdate(tray::Upd::Installed, app->updater.Applied());
+            app->restartPending = true;
+            break;
+        case sys::Updater::kDownloading: tray::SetUpdate(tray::Upd::Downloading, app->updater.Applied()); break;
+        case sys::Updater::kCurrent: tray::SetUpdate(tray::Upd::Current); break;
+        default: tray::SetUpdate(tray::Upd::Failed); break;
+        }
         return 0;
     case WM_APP_TRAY:
         if (LOWORD(lp) == WM_LBUTTONUP) app->drawer->Toggle(); // left click opens/closes
@@ -211,6 +220,7 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case kConfig: ShellExecuteW(nullptr, L"open", L"notepad.exe", (L"\"" + app->cfgPath + L"\"").c_str(), nullptr, SW_SHOWNORMAL); break; // edit ini in notepad
         case kStartup: SetStartup(!StartupOn()); break;
         case kRestart: Restart(app->exePath); break;
+        case kUpdate: app->updater.Check(app->host, WM_APP_UPDATE, true); break; // the tray row shows the outcome
         case kExit: PostQuitMessage(0); break;
         }
         return 0;
@@ -257,10 +267,7 @@ void Run() {
         if (d.NeedsFrame() && !d.FrameWait()) d.Frame(); // no waitable yet, draw once to create it
         HANDLE wait = d.NeedsFrame() ? d.FrameWait() : nullptr; // only wait on vsync while animating
         DWORD r = MsgWaitForMultipleObjectsEx(wait ? 1 : 0, wait ? &wait : nullptr, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE); // sleep until vsync or input, 0 cpu idle
-        if (wait && r == WAIT_OBJECT_0) {
-            d.Frame();
-            continue;
-        }
+        if (wait && r == WAIT_OBJECT_0) d.Frame(); // then fall through: glass commits its blur outline from queued messages, it must not wait a frame
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) { // drain all queued input
             if (msg.message == WM_QUIT) return;
             TranslateMessage(&msg);

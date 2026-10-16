@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "config.h"
+#include "lyrics.h"
 #include "media.h"
 #include "spectrum.h"
 #include "sys.h"
@@ -65,6 +66,7 @@ public:
     void SetLive(bool active, bool processes); // gates worker polling
     void ReadAudio();
     void OnOpen(); // refresh slow stuff when drawer opens
+    void Prefetch(); // a few seconds after launch: weather ready before the panel first opens
 
     void OnStats(); // pull worker results under lock
     void OnMedia();
@@ -86,7 +88,7 @@ public:
     void ToggleMic();
     void SetBright(float v);
     void SetAwake(bool on);
-    void SetLook(int look); // appearance: 0 dark, 1 light, 2 glass; persisted
+    void SetLook(int look); // appearance: 0 dark, 1 light, 2 glass, 3 custom; persisted
     void SetPref(int& field, const wchar_t* key, int value); // store a settings value and remember it
     void OpenSettings(); // astraeus settings sheet, one sheet at a time
     void PickScreen(const std::wstring& name); // live on this screen only
@@ -125,6 +127,7 @@ public:
     sys::Media media;
     sys::Track track;
     bool hasTrack = false;
+    sys::LyricSrc lyrics; // synced lyrics, looked up only while the fullscreen player wants them
 
     sys::Radios radios;
     sys::Bt bt;
@@ -149,17 +152,25 @@ public:
     int brightPct = -1; // -1 hides brightness slider
 
     bool awake = false;
-    int look = 0; // appearance: 0 dark (default), 1 light, 2 glass
+    int look = 0; // appearance: 0 dark (default), 1 light, 2 glass, 3 custom
+    int customBg = 0x121826; // custom look: the panel background, 0xRRGGBB
+    int lyricOffsetMs = 0; // fullscreen lyrics nudged later (+) or earlier (-), [ and ] change it
     int glassBlur = 100; // glass: 0 clear .. 100 fully frosted
     int edge = 0; // 0 top (default), 1 left, 2 right
     int screens = 0; // 0 one screen, 1 every screen (the panel follows the mouse)
+    int islandSecs = 0; // the pill over maximized windows, after the mouse leaves: 0 brief, up to kIslandMaxSecs, -1 always
+    static constexpr int kIslandMaxSecs = 300;
+    bool IslandAlways() const { return islandSecs < 0; }
+    UINT IslandLingerMs(UINT brief) const { return islandSecs > 0 ? (UINT)islandSecs * 1000 : brief; } // once the mouse is gone
     std::wstring screen; // the one screen, by device name; empty = primary
     std::vector<sys::Screen> screenList; // connected screens, read when settings opens
     int accentMode = 0; // 0 colors from the wallpaper (default), 1 custom
     int accentHex = 0xB8C4FF; // custom accent, 0xRRGGBB
     bool hexFocus = false; // the settings hex field is taking keystrokes
+    int hexTarget = 0; // what the typed hex sets: 0 the accent, 1 the custom background
     std::wstring hexEdit; // what's typed so far, without the #
     int notifyPills = 0; // 1: windows notifications also drop as a pill
+    int fullLyrics = 1; // the fullscreen player shows synced lyrics beside the cover (on by default)
     bool settingsOpen = false;
     sys::NotifyWatch notifyWatch; // only runs while notification pills are on
     bool timerOn = false;

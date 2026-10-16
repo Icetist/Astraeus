@@ -42,4 +42,31 @@ HMONITOR FindScreen(const std::wstring& name) {
     return f.hit;
 }
 
+float Brightness(const RECT& r) {
+    constexpr int kW = 24, kH = 12; // a thumbnail is plenty for "is this a white page"
+    if (r.right <= r.left || r.bottom <= r.top) return 0;
+    HDC screen = GetDC(nullptr);
+    HDC mem = CreateCompatibleDC(screen);
+    BITMAPINFO bi = {};
+    bi.bmiHeader = {sizeof(BITMAPINFOHEADER), kW, -kH, 1, 32, BI_RGB};
+    void* bits = nullptr;
+    HBITMAP dib = CreateDIBSection(mem, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    float lum = 0;
+    if (dib && bits) {
+        HGDIOBJ old = SelectObject(mem, dib);
+        SetStretchBltMode(mem, HALFTONE); // averages instead of picking single pixels
+        StretchBlt(mem, 0, 0, kW, kH, screen, r.left, r.top, r.right - r.left, r.bottom - r.top, SRCCOPY);
+        GdiFlush();
+        const auto* px = static_cast<const BYTE*>(bits);
+        double sum = 0;
+        for (int i = 0; i < kW * kH; ++i) sum += 0.0722 * px[i * 4] + 0.7152 * px[i * 4 + 1] + 0.2126 * px[i * 4 + 2]; // bgr
+        lum = (float)(sum / (kW * kH) / 255.0);
+        SelectObject(mem, old);
+        DeleteObject(dib);
+    }
+    DeleteDC(mem);
+    ReleaseDC(nullptr, screen);
+    return lum;
+}
+
 }

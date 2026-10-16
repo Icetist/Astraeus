@@ -8,7 +8,7 @@ namespace {
 void Player(PageCtx& p, const D2D1_RECT_F& r) {
     Ui& ui = p.ui;
     Canvas& c = ui.C();
-    const Theme& t = p.media;
+    const Theme& t = p.shell; // the home card wears the accent; album colors are for the media page and fullscreen
     const sys::Track& tr = p.m.track;
     bool has = p.m.hasTrack;
     w::Card(ui, t, r);
@@ -19,7 +19,7 @@ void Player(PageCtx& p, const D2D1_RECT_F& r) {
     } else {
         c.FillH(r, 22, t.accent.Alpha(0.10f), Color{0, 0, 0, 0}); // no art: faint accent wash
     }
-    VizGlow(p, r, 1.15f); // glow scaled up a bit for small card
+    VizGlow(p, r, 1.15f, t); // glow scaled up a bit for small card
 
     const float pad = Height(r) < 160 ? 16.0f : 20.0f; // sidebar card is shorter
     float side = Height(r) - 2 * pad; // square art fills card height
@@ -38,9 +38,10 @@ void Player(PageCtx& p, const D2D1_RECT_F& r) {
     float cy = (std::min)(r.top + 117, r.bottom - pad - 22); // transport row under text, clear of the progress line
     bool slim = Height(r) < 160; // sidebar card: a lighter transport row
     float bs = slim ? 0.78f : 1.0f, step = 54 * bs;
-    if (w::IconBtn(ui, t, Ui::Id("ov.prev"), {tx + 16 * bs, cy}, 38 * bs, glyph::Prev, 24 * bs, has && tr.canPrev)) p.m.media.Previous();
-    if (w::PlayBtn(ui, t, Ui::Id("ov.play"), {tx + 16 * bs + step, cy}, 44 * bs, has && tr.playing, has)) p.m.media.TogglePlay();
-    if (w::IconBtn(ui, t, Ui::Id("ov.next"), {tx + 16 * bs + 2 * step, cy}, 38 * bs, glyph::Next, 24 * bs, has && tr.canNext)) p.m.media.Next();
+    const Theme ct = theme::Lift(t); // the play button leans toward the ink, so it stands clear of the glow behind it
+    if (w::IconBtn(ui, ct, Ui::Id("ov.prev"), {tx + 16 * bs, cy}, 38 * bs, glyph::Prev, 24 * bs, has && tr.canPrev)) p.m.media.Previous();
+    if (w::PlayBtn(ui, ct, Ui::Id("ov.play"), {tx + 16 * bs + step, cy}, 44 * bs, has && tr.playing, has)) p.m.media.TogglePlay();
+    if (w::IconBtn(ui, ct, Ui::Id("ov.next"), {tx + 16 * bs + 2 * step, cy}, 38 * bs, glyph::Next, 24 * bs, has && tr.canNext)) p.m.media.Next();
 
     if (has && tr.duration <= 0) return; // app reports no length, a stuck empty bar would mislead
     float y = r.bottom - pad + 4, x1 = r.right - pad; // progress line hugs card bottom
@@ -74,7 +75,8 @@ void WxCard(PageCtx& p, const D2D1_RECT_F& r) {
         GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &st, L"d MMMM", date, 64, nullptr);
         c.TextSp(fmt::Upper(day), Rect(r.left + 18, r.top + 20, 160, 16), Weight::Medium, 10.5f, t.accent, 1.4f);
         bool compact = Height(r) < 140; // sidebar tile: smaller date, no status line
-        c.Text(date, Rect(r.left + 16, r.top + 44, Width(r) - 24, 50), Weight::Thin, compact ? 28.0f : 34.0f, t.text);
+        float room = Width(r) - 28, size = (std::min)(compact ? 28.0f : 34.0f, room / ((float)wcslen(date) * 0.50f)); // thin digits ~half an em wide: long dates shrink to fit
+        c.Text(date, Rect(r.left + 16, r.top + 44, room + 8, 50), Weight::Thin, (std::max)(size, 16.0f), t.text);
         if (!compact)
             c.Text(p.m.cfg.weather ? L"Fetching weather…" : L"Weather is off", Rect(r.left + 18, r.top + 118, 160, 18), Weight::Light, 12, t.textDim);
         return;
@@ -90,12 +92,12 @@ void WxCard(PageCtx& p, const D2D1_RECT_F& r) {
         wchar_t hh[4], mm[4];
         swprintf_s(hh, L"%02d", hour);
         swprintf_s(mm, L"%02d", st.wMinute);
-        float fs = (std::min)((Height(r) - 16) / 2 * 1.08f, 72.0f), cw = fs * 1.7f, right = r.right - 10; // two lines fill the card's height
-        float half = Height(r) / 2, lh = fs * 1.25f; // a box wider than any two digits, right-aligned: 04 and 11 fit as well as 50
-        c.Text(hh, Rect(right - cw, r.top + half * 0.52f - lh / 2 + 4, cw, lh), Weight::Thin, fs, t.text, Align::Right);
-        c.Text(mm, Rect(right - cw, r.top + half * 1.48f - lh / 2 - 4, cw, lh), Weight::Thin, fs, t.accent, Align::Right);
+        float fs = (std::min)(Height(r) * 0.36f, 58.0f), lh = fs * 1.3f, cw = fs * 1.6f, right = r.right - 14; // two lines as one block
+        float mid = (r.top + r.bottom) / 2, step = fs * 0.47f; // lines hug the card's middle, not its edges
+        c.Text(hh, Rect(right - cw, mid - step - lh / 2, cw, lh), Weight::Thin, fs, t.text, Align::Right);
+        c.Text(mm, Rect(right - cw, mid + step - lh / 2, cw, lh), Weight::Thin, fs, t.accent, Align::Right);
     }
-    float textW = clock ? Width(r) - (std::min)((Height(r) - 16) / 2 * 1.08f, 72.0f) * 1.2f - 22 : 162; // weather keeps left of the clock
+    float textW = clock ? Width(r) - (std::min)(Height(r) * 0.36f, 58.0f) * 1.25f - 26 : 162; // weather keeps left of the clock
     c.Text(fmt::Temp(wx.tempC, p.m.cfg.fahr), Rect(r.left + 14, r.top + 52, textW + 8, 62), Weight::Thin, 52, t.text);
     c.Text(fmt::WxText(wx.code), Rect(r.left + 18, r.top + 110, textW, 18), Weight::Regular, 13, t.text);
     std::wstring sub = clock ? wx.place : wx.place + L"  ·  " + fmt::Temp(wx.highC, p.m.cfg.fahr) + L" / " + fmt::Temp(wx.lowC, p.m.cfg.fahr); // place · hi / lo

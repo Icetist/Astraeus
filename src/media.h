@@ -10,6 +10,7 @@ namespace sys {
 struct Track {
     std::wstring app, title, artist, album;
     bool playing = false;
+    bool music = false; // from a music app or a music site in a browser: worth looking up lyrics for
     bool canPrev = false, canNext = false, canSeek = false, canShuf = false, canRep = false;
     bool shuffle = false;
     int repeat = 0; // 0 off, 1 track, 2 list

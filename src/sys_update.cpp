@@ -139,6 +139,7 @@ bool Swap(const std::string& data) { // write new exe beside us, rename ourselve
 struct Updater::Impl {
     std::thread th;
     std::atomic<bool> busy{false}, stop{false};
+    std::atomic<bool> manual{false}; // someone pressed check: answer even if there's nothing new, and don't make them wait on retries
     std::atomic<void*> req{nullptr}; // live http handle, closed to cancel
     std::wstring tag; // installed version, read by ui after the post
 
@@ -152,57 +153,62 @@ struct Updater::Impl {
     }
 
     bool Get(const wchar_t* url, std::string& out, size_t max) { // retried get
-        for (int i = 0; i < kTries && !stop.load(); ++i) {
-            if (i) Wait(kRetryMs);
+        const bool quick = manual.load();
+        for (int i = 0; i < (quick ? 2 : kTries) && !stop.load(); ++i) {
+            if (i) Wait(quick ? 1500 : kRetryMs);
             if (detail::HttpGet(url, out, stop, req, max)) return true;
         }
         return false;
     }
 
-    bool Fetch() {
+    Updater::Result Fetch(HWND notify, UINT msg) {
         std::string body;
-        if (!Get(kLatest, body, 256 * 1024)) return false; // still offline, next scheduled check retries
+        if (!Get(kLatest, body, 256 * 1024)) return Updater::kFailed; // still offline, next scheduled check retries
         size_t k = body.find("\"tag_name\"");
         std::string t = k == std::string::npos ? "" : JsonStr(body, k);
-        if (t.empty() || !Newer(t) || Widen(t) == Done()) return false; // up to date, or this tag already tried
+        if (t.empty()) return Updater::kFailed;
+        if (!Newer(t)) return Updater::kCurrent;
+        if (!manual.load() && Widen(t) == Done()) return Updater::kFailed; // this tag was already tried on its own; a press tries again
         const std::string url = AssetUrl(body, kAsset), hashUrl = AssetUrl(body, kHashAsset);
-        if (url.empty() || hashUrl.empty()) return false; // still building, or a release without a published hash: never install unverified
-        if (url.rfind(kTrusted, 0) != 0 || hashUrl.rfind(kTrusted, 0) != 0) return false; // https, this repo only
+        if (url.empty() || hashUrl.empty()) return Updater::kCurrent; // still building, or a release without a published hash: never install unverified
+        if (url.rfind(kTrusted, 0) != 0 || hashUrl.rfind(kTrusted, 0) != 0) return Updater::kFailed; // https, this repo only
+        tag = Widen(t); // the menu can say what it's fetching
+        if (manual.load() && IsWindow(notify)) PostMessageW(notify, msg, Updater::kDownloading, 0);
         std::string sum;
-        if (!Get(Widen(hashUrl).c_str(), sum, kMaxHashFile)) return false;
+        if (!Get(Widen(hashUrl).c_str(), sum, kMaxHashFile)) return Updater::kFailed;
         const std::string want = ParseHash(sum);
-        if (want.empty()) return false;
+        if (want.empty()) return Updater::kFailed;
         std::string exe;
         if (!Get(Widen(url).c_str(), exe, kMaxExe) || exe.size() < kMinExe || exe[0] != 'M' || exe[1] != 'Z')
-            return false; // must look like a windows exe
+            return Updater::kFailed; // must look like a windows exe
         if (Sha256Hex(exe) != want) { // corrupted or tampered download: not marked done, so the next check retries
             OutputDebugStringW(L"[sys] update rejected: sha-256 mismatch\n");
-            return false;
+            return Updater::kFailed;
         }
         MarkDone(Widen(t)); // once only, even if the swap fails
-        if (!Swap(exe)) return false;
-        tag = Widen(t);
-        return true;
+        return Swap(exe) ? Updater::kInstalled : Updater::kFailed;
     }
 };
 
 Updater::Updater() = default;
 Updater::~Updater() = default;
 
-void Updater::Check(HWND notify, UINT msg) {
+void Updater::Check(HWND notify, UINT msg, bool manual) {
     try {
         if (!impl) impl = std::make_unique<Impl>();
+        if (manual) impl->manual.store(true); // a check already underway answers this press too
         if (impl->busy.exchange(true)) return; // one check at a time
         if (impl->th.joinable()) impl->th.join();
         impl->th = std::thread([p = impl.get(), notify, msg] {
-            bool ok = false;
+            Result r = kFailed;
             try {
-                ok = p->Fetch();
+                r = p->Fetch(notify, msg);
             } catch (...) {
                 OutputDebugStringW(L"[sys] update check failed\n");
             }
+            bool asked = p->manual.exchange(false);
             p->busy.store(false);
-            if (ok && !p->stop.load() && IsWindow(notify)) PostMessageW(notify, msg, 0, 0); // ui restarts when idle
+            if ((r == kInstalled || asked) && !p->stop.load() && IsWindow(notify)) PostMessageW(notify, msg, r, 0); // ui restarts when idle
         });
     } catch (...) {
         if (impl) impl->busy.store(false);
