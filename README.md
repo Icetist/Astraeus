@@ -37,7 +37,7 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 - **Synced lyrics.** For songs from music apps and sites (Spotify, Apple Music, YouTube Music, Tidal, Deezer, SoundCloud and more, in their apps or in the browser), the fullscreen player shows time-synced lyrics beside the cover, even for songs Spotify has no lyrics for. The sung line lights up as it's sung, the rest drift soft and out of focus, and you can click any line to jump there. Can be turned off in Settings.
 - **Shared audio.** Play the same sound on several outputs at once, Bluetooth and wired, each with its own delay and volume to keep them in sync.
 - **Quick toggles** for Wi-Fi, Bluetooth, microphone and output device (or power mode on laptops), plus volume, mic and brightness sliders.
-- **Bluetooth control center.** Right-click the Bluetooth tile to see paired devices, connect or disconnect them, scan for and pair new ones, or forget old ones.
+- **Bluetooth control center.** Right-click the Bluetooth tile and your devices orbit your PC: connected ones close in with their battery levels, paired ones further out, new finds gliding in while it scans. Click a device to connect, disconnect or pair it, or hold to forget it.
 - **Wi-Fi network picker.** Right-click the Wi-Fi tile, or press **Networks** on the Network page, to see nearby networks and connect to saved or open ones.
 - **Live system stats:** CPU, GPU, memory, top processes, network throughput, local and public IP, all with smooth sparklines.
 - **Tools:** lock, sleep, sign out, restart and shut down (destructive actions are press-and-hold), a timer with notifications, a screenshot shortcut and keep-awake.
@@ -118,7 +118,7 @@ Updates are automatic. Astraeus checks GitHub shortly after launch and every few
 
 - **Open the panel** by hovering the middle of the edge it lives on (the top unless you moved it), or by clicking the tray icon. Over a maximized window the island pill shows first; click it to open the panel.
 - **Close it** by moving the mouse away, clicking the tray icon again or dragging the panel back up.
-- **Switch pages** with the rail: Home, Media, System, Network and Tools.
+- **Switch pages** with the rail: Home, Media, System, Network and Tools. On Home, the media card, CPU, Memory and Download cards also take you to their pages.
 - **Fullscreen player:** click the album cover on the Media page. Click it again, press **Esc** or right-click to leave. With lyrics showing, scroll to look around, click a line to jump to it, and press **[** or **]** to nudge the lyrics earlier or later.
 - **Shared audio:** open the Bluetooth menu and switch to the **Shared audio** tab.
 - **Bluetooth devices:** right-click the Bluetooth tile on the Home page.

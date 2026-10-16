@@ -21,10 +21,12 @@
 #include <cwctype>
 #include <map>
 #include <mutex>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 
 #pragma comment(lib, "cfgmgr32.lib")
+#include <devpropdef.h>
 
 namespace sys {
 namespace {
@@ -135,6 +137,46 @@ int KindOf(uint32_t major, uint32_t minor, uint32_t leCat, const std::wstring& n
     if (Has(n, {L"watch", L"band"})) return kBtWatch;
     if (Has(n, {L"phone", L"galaxy", L"pixel"})) return kBtPhone;
     return kBtOther;
+}
+
+const DEVPROPKEY kBattery = {{0x104EA319, 0x6EE2, 0x4701, {0xBD, 0x47, 0x8D, 0xDB, 0xF4, 0x25, 0xBB, 0xE5}}, 2}; // bluetooth battery level, what settings shows
+constexpr auto kChargeEvery = std::chrono::seconds(60); // batteries drain slowly: a look a minute while the menu is open
+
+std::wstring MacIn(const std::wstring& id) { // the address inside a device instance id: the last run of exactly 12 hex digits
+    std::wstring s = Lower(id), mac; // the last, because a service guid like {...-00805f9b34fb} comes first and is 12 digits too
+    for (size_t i = 0; i < s.size();) {
+        if (!std::iswxdigit(s[i])) {
+            ++i;
+            continue;
+        }
+        size_t j = i;
+        while (j < s.size() && std::iswxdigit(s[j])) ++j;
+        if (j - i == 12) mac = s.substr(i, 12);
+        i = j;
+    }
+    return mac;
+}
+
+std::map<std::wstring, int> ReadCharges() { // battery by address, from the bluetooth device nodes that report one
+    std::map<std::wstring, int> out;
+    for (const wchar_t* bus : {L"BTHENUM", L"BTHLE"}) {
+        ULONG len = 0;
+        const ULONG flags = CM_GETIDLIST_FILTER_ENUMERATOR | CM_GETIDLIST_FILTER_PRESENT;
+        if (CM_Get_Device_ID_List_SizeW(&len, bus, flags) != CR_SUCCESS || len < 2) continue;
+        std::vector<wchar_t> ids(len);
+        if (CM_Get_Device_ID_ListW(bus, ids.data(), len, flags) != CR_SUCCESS) continue;
+        for (const wchar_t* id = ids.data(); *id; id += std::wcslen(id) + 1) {
+            DEVINST node = 0;
+            if (CM_Locate_DevNodeW(&node, const_cast<DEVINSTID_W>(id), CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS) continue;
+            DEVPROPTYPE type = 0;
+            BYTE pct = 0;
+            ULONG size = sizeof(pct);
+            if (CM_Get_DevNode_PropertyW(node, &kBattery, &type, &pct, &size, 0) != CR_SUCCESS || type != DEVPROP_TYPE_BYTE || pct > 100) continue;
+            std::wstring mac = MacIn(id);
+            if (!mac.empty()) out[mac] = pct;
+        }
+    }
+    return out;
 }
 
 BtDev FromInfo(const DE::DeviceInformation& di, bool paired) {
@@ -305,6 +347,7 @@ struct Bt::Impl : std::enable_shared_from_this<Bt::Impl> {
     std::atomic<bool> scanning{false};
     std::atomic<int> gen{0}; // bumps on every scan change, stale auto-stops skip
     CO_MTA_USAGE_COOKIE mta = nullptr; // released in dtor
+    std::map<std::wstring, int> charge; // battery by address, refreshed while open
 
     Impl() { CoIncrementMTAUsage(&mta); } // keep an mta so pool threads can use com
     ~Impl() {
@@ -411,6 +454,28 @@ struct Bt::Impl : std::enable_shared_from_this<Bt::Impl> {
             StopWatch(old);
         }
         Ping();
+    }
+
+    winrt::fire_and_forget Charges() { // battery levels while the menu is open; stops with it
+        auto self = shared_from_this();
+        try {
+            for (;;) {
+                co_await winrt::resume_background();
+                if (!hwnd.load()) co_return;
+                auto got = ReadCharges();
+                bool changed;
+                {
+                    std::lock_guard lock(mu);
+                    changed = got != charge;
+                    charge = std::move(got);
+                }
+                if (changed) Ping();
+                co_await winrt::resume_after(kChargeEvery);
+                if (!hwnd.load()) co_return;
+            }
+        } catch (...) {
+            Log(L"battery read failed");
+        }
     }
 
     winrt::fire_and_forget AutoStop(int g) {
@@ -537,6 +602,7 @@ void Bt::Open(HWND hwnd, UINT msg) {
         s->hwnd.store(hwnd);
         s->msg = msg;
         s->known = s->Watch(true); // paired list starts filling now
+        s->Charges();
         impl = std::move(s);
     } catch (...) {
         Log(L"open failed");
@@ -560,6 +626,10 @@ void Bt::Snap(std::vector<BtDev>& out) const {
     {
         std::lock_guard lock(impl->mu);
         out = impl->devs; // copy under lock, sort outside
+        for (auto& d : out) {
+            auto it = impl->charge.find(d.mac);
+            d.battery = it != impl->charge.end() ? it->second : -1;
+        }
     }
     std::sort(out.begin(), out.end(), [](const BtDev& a, const BtDev& b) { // paired, then connected, then name
         if (a.paired != b.paired) return a.paired;

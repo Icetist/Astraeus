@@ -18,6 +18,7 @@ struct BtDev {
     bool want = false;
     uint64_t until = 0; // pending op deadline, tick ms
     bool pairing = false;
+    int battery = -1; // percent as windows reports it, -1 unknown
 };
 
 class Bt { // lazy: holds nothing until Open, frees all on Close

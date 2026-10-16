@@ -43,22 +43,27 @@ void Player(PageCtx& p, const D2D1_RECT_F& r) {
     if (w::PlayBtn(ui, ct, Ui::Id("ov.play"), {tx + 16 * bs + step, cy}, 44 * bs, has && tr.playing, has)) p.m.media.TogglePlay();
     if (w::IconBtn(ui, ct, Ui::Id("ov.next"), {tx + 16 * bs + 2 * step, cy}, 38 * bs, glyph::Next, 24 * bs, has && tr.canNext)) p.m.media.Next();
 
-    if (has && tr.duration <= 0) return; // app reports no length, a stuck empty bar would mislead
-    float y = r.bottom - pad + 4, x1 = r.right - pad; // progress line hugs card bottom
-    static float preview = -1; // drag preview, committed on release like the media page
-    uint32_t id = Ui::Id("ov.seek");
-    float f = preview >= 0 ? preview : has ? (float)tr.Progress() : 0;
-    if (has && tr.canSeek && ui.Slider(id, {tx, y - 9, x1, y + 9}, f, false)) preview = f; // a tall grab zone around the thin line
-    if (ui.IsActive(id) && ui.In().released) {
-        p.m.media.Seek(f);
-        preview = -1;
+    if (!has || tr.duration > 0) { // app reports no length: no bar, a stuck empty one would mislead
+        float y = r.bottom - pad + 4, x1 = r.right - pad; // progress line hugs card bottom
+        static float preview = -1; // drag preview, committed on release like the media page
+        uint32_t id = Ui::Id("ov.seek");
+        float f = preview >= 0 ? preview : has ? (float)tr.Progress() : 0;
+        if (has && tr.canSeek && ui.Slider(id, {tx, y - 9, x1, y + 9}, f, false)) preview = f; // a tall grab zone around the thin line
+        if (ui.IsActive(id) && ui.In().released) {
+            p.m.media.Seek(f);
+            preview = -1;
+        }
+        if (!ui.IsActive(id)) preview = -1;
+        float grow = ui.Smooth(id + 1, ui.IsActive(id) || (has && tr.canSeek && Inside({tx, y - 9, x1, y + 9}, ui.In().mouse)) ? 1.0f : 0, 16);
+        float thick = 3 + 2 * grow; // line thickens under the mouse, a knob shows where it is
+        c.Line({tx, y}, {x1, y}, t.track, thick);
+        if (f > 0.002f) c.Line({tx, y}, {tx + (x1 - tx) * f, y}, t.accent, thick); // skip near-zero, avoids stray cap dot
+        if (grow > 0.01f) c.Dot({tx + (x1 - tx) * f, y}, 5.5f * grow, t.accentHi);
     }
-    if (!ui.IsActive(id)) preview = -1;
-    float grow = ui.Smooth(id + 1, ui.IsActive(id) || (has && tr.canSeek && Inside({tx, y - 9, x1, y + 9}, ui.In().mouse)) ? 1.0f : 0, 16);
-    float thick = 3 + 2 * grow; // line thickens under the mouse, a knob shows where it is
-    c.Line({tx, y}, {x1, y}, t.track, thick);
-    if (f > 0.002f) c.Line({tx, y}, {tx + (x1 - tx) * f, y}, t.accent, thick); // skip near-zero, avoids stray cap dot
-    if (grow > 0.01f) c.Dot({tx + (x1 - tx) * f, y}, 5.5f * grow, t.accentHi);
+    Ui::Hit card = ui.Button(Ui::Id("ov.card"), r); // last, so the buttons and the bar above keep their own clicks
+    float lift = ui.Smooth(Ui::Id("ov.card", 1), card.hover ? 1.0f : 0, 14);
+    if (lift > 0.01f) c.Stroke(r, 22, t.accent.Alpha(0.30f * lift), 1.5f); // the whole card is a way to the media page
+    if (card.clicked) p.wantPage = 1; // the media page
 }
 
 void WxCard(PageCtx& p, const D2D1_RECT_F& r) {
@@ -178,11 +183,16 @@ void Sliders(PageCtx& p, const D2D1_RECT_F& r) {
 }
 
 void Stat(PageCtx& p, const D2D1_RECT_F& r, const wchar_t* label, const std::wstring& value,
-              const Hist& h, float maxV) {
+              const Hist& h, float maxV, int page) { // page: where a click on the card goes
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     w::Card(ui, t, r, 20);
+    uint32_t id = Ui::Id("ov.stat", page * 8 + (int)label[0]);
+    Ui::Hit hit = ui.Button(id, r);
+    float lift = ui.Smooth(id + 1, hit.hover ? 1.0f : 0, 14);
+    if (lift > 0.01f) c.Stroke(r, 20, t.accent.Alpha(0.30f * lift), 1.5f); // the card is a way to its page
+    if (hit.clicked) p.wantPage = page;
     c.TextSp(label, Rect(r.left + 14, r.top + 14, Width(r) - 28, 14), Weight::Medium, 10, t.textLow, 1.4f);
     c.Text(value, Rect(r.left + 13, r.top + 30, Width(r) - 26, 30), Weight::Light, 22, t.text);
     D2D1_RECT_F chart = {r.left + 1, (std::max)(r.bottom - 58, r.top + 62), r.right - 1, r.bottom - 10}; // sparkline in the bottom 48px, never over the value
@@ -207,11 +217,11 @@ void DrawHome(PageCtx& p) {
         Sliders(p, Rect(x, y, wd, row));
         y += row + g;
         WxCard(p, Rect(x, y, half, row));
-        Stat(p, Rect(x + half + g, y, half, row), L"CPU", w::Pct(m.cpuHist.Last()), m.cpuHist, 1);
+        Stat(p, Rect(x + half + g, y, half, row), L"CPU", w::Pct(m.cpuHist.Last()), m.cpuHist, 1, 2); // the system page, with the processes
         y += row + g;
         float netMax = (std::max)(m.downHist.Max(), 64.0f * 1024);
-        Stat(p, Rect(x, y, half, a.bottom - y), L"MEMORY", w::Pct(m.ramHist.Last()), m.ramHist, 1);
-        Stat(p, Rect(x + half + g, y, half, a.bottom - y), L"DOWNLOAD", fmt::Rate(m.downHist.Last()), m.downHist, netMax);
+        Stat(p, Rect(x, y, half, a.bottom - y), L"MEMORY", w::Pct(m.ramHist.Last()), m.ramHist, 1, 2);
+        Stat(p, Rect(x + half + g, y, half, a.bottom - y), L"DOWNLOAD", fmt::Rate(m.downHist.Last()), m.downHist, netMax, 3); // the network page
         return;
     }
     const float topRow = 166, gap = 12; // fixed top row, bottom row takes rest
@@ -222,8 +232,8 @@ void DrawHome(PageCtx& p) {
 
     float sw = (Width(a) - 400 - 24) / 3, sy = y + topRow + gap, sh = Height(a) - topRow - gap; // 3 stat cards share right side
     Model& m = p.m;
-    Stat(p, Rect(x + 400, sy, sw, sh), L"CPU", w::Pct(m.cpuHist.Last()), m.cpuHist, 1);
-    Stat(p, Rect(x + 412 + sw, sy, sw, sh), L"MEMORY", w::Pct(m.ramHist.Last()), m.ramHist, 1);
+    Stat(p, Rect(x + 400, sy, sw, sh), L"CPU", w::Pct(m.cpuHist.Last()), m.cpuHist, 1, 2); // the system page, with the processes
+    Stat(p, Rect(x + 412 + sw, sy, sw, sh), L"MEMORY", w::Pct(m.ramHist.Last()), m.ramHist, 1, 2);
     float netMax = (std::max)(m.downHist.Max(), 64.0f * 1024); // 64 KB/s floor keeps idle graph flat
-    Stat(p, Rect(x + 424 + 2 * sw, sy, sw, sh), L"DOWNLOAD", fmt::Rate(m.downHist.Last()), m.downHist, netMax);
+    Stat(p, Rect(x + 424 + 2 * sw, sy, sw, sh), L"DOWNLOAD", fmt::Rate(m.downHist.Last()), m.downHist, netMax, 3); // the network page
 }

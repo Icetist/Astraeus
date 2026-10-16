@@ -327,6 +327,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
     DrawHint(h);
     if (pc.wantClose) Close(); // page asked to close, after drawing finishes
     if (pc.wantStage) OpenStage();
+    if (pc.wantPage >= 0) SetPage(pc.wantPage);
 }
 
 void Drawer::OpenStage() {

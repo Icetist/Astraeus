@@ -70,6 +70,7 @@ struct Drawer::Glass {
     WUC::CompositionPathGeometry outline{nullptr}; // clips the blur to the panel shape
     WUC::CompositionGraphicsDevice gfx{nullptr};
     WUC::CompositionDrawingSurface surface{nullptr}; // our frame, updated in the same composition batch as the outline
+    bool filled = false; // a new surface must be drawn whole once before it accepts partial updates
     float blurShown = -1;
 };
 
@@ -137,15 +138,19 @@ void Drawer::GlassPresent() {
     D2D1_RECT_F vis = Visible();
     D2D1_SIZE_U full = backBuf->GetPixelSize();
     RECT update = {0, 0, (LONG)(std::min)((UINT32)std::ceil(vis.right * scale), full.width), (LONG)(std::min)((UINT32)std::ceil(vis.bottom * scale), full.height)};
-    if (update.right <= 0 || update.bottom <= 0) return;
-    if (FAILED(interop->BeginDraw(&update, IID_PPV_ARGS(&dst), &off))) return; // only what the window shows; surface lost: the next frame tries again
+    bool part = glass->filled && update.right > 0 && update.bottom > 0; // only what the window shows, once the surface has been filled whole
+    if (!part || FAILED(interop->BeginDraw(&update, IID_PPV_ARGS(&dst), &off))) {
+        part = false;
+        if (FAILED(interop->BeginDraw(nullptr, IID_PPV_ARGS(&dst), &off))) return; // surface lost: the next frame tries again
+    }
     D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
                                                          D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
     ComPtr<ID2D1Bitmap1> into;
     if (SUCCEEDED(ctx->CreateBitmapFromDxgiSurface(dst.Get(), &bp, &into))) {
         D2D1_POINT_2U at = {(UINT32)off.x, (UINT32)off.y}; // the surface may live inside a shared atlas
-        D2D1_RECT_U src = {0, 0, (UINT32)update.right, (UINT32)update.bottom};
-        into->CopyFromBitmap(&at, backBuf.Get(), &src); // one small gpu copy, no drawing
+        D2D1_RECT_U src = {0, 0, part ? (UINT32)update.right : full.width, part ? (UINT32)update.bottom : full.height};
+        into->CopyFromBitmap(&at, backBuf.Get(), &src); // one gpu copy, no drawing
+        glass->filled = true;
     }
     interop->EndDraw();
 }
@@ -160,7 +165,15 @@ void Drawer::FreeGlass() {
     if (!glass) return;
     BOOL hostBackdrop = FALSE; // dark and light don't need dwm sampling what's behind us
     DwmSetWindowAttribute(hwnd, kUseHostBackdrop, &hostBackdrop, sizeof(hostBackdrop));
-    delete glass; // releases the window target, the blur goes with it
+    try { // closed outright: only dropping them leaves windows to clean up later, and meanwhile the empty glass layer covers what's drawn next
+        glass->target.Root(nullptr);
+        glass->target.Close();
+        glass->surface.Close();
+        glass->gfx.Close();
+        glass->comp.Close();
+    } catch (...) {
+    }
+    delete glass;
     glass = nullptr;
 }
 

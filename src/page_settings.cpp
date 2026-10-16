@@ -370,13 +370,15 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // four swatches dr
         q = Inset(q, -2 * on, -2 * on); // the chosen one lifts
         Theme look = Theme::From(Seed{s.hue, s.chroma, i, s.rgb, m.customBg});
         if (on > 0.01f) c.Glow({(q.left + q.right) / 2, (q.top + q.bottom) / 2}, sw, sh, t.accent.Alpha(0.20f * on));
-        if (i == 2) { // glass: color under frost, a light streak, a bright rim
-            c.PushClip(q);
+        if (i == 2) { // glass: color under frost, a light streak, a bright rim, all inside its rounded corners
+            ComPtr<ID2D1RoundedRectangleGeometry> round;
+            if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(q, 12, 12), &round))) continue;
+            c.Target()->PushLayer(D2D1::LayerParameters(q, round.Get()), nullptr);
             c.Dot({q.left + sw * 0.3f, q.top + sh * 0.7f}, sh * 0.55f, look.accent.Alpha(0.65f));
             c.Dot({q.right - sw * 0.25f, q.top + sh * 0.25f}, sh * 0.45f, theme::Hsl(s.hue + 60, 0.7f, 0.6f, 0.55f));
             c.FillV(q, 12, Color{1, 1, 1, 0.22f}, Color{1, 1, 1, 0.06f});
             c.Line({q.left + sw * 0.15f, q.bottom + 6}, {q.left + sw * 0.75f, q.top - 6}, Color{1, 1, 1, 0.22f}, 9);
-            c.PopClip();
+            c.Target()->PopLayer();
             c.Stroke(q, 12, Color{1, 1, 1, 0.40f}, 1.2f);
         } else {
             c.FillV(q, 12, look.cardHi, look.bg.Alpha(1));

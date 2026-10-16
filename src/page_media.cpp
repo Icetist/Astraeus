@@ -46,7 +46,7 @@ void DrawViz(PageCtx& p, const D2D1_RECT_F& r) { // soft light swelling up from 
     ui.KeepAlive(); // animate until fully faded
     Canvas& c = ui.C();
     ComPtr<ID2D1RoundedRectangleGeometry> card; // the light stays inside the card's rounded corners
-    if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(Inset(r, 1, 1), 23, 23), &card))) return;
+    if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(r, 24, 24), &card))) return;
     ID2D1RenderTarget* rt = c.Target();
     rt->PushLayer(D2D1::LayerParameters(r, card.Get()), nullptr); // bounded to the card, so only its pixels pay for the mask
     DrawSwell(c, vizSwell, kBlobs, r, p.media, ui.Now());
@@ -129,7 +129,7 @@ void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale, const Theme& t) {
     Canvas& c = ui.C();
     float w = Width(r), h = Height(r);
     ComPtr<ID2D1RoundedRectangleGeometry> card; // inside the card's rounded corners, not its square bounds
-    if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(Inset(r, 1, 1), 21, 21), &card))) return;
+    if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(r, 22, 22), &card))) return;
     ID2D1RenderTarget* rt = c.Target();
     rt->PushLayer(D2D1::LayerParameters(r, card.Get()), nullptr);
     c.Glow({r.left + w * 0.22f, r.bottom - h * 0.05f}, w * (0.30f + 0.28f * l) * scale, h * (0.55f + 0.55f * l) * scale, // fixed corners: bottom-left / top-right

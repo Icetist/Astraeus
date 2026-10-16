@@ -277,12 +277,15 @@ double LyricView::Draw(ID2D1DeviceContext* ctx, Canvas& c, Ui& ui, const D2D1_RE
     placed = true;
 
     double seek = -1;
-    c.PushClip({r.left - size, r.top, r.right + size, r.bottom});
+    c.PushClip({r.left - size, r.top - pad, r.right + size, r.bottom + pad}); // room for the soft edges; the lines fade out before the bounds
     for (int i = 0; i < n; ++i) {
         Row& row = rows[i];
         float y0 = row.y.value;
         if (y0 + row.h < r.top || y0 > r.bottom) continue;
-        float fade = anim::Clamp01((y0 + row.h - r.top) / (Height(r) * 0.16f)) * anim::Clamp01((r.bottom - y0) / (Height(r) * 0.26f)); // dissolve at the edges
+        float top = anim::Clamp01((y0 - r.top) / (Height(r) * 0.20f)), bottom = anim::Clamp01((r.bottom - y0 - row.h) / (Height(r) * 0.24f));
+        top = top * top * (3 - 2 * top);
+        bottom = bottom * bottom * (3 - 2 * bottom);
+        float fade = top * bottom; // gone before it reaches the edge, no hard cut under the clock
         float al = alpha * fade;
         D2D1_RECT_F hit = {r.left - 16, y0 - rowGap * 0.4f, r.left + row.w + 16, y0 + row.h + rowGap * 0.4f};
         Ui::Hit h = al > 0.2f ? ui.Button(Ui::Id("ly.row", i), hit) : Ui::Hit{};
@@ -300,7 +303,7 @@ double LyricView::Draw(ID2D1DeviceContext* ctx, Canvas& c, Ui& ui, const D2D1_RE
         int d = std::abs(i - focus);
         float dim = browsing || row.hover > 0.3f ? 0.55f : kDim - 0.04f * (std::min)(d, 4);
         float op = (dim + (1 - dim) * row.lit) * al;
-        float b = row.haze ? row.blur * (1 - row.lit) : 0; // not baked yet: crisp until it is
+        float b = row.haze ? (std::max)(row.blur * (1 - row.lit), 1 - fade) : 0; // out of focus by distance, and more so as it dissolves at the edges; not baked yet: crisp
         if (b < 0.99f) Text(ctx, row, at, scale, look.text.Alpha(op * (1 - b)));
         if (b > 0.01f) Haze(ctx, row, at, scale, look.text.Alpha((std::min)(1.0f, op * b * 1.2f))); // a blur spreads its ink thinner
     }

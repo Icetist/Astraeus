@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cwchar>
 
 #include "anim.h"
@@ -9,7 +10,9 @@ using namespace sheet;
 
 namespace {
 
-float scrollTo = 0; // wheel target, eased into "bt.scroll"
+constexpr float kInner = 0.42f, kMiddle = 0.74f, kOuter = 1.0f; // orbits: connected close in, paired further out, new finds at the edge
+constexpr float kTurn[3] = {2 * kPi / 80, -2 * kPi / 120, 2 * kPi / 160}; // each orbit's slow drift, radians a second; the middle one runs the other way
+float orbitTime = 0; // how far the orbits have drifted, in seconds of motion
 
 int IconOf(int kind) {
     switch (kind) {
@@ -49,64 +52,169 @@ bool Tab(Ui& ui, const Theme& t, const char* idName, const D2D1_RECT_F& r, const
     return h.clicked;
 }
 
-void Row(PageCtx& p, const D2D1_RECT_F& r, const D2D1_RECT_F& view, const sys::BtDev& d, uint64_t nowMs) {
+void Badge(Ui& ui, const Theme& t, D2D1_POINT_2F o, float r, const sys::BtDev& d, bool busy, float lit) {
+    Canvas& c = ui.C();
+    c.Dot(o, r, t.track.Mix(t.accent.Alpha(0.28f), lit));
+    float ring = r + 4.5f;
+    if (d.battery >= 0) { // the charge, drawn around the device itself
+        Color col = d.battery <= 20 ? kDanger : t.accent;
+        c.Ring(o, ring, t.track, 2.5f);
+        if (d.battery > 0) c.Arc(o, ring, -kPi / 2, d.battery / 100.0f * 2 * kPi, col, 2.5f);
+    }
+    if (busy) { // connecting or pairing: a sweep runs around the icon
+        float a = (float)std::fmod(ui.Now() * 1.4, 1.0) * 2 * kPi;
+        c.Arc(o, ring, a - kPi / 2, kPi * 0.55f, t.accentHi, 2.5f);
+        ui.KeepAlive();
+    }
+    c.Icon(IconOf(d.kind), o, r * 1.12f, t.textDim.Mix(t.accentHi, lit), d.on);
+}
+
+std::wstring Charge(const sys::BtDev& d) { return d.battery >= 0 ? std::to_wstring(d.battery) + L"%" : L""; }
+
+bool Busy(const sys::BtDev& d, uint64_t nowMs) { return d.pairing || (d.until > nowMs && d.on != d.want); } // pending until state flips or deadline
+
+void Forget(PageCtx& p, uint32_t id, D2D1_POINT_2F fc, bool shown, bool live, const sys::BtDev& d) { // press and hold, so it can't happen by accident
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    D2D1_RECT_F fr = {fc.x - 15, fc.y - 15, fc.x + 15, fc.y + 15};
+    float prog = 0;
+    bool fire = live && ui.Hold(id + 4, fr, 0.8f, prog);
+    float show = ui.Smooth(id + 6, shown || prog > 0 ? 1.0f : 0, 14);
+    if (show > 0.01f) {
+        bool fh = live && Inside(fr, ui.In().mouse);
+        if (fh) c.Dot(fc, 15, kDanger.Alpha(0.12f * show));
+        c.Icon(glyph::Delete, fc, 18, (fh ? kDanger : p.shell.textLow).Alpha(show));
+        if (prog > 0) c.Arc(fc, 14, -kPi / 2, prog * 2 * kPi, kDanger, 2); // hold progress from 12 o'clock
+    }
+    if (fire) p.m.bt.Forget(d.id); // unpair, it vanishes via the watcher
+}
+
+const wchar_t* Doing(const sys::BtDev& d) { // what's underway, for the line under its name
+    if (d.pairing) return L"Pairing\u2026";
+    return d.want ? L"Connecting\u2026" : L"Disconnecting\u2026";
+}
+
+void Bubble(PageCtx& p, D2D1_POINT_2F at, float r, const sys::BtDev& d, float appear, bool live, uint64_t nowMs, bool above) { // a device in orbit: click it to connect, disconnect or pair; above: its words go over it, away from the middle
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.shell;
-    bool live = Inside(view, ui.In().mouse); // parts scrolled under the edges stay inert
-    bool hov = live && Inside(r, ui.In().mouse); // plain test, inner buttons own the clicks
-    uint32_t id = Ui::Id("bt.row", Key(d.id));
-    float hover = ui.Smooth(id, hov ? 1.0f : 0, 16);
-    float lit = ui.Smooth(id + 1, d.on ? 1.0f : 0, 10);
-    bool busy = d.pairing || (d.until > nowMs && d.on != d.want); // pending until state flips or deadline
-    float cy = (r.top + r.bottom) / 2;
-
-    c.Fill(r, 16, t.cardHi.Alpha(0.35f + 0.65f * hover)); // row lifts on hover
-    if (lit > 0.01f) c.FillH(r, 16, t.accent.Alpha(0.16f * lit), t.accent.Alpha(0.02f * lit)); // connected wash
-    c.StrokeV(r, 16, t.hairTop.Mix(t.accentHi.Alpha(0.5f), lit), t.hairBot, 1);
-    D2D1_POINT_2F ic = {r.left + 28, cy};
-    c.Dot(ic, 17, t.track.Mix(t.accent.Alpha(0.28f), lit));
-    c.Icon(IconOf(d.kind), ic, 19, t.textDim.Mix(t.accentHi, lit), d.on);
-
-    const wchar_t* label = !d.paired ? L"Pair" : d.on ? L"Disconnect" : L"Connect";
-    float aw = d.on ? 96.0f : 82.0f; // fits the longer label
-    D2D1_RECT_F ar = {r.right - 12 - aw, cy - 15, r.right - 12, cy + 15};
-    if (Act(ui, t, id + 2, ar, label, !d.on, busy, live)) {
-        if (d.paired) p.m.bt.Connect(d.id, !d.on); // toggle link
+    uint32_t id = Ui::Id("bt.orb", Key(d.id));
+    bool busy = Busy(d, nowMs);
+    D2D1_RECT_F hitR = {at.x - r - 6, at.y - r - 6, at.x + r + 6, at.y + r + 6};
+    bool nearby = live && Inside({hitR.left, hitR.top - 8, hitR.right + 36, hitR.bottom}, ui.In().mouse);
+    if (d.paired) Forget(p, id, {at.x + r + 18, at.y - r + 2}, nearby, live, d); // beside the bubble, never under its click
+    Ui::Hit h = live && !busy ? ui.Button(id, hitR) : Ui::Hit{};
+    float hover = ui.Smooth(id + 1, h.hover ? 1.0f : 0, 16);
+    float lit = ui.Smooth(id + 2, d.on ? 1.0f : 0, 10);
+    bool layer = appear < 0.995f;
+    if (layer) {
+        c.Target()->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), appear), nullptr);
+        ui.KeepAlive();
+    }
+    if (hover > 0.01f) c.Glow(at, r * 2.2f, r * 2.2f, t.accent.Alpha(0.16f * hover));
+    Badge(ui, t, at, r * (1 + 0.08f * hover), d, busy, (std::max)(lit, 0.35f * hover));
+    float nameY = above ? at.y - r - 40 : at.y + r + 8, lineY = above ? at.y - r - 24 : at.y + r + 24; // the words sit on the side away from this pc
+    c.Text(d.name, Rect(at.x - 64, nameY, 128, 16), Weight::Medium, 11.5f, t.textDim.Mix(t.text, (std::max)(lit, hover)), Align::Center);
+    std::wstring line = busy ? std::wstring(Doing(d))
+                      : hover > 0.5f ? std::wstring(!d.paired ? L"Pair" : d.on ? L"Disconnect" : L"Connect")
+                                     : d.battery >= 0 ? Charge(d) : std::wstring(KindName(d.kind));
+    Color ink = busy || hover > 0.5f ? t.accentHi : d.battery >= 0 && d.battery <= 20 ? kDanger : t.textLow;
+    c.Text(line, Rect(at.x - 64, lineY, 128, 14), Weight::Light, 10.5f, ink, Align::Center);
+    if (layer) c.Target()->PopLayer();
+    if (h.clicked) { // the device itself is the button
+        if (d.paired) p.m.bt.Connect(d.id, !d.on);
         else p.m.bt.Pair(d.id);
-        p.m.OnBt(); // show the spinner this frame
+        p.m.OnBt(); // the sweep starts this frame
     }
+}
 
-    float textR = ar.left - 10;
-    if (d.paired) { // forget: press and hold so it can't happen by accident
-        D2D1_POINT_2F fc = {ar.left - 24, cy};
-        D2D1_RECT_F fr = {fc.x - 15, fc.y - 15, fc.x + 15, fc.y + 15};
-        float prog = 0;
-        bool fire = live && ui.Hold(id + 4, fr, 0.8f, prog);
-        float show = ui.Smooth(id + 6, hov || prog > 0 ? 1.0f : 0, 14); // only on row hover
-        if (show > 0.01f) {
-            bool fh = live && Inside(fr, ui.In().mouse);
-            if (fh) c.Dot(fc, 15, kDanger.Alpha(0.12f * show));
-            c.Icon(glyph::Delete, fc, 18, (fh ? kDanger : t.textLow).Alpha(show));
-            if (prog > 0) c.Arc(fc, 14, -kPi / 2, prog * 2 * kPi, kDanger, 2); // hold progress from 12 o'clock
+void Orbit(PageCtx& p, const D2D1_RECT_F& v) { // this pc in the middle, its devices around it: connected close, paired further, new finds at the edge
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    uint64_t nowMs = GetTickCount64();
+    bool live = Inside(v, ui.In().mouse);
+    D2D1_POINT_2F o = {(v.left + v.right) / 2, (v.top + v.bottom) / 2 - 8};
+    float ax = Width(v) / 2 - 64, ay = Height(v) / 2 - 44; // room for a bubble and its name at the edge
+
+    std::vector<const sys::BtDev*> rings[3]; // connected, paired, found
+    for (const auto& d : m.btDevs) rings[d.paired ? (d.on ? 0 : 1) : 2].push_back(&d);
+    const float frac[3] = {kInner, kMiddle, kOuter};
+    bool outer = m.btScan || !rings[2].empty();
+
+    ComPtr<ID2D1SolidColorBrush> guide; // faint orbits, ellipses so they use the panel's width
+    if (SUCCEEDED(c.Target()->CreateSolidColorBrush(t.text.Alpha(0.07f).D2D(), &guide)))
+        for (int i = 0; i < (outer ? 3 : 2); ++i) {
+            float rx = ax * frac[i], ry = ay * frac[i];
+            if (i == 0) rx = (std::max)(rx, 30.0f + 22 + 70), ry = (std::max)(ry, 30.0f + 22 + 14); // same clearance the devices keep
+            c.Target()->DrawEllipse(D2D1::Ellipse(o, rx, ry), guide.Get(), 1);
         }
-        if (fire) p.m.bt.Forget(d.id); // unpair, row vanishes via watcher
-        textR = fc.x - 20;
+
+    orbitTime += ui.Dt(); // always turning; slow enough that a bubble is easy to click
+    ui.KeepAlive(); // the drift and the core: the ambient rate is plenty, and only while this sheet is open
+
+    struct Place { const sys::BtDev* d; D2D1_POINT_2F at; float r, appear; };
+    std::vector<Place> placed;
+    for (int ring = 0; ring < 3; ++ring) {
+        size_t n = rings[ring].size();
+        for (size_t i = 0; i < n; ++i) {
+            const sys::BtDev& d = *rings[ring][i];
+            float ang = (float)i / n * 2 * kPi + (ring == 1 ? kPi / n : ring == 2 ? 0.35f : 0) + orbitTime * kTurn[ring]; // rings offset so they don't line up, each drifting round
+            float rx = ax * frac[ring], ry = ay * frac[ring];
+            if (ring == 0) { // the inner orbit keeps clear of this pc: its disc, a bubble and its words
+                rx = (std::max)(rx, 30.0f + 22 + 70);
+                ry = (std::max)(ry, 30.0f + 22 + 14);
+            }
+            D2D1_POINT_2F want = {o.x + std::cos(ang) * rx, o.y + std::sin(ang) * ry};
+            int key = Key(d.id);
+            float push = d.paired ? 0.0f : 40.0f; // new finds drift in from beyond the edge
+            D2D1_POINT_2F at = {ui.SmoothFrom(Ui::Id("bt.ox", key), want.x, want.x + std::cos(ang) * push, 7),
+                                ui.SmoothFrom(Ui::Id("bt.oy", key), want.y, want.y + std::sin(ang) * push, 7)}; // glides to a new orbit when it connects
+            float appear = d.paired ? 1.0f : ui.SmoothFrom(Ui::Id("bt.oa", key), 1.0f, 0.0f, 6);
+            placed.push_back({&d, at, ring == 0 ? 22.0f : 18.0f, appear});
+        }
     }
 
-    float tx = r.left + 56;
-    c.Text(d.name, {tx, cy - 19, textR, cy + 1}, Weight::Medium, 13.5f, t.text); // ellipsis if too long
-    std::wstring st = d.paired ? L"Not connected" : std::wstring(KindName(d.kind)) + L"  ·  new";
-    Color sc = t.textLow;
-    if (d.pairing) st = L"Pairing…", sc = t.accentHi;
-    else if (busy) st = d.want ? L"Connecting…" : L"Disconnecting…", sc = t.accentHi;
-    else if (d.on) st = L"Connected", sc = t.accent;
-    if (d.on && !busy) { // live dot before "connected"
-        c.Dot({tx + 3, cy + 10}, 3, t.accent);
-        tx += 11;
+    for (const Place& pl : placed) { // links to this pc: steady when connected, a pulse running along it while connecting
+        bool busy = Busy(*pl.d, nowMs);
+        if (!pl.d->on && !busy) continue;
+        c.Line(o, pl.at, t.accent.Alpha(pl.d->on ? 0.35f : 0.15f), 2);
+        if (busy) {
+            float f = (float)std::fmod(ui.Now() * 1.1, 1.0);
+            if (!pl.d->want) f = 1 - f; // disconnecting: the pulse runs home
+            c.Dot({o.x + (pl.at.x - o.x) * f, o.y + (pl.at.y - o.y) * f}, 3.5f, t.accentHi);
+            ui.KeepAlive();
+        }
     }
-    c.Text(st, {tx, cy + 1, textR, cy + 19}, Weight::Light, 11.5f, sc);
-    if (busy) ui.KeepAlive(); // spinner + deadline expiry need frames
+
+    double now = ui.Now(); // the core: a breathing glow, arcs turning round it, ripples running out while it searches
+    bool linked = !rings[0].empty(), scan = m.btScan;
+    float breath = 0.5f + 0.5f * (float)std::sin(now * 1.6);
+    c.Glow(o, 78 + 14 * breath, 68 + 12 * breath, t.accent.Alpha((linked ? 0.22f : 0.14f) + 0.07f * breath));
+    if (scan && guide) // ripples from the core out to the edge of the orbit
+        for (int k = 0; k < 2; ++k) {
+            float f = (float)std::fmod(now * 0.35 + k * 0.5, 1.0);
+            guide->SetColor(t.accent.Alpha(0.28f * (1 - f)).D2D());
+            c.Target()->DrawEllipse(D2D1::Ellipse(o, 32 + (ax - 32) * f, 32 + (ay - 32) * f), guide.Get(), 1.5f);
+        }
+    float spin = (float)std::fmod(now * (scan ? 1.6 : 0.55), 2 * kPi), bright = linked ? 1.0f : 0.65f;
+    c.Arc(o, 39, spin, 1.25f, t.accentHi.Alpha(0.60f * bright), 2);
+    c.Arc(o, 39, spin + kPi, 0.55f, t.accent.Alpha(0.40f * bright), 2);
+    c.Arc(o, 46, -spin * 0.7f, 0.95f, t.accent.Alpha(0.28f * bright), 1.5f);
+    c.Arc(o, 46, -spin * 0.7f + kPi * 0.9f, 0.35f, t.accentHi.Alpha(0.22f * bright), 1.5f);
+    c.FillV(Rect(o.x - 30, o.y - 30, 60, 60), 30, t.accentHi, t.accent); // a glossy disc in the accent
+    c.Ring(o, 30, Color{1, 1, 1, 0.20f}, 1);
+    c.Dot({o.x - 9, o.y - 11}, 10, Color{1, 1, 1, 0.16f}); // a highlight, light catching the top
+    c.Icon(glyph::Bluetooth, o, 28, t.onAccent, true);
+
+    for (const Place& pl : placed) Bubble(p, pl.at, pl.r, *pl.d, pl.appear, live, nowMs, pl.at.y < o.y - 2);
+
+    if (placed.empty()) // nothing around yet: a word under this pc
+        c.Text(m.btScan ? L"Looking for devices nearby. Put yours in pairing mode." : L"No devices yet. Add device to pair one.",
+               Rect(v.left, o.y + 44, Width(v), 18), Weight::Light, 12, t.textDim, Align::Center);
+    else if (m.btScan && rings[2].empty())
+        c.Text(L"Looking for devices nearby\u2026", Rect(v.left, v.bottom - 20, Width(v), 16), Weight::Light, 11, t.textLow, Align::Center);
 }
 
 }
@@ -163,38 +271,7 @@ void DrawBt(PageCtx& p, float k) {
     } else if (!on) {
         Empty(c, t, view, glyph::BluetoothOff, L"Bluetooth is off", L"Turn it on to see your devices");
     } else {
-        struct Item { int type; const sys::BtDev* d; const wchar_t* text; }; // 0 head, 1 device, 2 note
-        std::vector<Item> items;
-        bool anyNew = false;
-        for (const auto& d : m.btDevs)
-            if (d.paired) items.push_back({1, &d, nullptr});
-            else anyNew = true;
-        if (paired == 0) items.push_back({2, nullptr, L"No paired devices yet. Tap Add device to find one."});
-        if (m.btScan || anyNew) {
-            items.push_back({0, nullptr, L"AVAILABLE"});
-            for (const auto& d : m.btDevs)
-                if (!d.paired) items.push_back({1, &d, nullptr});
-            if (!anyNew) items.push_back({2, nullptr, L"Looking for devices nearby. Put yours in pairing mode."});
-        }
-        float total = 0; // content height for scroll clamp
-        for (const Item& it : items) total += it.type == 1 ? kRowH + kRowGap : it.type == 0 ? kHeadH : kNoteH;
-        float scroll = Scroll(ui, "bt.scroll", scrollTo, view, total);
-
-        uint64_t nowMs = GetTickCount64(); // for pending op deadlines
-        c.PushClip(view);
-        float y = view.top - scroll; // first item position
-        for (const Item& it : items) {
-            float h = it.type == 1 ? kRowH + kRowGap : it.type == 0 ? kHeadH : kNoteH;
-            if (y + h > view.top && y < view.bottom) { // skip offscreen items entirely
-                D2D1_RECT_F r = {view.left, y, view.right, y + h};
-                if (it.type == 1) Row(p, {r.left, r.top, r.right, r.top + kRowH}, view, *it.d, nowMs);
-                else if (it.type == 0) Head(ui, t, r, it.text, m.btScan);
-                else c.Text(it.text, Inset(r, 6, 0), Weight::Light, 12, t.textDim);
-            }
-            y += h;
-        }
-        c.PopClip();
-        Fades(c, t, view, scroll, total);
+        Orbit(p, view); // devices around this pc, touched directly
     }
 
     if (ui.RClick(s)) m.CloseBt(); // right click again closes

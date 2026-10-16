@@ -181,6 +181,7 @@ private:
     Theme shellFrom, shellTo, shellNow, mediaFrom, mediaTo, mediaNow; // from/to lerp into now
     Seed shellSeed, mediaSeed; // what the palettes were built from, rebuilt on appearance change
     int lookNow = 0;
+    int devTries = 0; // failed device builds in a row, retried on a short timer
     int bgNow = 0; // custom look background the themes were built with
     int accentModeNow = 0, accentHexNow = 0;
     bool typing = false;

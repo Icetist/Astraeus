@@ -1,4 +1,5 @@
 #include "drawer.h"
+
 #include "glyphs.h"
 
 #include <dwmapi.h>
@@ -12,7 +13,8 @@
 
 namespace {
 
-constexpr UINT_PTR kHoverTimer = 1, kCloseTimer = 2, kReleaseTimer = 3, kPeekTimer = 4;
+constexpr UINT_PTR kHoverTimer = 1, kCloseTimer = 2, kReleaseTimer = 3, kPeekTimer = 4, kDevTimer = 5;
+constexpr int kDevTries = 30; // windows lets go of an old composition target a moment later: ~3 seconds of retries, 100 ms apart
 
 bool PillStays(const Model& m) { return m.IslandAlways() && m.hasTrack && m.track.playing; } // always means: while something is playing
 constexpr float kStrip = 3; // idle bezel height in dips, just enough to catch the mouse
@@ -300,7 +302,7 @@ void Drawer::Open() {
         opened = true;
         SyncWall(); // wallpaper may have changed while closed
         model.OnOpen();
-        model.SetLive(true, page == 2); // fast polling only while visible, page 2 = media
+        model.SetLive(true, page == 2); // fast polling only while visible, the process list only on the system page (2)
     }
     Resize(Depth() + overshoot, true); // grow first so bounce isn't clipped
     spring.target = Depth();
@@ -549,6 +551,10 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_TIMER:
         KillTimer(hwnd, wp); // all timers are one-shot
+        if (wp == kDevTimer) { // try the device again: the frame picks up where it left off
+            needsFrame = true;
+            return 0;
+        }
         if (wp == kHoverTimer) {
             armed = false;
             if (!MouseIn()) ReleaseLater();
@@ -724,7 +730,7 @@ void Drawer::Frame() {
         stage->Frame(mediaNow);
         if (stage->Leaving() && !stageBack) { // fullscreen fades out over the panel dropping open on the media page, where it came from
             stageBack = true;
-            if (page != 2) SetPage(2);
+            if (page != 1) SetPage(1); // the media page
             Open();
         }
         if (stage->Done()) { // its window, device and audio capture all go with it
@@ -757,8 +763,10 @@ void Drawer::Frame() {
     SyncTyping();
     if (!EnsureDev()) {
         needsFrame = false; // no device, stop loop instead of spinning
+        if (devTries++ < kDevTries) SetTimer(hwnd, kDevTimer, 100, nullptr); // often just the old glass target still being released: try again shortly
         return;
     }
+    devTries = 0;
     bool themes = StepTheme(dt);
     SyncCover();
 
@@ -837,13 +845,7 @@ void Drawer::Frame() {
         SetWaitableTimer(frameWait, &due, 0, nullptr, nullptr, FALSE);
         hr = S_OK;
     } else {
-        RECT dirty = {0, 0, (LONG)std::ceil(vis.right * scale), (LONG)std::ceil(vis.bottom * scale)}; // only what the window shows changed
-        DXGI_SWAP_CHAIN_DESC1 sd = {};
-        swap->GetDesc1(&sd);
-        dirty.right = (std::min)(dirty.right, (LONG)sd.Width);
-        dirty.bottom = (std::min)(dirty.bottom, (LONG)sd.Height);
-        DXGI_PRESENT_PARAMETERS pp = {1, &dirty, nullptr, nullptr};
-        hr = dirty.right > 0 && dirty.bottom > 0 ? swap->Present1(fast ? 1 : calm, 0, &pp) : swap->Present(fast ? 1 : calm, 0); // ambient-only motion runs at ~30 fps
+        hr = swap->Present(fast ? 1 : calm, 0); // ambient-only motion runs at ~30 fps; a whole present: with dirty rects, a frame shown while the window is a sliver is never retired and the loop stalls
     }
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) { // driver reset / gpu switch
         FreeDev();

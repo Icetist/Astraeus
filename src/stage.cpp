@@ -303,15 +303,16 @@ void Stage::Player(float show, float lyr) { // the cover big on the left and the
     float k = std::clamp(H / 900.0f, 0.8f, 1.6f); // type and spacing grow with the screen
     float e = lyr * lyr * (3 - 2 * lyr);
     auto mix = [e](float a, float b) { return a + (b - a) * e; };
+    float z = 1 - show, zz = z * z * (3 - 2 * z); // the mouse resting: the controls go and the cover grows into their room
 
     // the classic layout
-    float side = (std::min)(H * 0.54f, W * 0.36f), gap = side * 0.16f, colW = (std::min)(W * 0.40f, 760.0f * k);
+    float side = (std::min)(H * 0.54f, W * 0.36f) * (1 + 0.14f * zz), gap = side * 0.16f, colW = (std::min)(W * 0.40f, 760.0f * k);
     float x0 = (W - side - gap - colW) / 2, cy = H * 0.5f;
     float tx = x0 + side + gap, lineH = 66 * k, colH = 22 * k + lineH + 66 * k + 76 * k + 42 * k; // header, title, artist to the wave, wave to the controls, the play button
     float ty = cy - colH / 2, waveY = ty + 22 * k + lineH + 66 * k;
     // the lyrics layout: a column on the left, cover over title over the wave over the controls
-    float lw = W * 0.34f, lcx = W * 0.065f + lw / 2, side2 = (std::min)(H * 0.44f, lw * 0.80f);
-    float blockH = side2 + 20 * k + 44 * k + 28 * k + 40 * k + 66 * k + 34 * k;
+    float lw = W * 0.34f, lcx = W * 0.065f + lw / 2, side2 = (std::min)(H * 0.44f + 92 * k * zz, lw * (0.80f + 0.12f * zz));
+    float blockH = side2 + 20 * k + 44 * k + 28 * k + 40 * k + (66 * k + 34 * k) * (1 - zz);
     float ly = (std::max)(H * 0.09f, H * 0.53f - blockH / 2), lty = ly + side2 + 20 * k, lWaveY = lty + 44 * k + 28 * k + 40 * k;
 
     float sd = mix(side, side2), pulse = 1 + 0.018f * beat; // the cover thumps with the kick
@@ -354,24 +355,26 @@ void Stage::Player(float show, float lyr) { // the cover big on the left and the
     float ww = mix(colW, lw * 0.84f), wx = mix(tx, lcx - lw * 0.42f), wy = mix(waveY, lWaveY);
     Seek(Rect(wx, wy - 16 * k, ww, 32 * k), show);
 
-    float alpha = 0.35f + 0.65f * show; // controls stay faintly visible, fully there when the mouse moves
+    float alpha = show; // the controls leave with the cursor and come back with the mouse
     float ck = k * mix(1.0f, 0.8f), ccx = mix(tx + colW / 2, lcx), y = mix(waveY + 76 * k, lWaveY + 66 * k);
     D2D1_RECT_F row = {ccx - 270 * ck, y - 50 * ck, ccx + 270 * ck, y + 50 * ck};
     const Theme ctl = theme::Lift(look); // the play button leans toward the ink, so it stands clear of the light behind it
-    bool layer = alpha < 0.999f;
-    if (layer) ctx->PushLayer(D2D1::LayerParameters1(row, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), alpha), nullptr);
-    if (w::IconBtn(ui, ctl, Ui::Id("st.prev"), {ccx - 100 * ck, y}, 60 * ck, glyph::Prev, 38 * ck, has && tr.canPrev)) model.media.Previous();
-    if (w::PlayBtn(ui, ctl, Ui::Id("st.play"), {ccx, y}, 84 * ck, has && tr.playing, has)) model.media.TogglePlay();
-    if (w::IconBtn(ui, ctl, Ui::Id("st.next"), {ccx + 100 * ck, y}, 60 * ck, glyph::Next, 38 * ck, has && tr.canNext)) model.media.Next();
-    D2D1_POINT_2F shuf = {ccx - 196 * ck, y}, rep = {ccx + 196 * ck, y};
-    if (w::IconBtn(ui, ctl, Ui::Id("st.shuffle"), shuf, 48 * ck, glyph::Shuffle, 26 * ck, has && tr.canShuf, has && tr.shuffle)) model.media.ToggleShuffle();
-    if (w::IconBtn(ui, ctl, Ui::Id("st.repeat"), rep, 48 * ck, has && tr.repeat == 1 ? glyph::RepeatOne : glyph::Repeat, 26 * ck, has && tr.canRep,
-                   has && tr.repeat != 0))
-        model.media.CycleRepeat();
-    float sOn = ui.Smooth(Ui::Id("st.shuffle", 7), has && tr.shuffle ? 1.0f : 0, 14), rOn = ui.Smooth(Ui::Id("st.repeat", 7), has && tr.repeat != 0 ? 1.0f : 0, 14);
-    if (sOn > 0.01f) c.Dot({shuf.x, shuf.y + 22 * ck}, 2.8f * ck * sOn, ctl.accent.Alpha(sOn)); // on: a dot under it, not just a color change
-    if (rOn > 0.01f) c.Dot({rep.x, rep.y + 22 * ck}, 2.8f * ck * rOn, ctl.accent.Alpha(rOn));
-    if (layer) ctx->PopLayer();
+    if (alpha > 0.01f) { // hidden: not drawn at all
+        bool layer = alpha < 0.999f;
+        if (layer) ctx->PushLayer(D2D1::LayerParameters1(row, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), alpha), nullptr);
+        if (w::IconBtn(ui, ctl, Ui::Id("st.prev"), {ccx - 100 * ck, y}, 60 * ck, glyph::Prev, 38 * ck, has && tr.canPrev)) model.media.Previous();
+        if (w::PlayBtn(ui, ctl, Ui::Id("st.play"), {ccx, y}, 84 * ck, has && tr.playing, has)) model.media.TogglePlay();
+        if (w::IconBtn(ui, ctl, Ui::Id("st.next"), {ccx + 100 * ck, y}, 60 * ck, glyph::Next, 38 * ck, has && tr.canNext)) model.media.Next();
+        D2D1_POINT_2F shuf = {ccx - 196 * ck, y}, rep = {ccx + 196 * ck, y};
+        if (w::IconBtn(ui, ctl, Ui::Id("st.shuffle"), shuf, 48 * ck, glyph::Shuffle, 26 * ck, has && tr.canShuf, has && tr.shuffle)) model.media.ToggleShuffle();
+        if (w::IconBtn(ui, ctl, Ui::Id("st.repeat"), rep, 48 * ck, has && tr.repeat == 1 ? glyph::RepeatOne : glyph::Repeat, 26 * ck, has && tr.canRep,
+                       has && tr.repeat != 0))
+            model.media.CycleRepeat();
+        float sOn = ui.Smooth(Ui::Id("st.shuffle", 7), has && tr.shuffle ? 1.0f : 0, 14), rOn = ui.Smooth(Ui::Id("st.repeat", 7), has && tr.repeat != 0 ? 1.0f : 0, 14);
+        if (sOn > 0.01f) c.Dot({shuf.x, shuf.y + 22 * ck}, 2.8f * ck * sOn, ctl.accent.Alpha(sOn)); // on: a dot under it, not just a color change
+        if (rOn > 0.01f) c.Dot({rep.x, rep.y + 22 * ck}, 2.8f * ck * rOn, ctl.accent.Alpha(rOn));
+        if (layer) ctx->PopLayer();
+    }
 
     if (e > 0.001f) { // the lyrics drift in from the right
         D2D1_RECT_F lr = LyricRect();

@@ -1,38 +1,22 @@
-## What's new in 1.2.3
+## What's new in 1.2.4
 
-### Lyrics in the fullscreen player
-- **Synced lyrics beside the cover.** When a song comes from a music app or site (Spotify, Apple Music, YouTube Music, Tidal, Deezer, SoundCloud and more, in their apps or in the browser), the fullscreen player moves the song under the cover and shows its lyrics on the side, in time with the music. Songs Spotify has no lyrics for get them too.
-- **Lit as they're sung.** The sung line fills in with a soft sweep and a glow in the song's color, the lines around it drift out of focus, the whole column glides up in a ripple, and breathing dots fill instrumental breaks.
-- **Click a line to jump there**, scroll to look around, and press **[** or **]** to nudge the lyrics earlier or later if a song is off.
-- Lyrics load as soon as a song starts, so they're ready before you open fullscreen, and the layout holds still while the next song's lyrics arrive.
-- Can be turned off in Settings → Fullscreen lyrics.
+### A new Bluetooth center
+- **Your devices orbit your PC.** Connected devices circle close in, paired ones drift on a wider orbit, and new finds glide in from the edge while it scans. The whole thing slowly turns around a glowing core.
+- **Battery levels** show as a ring around each device, with the percentage underneath, and turn red when they run low.
+- **Click a device to connect, disconnect or pair it.** While it works, a sweep runs around its icon and a pulse travels along the line to your PC. Hold the bin beside it to forget it.
 
-### Looks
-- **Custom look.** A fourth look beside dark, light and glass: pick any accent and any background on a color wheel, with brightness for each. Text and lines turn white or black to suit the background.
-- **Glass on bright backgrounds.** Over a white page the glass gets a neutral smoky tint so its text stays readable, and its labels are brighter.
-- **Media controls stand out** from the visualizer behind them in every look.
-- **Album colors stay on the Media page and in fullscreen.** The Home media card uses your accent.
+### Quicker ways around
+- **Click the media card on Home** to open the Media page.
+- **Click CPU or Memory on Home** for the System page and its processes, or the **Download graph** for the Network page.
 
-### The island
-- **Choose how long the pill stays** over a maximized window: briefly, any time up to five minutes, or always while music plays. It has its own card in Settings.
-- **Tiled windows count too.** When snapped or tiled windows fill the screen, you get the pill instead of the whole panel.
-- Side edges show the song sideways in the pill.
-
-### More
-- **Check for updates** in the tray menu.
-- **Leaving fullscreen** eases away and brings you back to the Media page, and hovering the cover in fullscreen tells you a click closes it.
-- **Notification pills** queue up: a burst of notifications shows one after another.
-- **The cursor hides** in fullscreen after a moment without moving.
-- Settings scroll when the panel is short, and the looks sit in a tidy square.
-- Weather shows up faster after startup.
-- A new, bolder tray icon.
+### Fullscreen player
+- **When the mouse rests**, the controls fade away with the cursor and the cover grows into the space.
+- **Lyrics fade softly** at the top and bottom instead of being cut off under the clock.
 
 ### Fixes
-- Fixed a crash when closing the panel in the glass look.
-- Fixed the glass blur lagging behind the panel.
-- The visualizer no longer spills past the rounded corners of the media cards.
-- Cover art that arrives late is picked up.
-- The progress bar and position no longer drift behind the song.
-
-### Lighter
-- The resting island pill now uses a fraction of the graphics work it did, and every frame only touches the part of the window you can see.
+- The island pill could come down empty or invisible, on every look. It's back.
+- Switching away from Glass no longer leaves the panel unresponsive for a while.
+- Leaving fullscreen now lands on the Media page.
+- No more dark outline around the visualizer on the media cards.
+- The Glass swatch in Settings stays inside its rounded corners.
+- The published app now carries Control Flow Guard and CET protections.
