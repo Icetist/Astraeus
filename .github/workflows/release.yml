@@ -6,6 +6,12 @@ on:
 
 permissions:
   contents: write
+  actions: read
+
+env:
+  # code signing through the SignPath Foundation; the signing steps are skipped until these are set in the repo settings
+  SIGNPATH_ORG: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+  SIGNPATH_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
 
 jobs:
   build:
@@ -28,7 +34,32 @@ jobs:
         run: |
           mkdir build\obj || exit /b 1
           rc /nologo /fo build\obj\app.res res\app.rc || exit /b 1
-          cl /nologo /std:c++20 /O2 /GL /Gw /EHsc /MT /W4 /permissive- /utf-8 /MP /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX /Fo:build\obj\ src\*.cpp build\obj\app.res /Fe:build\Astraeus.exe /link /LTCG /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF user32.lib gdi32.lib shell32.lib shlwapi.lib ole32.lib oleaut32.lib advapi32.lib dwmapi.lib d2d1.lib d3d11.lib dxgi.lib dxguid.lib dwrite.lib dcomp.lib windowscodecs.lib pdh.lib iphlpapi.lib wlanapi.lib winhttp.lib bthprops.lib powrprof.lib wbemuuid.lib ntdll.lib windowsapp.lib || exit /b 1
+          cl /nologo /std:c++20 /O2 /GL /Gw /guard:cf /EHsc /MT /W4 /permissive- /utf-8 /MP /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX /Fo:build\obj\ src\*.cpp build\obj\app.res /Fe:build\Astraeus.exe /link /LTCG /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /guard:cf /CETCOMPAT /DYNAMICBASE /NXCOMPAT /MANIFEST:NO user32.lib gdi32.lib shell32.lib shlwapi.lib ole32.lib oleaut32.lib advapi32.lib dwmapi.lib d2d1.lib d3d11.lib dxgi.lib dxguid.lib dwrite.lib dcomp.lib windowscodecs.lib pdh.lib iphlpapi.lib wlanapi.lib winhttp.lib bthprops.lib powrprof.lib wbemuuid.lib ntdll.lib windowsapp.lib || exit /b 1
+
+      - name: Upload unsigned build
+        id: unsigned
+        if: env.SIGNPATH_ORG != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: Astraeus
+          path: build/Astraeus.exe
+
+      - name: Sign
+        if: env.SIGNPATH_ORG != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ env.SIGNPATH_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORG }}
+          project-slug: astraeus
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: build/signed
+
+      - name: Use the signed exe
+        if: env.SIGNPATH_ORG != ''
+        shell: pwsh
+        run: Copy-Item build/signed/Astraeus.exe build/Astraeus.exe -Force
 
       - name: Hash
         shell: pwsh
