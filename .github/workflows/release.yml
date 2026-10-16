@@ -65,6 +65,14 @@ jobs:
         shell: pwsh
         run: (Get-FileHash build/Astraeus.exe -Algorithm SHA256).Hash.ToLower() | Set-Content -NoNewline -Encoding ascii build/Astraeus.exe.sha256 # updater refuses exes that don't match
 
+      - name: Clear files from an earlier run of this tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          foreach ($f in 'Astraeus.exe', 'Astraeus.exe.sha256') { gh release delete-asset "${{ github.ref_name }}" $f --yes --repo "${{ github.repository }}" 2>$null } # republishing a version replaces its files
+          exit 0
+
       - uses: softprops/action-gh-release@v2
         with:
           files: |
