@@ -196,9 +196,11 @@ void Stat(PageCtx& p, const D2D1_RECT_F& r, const wchar_t* label, const std::wst
     c.TextSp(label, Rect(r.left + 14, r.top + 14, Width(r) - 28, 14), Weight::Medium, 10, t.textLow, 1.4f);
     c.Text(value, Rect(r.left + 13, r.top + 30, Width(r) - 26, 30), Weight::Light, 22, t.text);
     D2D1_RECT_F chart = {r.left + 1, (std::max)(r.bottom - 58, r.top + 62), r.right - 1, r.bottom - 10}; // sparkline in the bottom 48px, never over the value
-    c.PushClip(Inset(r, 1, 1)); // keep fill inside card border
+    ComPtr<ID2D1RoundedRectangleGeometry> card; // inside the card's rounded corners, not its square bounds
+    if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(Inset(r, 1, 1), 19, 19), &card))) return;
+    c.Target()->PushLayer(D2D1::LayerParameters(chart, card.Get()), nullptr); // bounded to the chart, so only its pixels pay for the mask
     w::Spark(c, chart, h.Values(), h.Version(), maxV, t.accent);
-    c.PopClip();
+    c.Target()->PopLayer();
 }
 
 }
