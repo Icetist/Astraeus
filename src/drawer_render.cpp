@@ -1,3 +1,4 @@
+#include <cwchar>
 #include <d2d1_1helper.h>
 #include <d2d1effects.h>
 
@@ -276,7 +277,8 @@ void Drawer::DrawBody(float h, float dt, double now) {
     float sheet = ui.Smooth(Ui::Id("bt.sheet"), model.btOpen ? 1.0f : 0, 14); // bt menu open anim
     float wsheet = ui.Smooth(Ui::Id("wifi.sheet"), model.wifiOpen ? 1.0f : 0, 14); // wi-fi picker open anim
     float ssheet = ui.Smooth(Ui::Id("set.sheet"), model.settingsOpen ? 1.0f : 0, 14); // settings open anim
-    float under = 1 - anim::Clamp01((std::max)((std::max)(sheet, wsheet), ssheet) * 1.6f); // the page fades out as a sheet fades in, a crossfade, not a stack
+    float csheet = ui.Smooth(Ui::Id("cal.sheet"), model.calOpen ? 1.0f : 0, 14); // calendar open anim
+    float under = 1 - anim::Clamp01((std::max)((std::max)(sheet, wsheet), (std::max)(ssheet, csheet)) * 1.6f); // the page fades out as a sheet fades in, a crossfade, not a stack
     float pageAlpha = e * under;
     bool fading = pageAlpha < 0.999f;
     ctx->SetTransform(D2D1::Matrix3x2F::Translation(0, slide) * base);
@@ -285,7 +287,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
     float fade = ui.SmoothFrom(Ui::Id("cover.fade", (int)coverId), 1, 0, 6); // id per cover restarts fade on track change
     PageCtx pc{ui, model, shellNow, mediaNow, cover.Get(), coverBlur.Get(), fade,
                    D2D1_RECT_F{area.left, area.top - slide, area.right, area.bottom - slide}}; // undo slide so hit rects stay put
-    ui.Block(sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f); // page under a sheet takes no input
+    ui.Block(sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f || csheet > 0.01f); // page under a sheet takes no input
     if (under > 0.001f) { // a sheet that has taken over hides the page, skip drawing it
         switch (page) {
         case 0: DrawHome(pc); break;
@@ -315,6 +317,11 @@ void Drawer::DrawBody(float h, float dt, double now) {
         DrawSettings(sc, ssheet);
         pc.wantClose = pc.wantClose || sc.wantClose;
     }
+    if (csheet > 0.001f) {
+        PageCtx cc{ui, model, shellNow, mediaNow, nullptr, nullptr, 1, area};
+        DrawCalendar(cc, csheet);
+    }
+    DrawRailTip(shellNow); // over the page and its sheets
 
     ui.End();
     hand = ui.Hand(); // picked up by WM_SETCURSOR
@@ -552,10 +559,26 @@ void Drawer::DrawRailTop(const Theme& t) {
         float ix = 14 + step * (i + 0.5f);
         Ui::Hit h = ui.Button(Ui::Id("railt", i), {ix - 28, 4, ix + 28, kTopRail - 4});
         if (h.clicked) SetPage(i);
+        if (h.hover) railTip = i, railTipAt = {ix, kTopRail + 4};
         float hover = ui.Smooth(Ui::Id("railt.h", i), h.hover && i != page ? 1.0f : 0, 16);
         bool active = i == page;
         c.Icon(kRailIcons[i], {ix, cy}, 22, active ? t.accentHi : t.textDim.Mix(t.text, hover), active);
     }
+}
+
+void Drawer::DrawRailTip(const Theme& t) { // a word beside the rail icon under the mouse
+    static const wchar_t* const kNames[kPages] = {L"Home", L"Media", L"System", L"Network", L"Tools"};
+    if (railTip >= 0) railTipShown = railTip;
+    float a = ui.Smooth(Ui::Id("rail.tip"), railTip >= 0 ? 1.0f : 0, 18);
+    railTip = -1; // the rail sets it again next frame while the mouse stays
+    if (a < 0.01f || railTipShown < 0) return;
+    Canvas& c = *canvas;
+    const wchar_t* name = kNames[railTipShown];
+    float w = std::wcslen(name) * 7.8f + 30, h = 30, o = (1 - a) * 8;
+    D2D1_RECT_F r = Side() ? Rect(railTipAt.x - w / 2, railTipAt.y - o, w, h) : Rect(railTipAt.x + o, railTipAt.y - h / 2, w, h);
+    c.Glow({(r.left + r.right) / 2, (r.top + r.bottom) / 2}, w * 0.8f, h * 1.2f, t.accent.Alpha(0.30f * a));
+    c.FillH(r, h / 2, t.accent.Alpha(a), t.accentHi.Alpha(a)); // a bold accent pill
+    c.Text(name, r, Weight::Semi, 12.5f, t.onAccent.Alpha(a), Align::Center);
 }
 
 void Drawer::DrawRail(const Theme& t) {
@@ -580,6 +603,7 @@ void Drawer::DrawRail(const Theme& t) {
         D2D1_RECT_F hit = {10, y - 22, kRailW - 10, y + 22};
         Ui::Hit h = ui.Button(Ui::Id("rail", i), hit);
         if (h.clicked) SetPage(i);
+        if (h.hover) railTip = i, railTipAt = {kRailW - 6, y};
         float hover = ui.Smooth(Ui::Id("rail.h", i), h.hover && i != page ? 1.0f : 0, 16); // no hover tint on active
         bool active = i == page;
         Color ink = active ? t.accentHi : t.textDim.Mix(t.text, hover);

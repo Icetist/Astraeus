@@ -72,6 +72,10 @@ void WxCard(PageCtx& p, const D2D1_RECT_F& r) {
     const Theme& t = p.shell;
     const sys::Wx& wx = p.m.wx;
     w::Card(ui, t, r);
+    Ui::Hit open = ui.Button(Ui::Id("ov.wx"), r); // the card opens the calendar
+    float lift = ui.Smooth(Ui::Id("ov.wx", 1), open.hover ? 1.0f : 0, 14);
+    if (lift > 0.01f) c.Stroke(r, 22, t.accent.Alpha(0.30f * lift), 1.5f);
+    if (open.clicked) p.m.OpenCal();
     if (!p.m.cfg.weather || !wx.valid) { // no weather yet: show date instead
         SYSTEMTIME st;
         GetLocalTime(&st);
@@ -164,14 +168,14 @@ void Sliders(PageCtx& p, const D2D1_RECT_F& r) {
     bool icon = false;
 
     float v = m.vol;
-    if (w::Pill(ui, t, Ui::Id("sl.vol"), Rect(x, y, wdt, h), m.muted || v < 0.005f ? glyph::VolumeOff : glyph::VolumeUp, v, &icon)) // ~0 shows muted icon
+    if (w::Pill(ui, t, Ui::Id("sl.vol"), Rect(x, y, wdt, h), m.muted || v < 0.005f ? glyph::VolumeOff : glyph::VolumeUp, v, &icon, m.muted)) // ~0 shows muted icon
         m.SetVol(v);
     if (icon) m.ToggleMute(); // icon click = mute toggle
     y += h + gap;
 
     if (m.mic.Ready()) {
         float mv = m.micVol;
-        if (w::Pill(ui, t, Ui::Id("sl.mic"), Rect(x, y, wdt, h), m.micMuted ? glyph::MicOff : glyph::Mic, mv, &icon))
+        if (w::Pill(ui, t, Ui::Id("sl.mic"), Rect(x, y, wdt, h), m.micMuted ? glyph::MicOff : glyph::Mic, mv, &icon, m.micMuted)) // muted: greyed, a drag unmutes
             m.SetMic(mv);
         if (icon) m.ToggleMic();
         y += h + gap;

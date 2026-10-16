@@ -93,6 +93,8 @@ public:
     void OpenSettings(); // astraeus settings sheet, one sheet at a time
     void PickScreen(const std::wstring& name); // live on this screen only
     void CloseSettings();
+    void OpenCal(); // the calendar sheet, from the weather card
+    void CloseCal();
     void SetAccent(int mode, int hex); // persisted, drawer crossfades to it
     void SetNotifyPills(bool on); // persisted, starts or stops the watcher
     bool CommitHex(); // apply the typed hex if it parses, ends typing either way
@@ -172,6 +174,7 @@ public:
     int notifyPills = 0; // 1: windows notifications also drop as a pill
     int fullLyrics = 1; // the fullscreen player shows synced lyrics beside the cover (on by default)
     bool settingsOpen = false;
+    bool calOpen = false, calFresh = false; // fresh: just opened, start on this month
     sys::NotifyWatch notifyWatch; // only runs while notification pills are on
     bool timerOn = false;
 

@@ -1,22 +1,18 @@
-## What's new in 1.2.4
+## What's new in 1.2.5
 
-### A new Bluetooth center
-- **Your devices orbit your PC.** Connected devices circle close in, paired ones drift on a wider orbit, and new finds glide in from the edge while it scans. The whole thing slowly turns around a glowing core.
-- **Battery levels** show as a ring around each device, with the percentage underneath, and turn red when they run low.
-- **Click a device to connect, disconnect or pair it.** While it works, a sweep runs around its icon and a pulse travels along the line to your PC. Hold the bin beside it to forget it.
+### A calendar
+- **Click the weather card on Home** to open a month at a glance: today big on the left with a ring that fills as the month goes by, the weather beside it, and the month on the right.
+- **Hover the date** and it turns over to show how much of the year has gone.
+- **Holidays light up.** New Year, Valentine's, Easter, Eid, Diwali, Christmas and more get an accent glow and a sparkle. Hover one for a greeting, like "Merry Christmas!" on the 25th of December, or click it to see its name.
+- Click any day to see how far away it is. Days from the next or last month take you there, and **Today** brings you back.
 
-### Quicker ways around
-- **Click the media card on Home** to open the Media page.
-- **Click CPU or Memory on Home** for the System page and its processes, or the **Download graph** for the Network page.
+### Small touches
+- **Labels on the rail.** Hover an icon on the side rail to see the name of its page.
+- **A bigger blur slider** for the Glass look in Settings.
+- **A muted mic or volume slider greys out** while keeping its level, so you can tell at a glance. Dragging it unmutes.
 
-### Fullscreen player
-- **When the mouse rests**, the controls fade away with the cursor and the cover grows into the space.
-- **Lyrics fade softly** at the top and bottom instead of being cut off under the clock.
+### Multiple monitors
+- With the panel set to show on every screen, the open panel now follows the mouse to whichever monitor it moves to.
 
 ### Fixes
-- The island pill could come down empty or invisible, on every look. It's back.
-- Switching away from Glass no longer leaves the panel unresponsive for a while.
-- Leaving fullscreen now lands on the Media page.
-- No more dark outline around the visualizer on the media cards.
-- The Glass swatch in Settings stays inside its rounded corners.
-- The published app now carries Control Flow Guard and CET protections.
+- The **Check for updates** icon in the tray menu showed up broken. It's back, and the spinner while it checks turns again.

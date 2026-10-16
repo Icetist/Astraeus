@@ -40,6 +40,7 @@ void DrawBt(PageCtx& p, float t); // bluetooth menu overlay, t = open anim 0..1
 void DrawWifi(PageCtx& p, float t); // wi-fi network picker overlay, same sheet style
 void DrawShare(PageCtx& p, const D2D1_RECT_F& view); // shared-audio tab inside the bluetooth sheet
 void DrawSettings(PageCtx& p, float t); // astraeus settings sheet
+void DrawCalendar(PageCtx& p, float t); // a month at a glance, from the weather card
 
 namespace fmt {
 std::wstring Rate(double bps); // auto-scaled bytes/s units

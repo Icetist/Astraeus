@@ -359,7 +359,7 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // four swatches dr
     D2D1_RECT_F in = Box(c, t, r, L"MATERIAL");
     bool glass = m.look == 2;
     Seed s = Base(m, t);
-    float extra = glass ? 28.0f : 0.0f; // room for the blur slider
+    float extra = glass ? 40.0f : 0.0f; // room for the frost bar
     float sw = (Width(in) - 10) / 2, sh = (std::min)((Height(in) - extra - 2 * 18 - 6) / 2, sw * 0.62f); // two by two, a label under each
     static const wchar_t* const kNames[] = {L"Dark", L"Light", L"Glass", L"Custom"};
     for (int i = 0; i < 4; ++i) {
@@ -396,11 +396,22 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // four swatches dr
         }
     }
     if (glass) { // how frosted: fades between clear glass and windows' full backdrop blur
-        float blur = m.glassBlur / 100.0f;
-        bool done = false;
-        if (Knob(ui, t, Ui::Id("set.blur"), Rect(in.left, in.bottom - 22, Width(in), 22), L"Blur", std::to_wstring(m.glassBlur) + L"%", blur, live, done))
-            m.glassBlur = (int)(blur * 100 + 0.5f); // live preview
-        if (done) m.SetPref(m.glassBlur, L"GlassBlur", m.glassBlur);
+        float v = m.glassBlur / 100.0f;
+        uint32_t id = Ui::Id("set.blur");
+        c.TextSp(L"BLUR", Rect(in.left + 2, in.bottom - 38, 80, 12), Weight::Medium, 9.5f, t.textLow, 1.6f);
+        c.Text(std::to_wstring(m.glassBlur) + L"%", Rect(in.right - 60, in.bottom - 41, 58, 16), Weight::Semi, 12, t.accentHi, Align::Right);
+        D2D1_RECT_F bar = {in.left + 2, in.bottom - 20, in.right - 2, in.bottom - 6}; // clear on the left, frosted on the right
+        D2D1_RECT_F track = Inset(bar, 7, -6); // the knob stays inside the ends; a taller grab zone
+        if (live && ui.Slider(id, track, v, false)) m.glassBlur = (int)(v * 100 + 0.5f); // live preview
+        if (ui.IsActive(id) && ui.In().released) m.SetPref(m.glassBlur, L"GlassBlur", m.glassBlur);
+        float hot = ui.Smooth(id + 1, ui.IsActive(id) || (live && Inside(track, ui.In().mouse)) ? 1.0f : 0, 16);
+        float rad = Height(bar) / 2, cy = (bar.top + bar.bottom) / 2, x = track.left + Width(track) * (m.glassBlur / 100.0f);
+        c.FillH(bar, rad, Color{1, 1, 1, 0.04f}, Color{1, 1, 1, 0.55f}); // the frost itself, thicker as it goes
+        c.Stroke(bar, rad, t.hairTop, 1);
+        c.FillH({bar.left, bar.top, x + rad, bar.bottom}, rad, t.accent.Alpha(0.35f), t.accentHi.Alpha(0.55f));
+        if (hot > 0.01f) c.Glow({x, cy}, 22, 18, t.accent.Alpha(0.35f * hot));
+        c.Dot({x, cy}, rad + 4 + 2 * hot, Color{1, 1, 1, 1});
+        c.Ring({x, cy}, rad + 4 + 2 * hot, t.accent, 2);
     }
 }
 

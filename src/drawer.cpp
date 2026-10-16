@@ -13,7 +13,8 @@
 
 namespace {
 
-constexpr UINT_PTR kHoverTimer = 1, kCloseTimer = 2, kReleaseTimer = 3, kPeekTimer = 4, kDevTimer = 5;
+constexpr UINT_PTR kHoverTimer = 1, kCloseTimer = 2, kReleaseTimer = 3, kPeekTimer = 4, kDevTimer = 5, kFollowTimer = 6;
+constexpr UINT kFollowMs = 120; // every screen mode, open: how often to look which screen the cursor is on
 constexpr int kDevTries = 30; // windows lets go of an old composition target a moment later: ~3 seconds of retries, 100 ms apart
 
 bool PillStays(const Model& m) { return m.IslandAlways() && m.hasTrack && m.track.playing; } // always means: while something is playing
@@ -307,10 +308,12 @@ void Drawer::Open() {
     Resize(Depth() + overshoot, true); // grow first so bounce isn't clipped
     spring.target = Depth();
     spring.damp = 0.62f; // underdamped, drips open with a bounce
+    if (screensNow == 1 && !strips.empty()) SetTimer(hwnd, kFollowTimer, kFollowMs, nullptr); // every screen: follow the cursor to another one
     Redraw();
 }
 
 void Drawer::Close() {
+    KillTimer(hwnd, kFollowTimer);
     KillTimer(hwnd, kCloseTimer);
     KillTimer(hwnd, kPeekTimer);
     peeking = false;
@@ -321,6 +324,7 @@ void Drawer::Close() {
     model.CloseBt(); // menus die with the panel
     model.CloseWifi();
     model.CloseSettings();
+    model.CloseCal();
     model.SetLive(false, false);
     spring.target = 0;
     spring.damp = 0.92f; // near critical, retract without bounce
@@ -353,6 +357,7 @@ void Drawer::SyncHide() {
             model.CloseBt();
             model.CloseWifi();
             model.CloseSettings();
+            model.CloseCal();
             model.SetLive(false, false);
         }
         spring = anim::Spring{}; // reset instantly, no close anim
@@ -385,6 +390,7 @@ void Drawer::SetPage(int p) {
     model.CloseBt();
     model.CloseWifi();
     model.CloseSettings();
+    model.CloseCal();
     prevPage = page;
     page = p;
     pageT = 0;
@@ -551,6 +557,18 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_TIMER:
         KillTimer(hwnd, wp); // all timers are one-shot
+        if (wp == kFollowTimer) { // open, every screen mode: the cursor crossed to another screen, the panel goes with it
+            POINT pt;
+            GetCursorPos(&pt);
+            HMONITOR m = MonitorFromPoint(pt, MONITOR_DEFAULTTONULL);
+            if (opened && !dragging && m && m != mon) {
+                followTo = m;
+                Close(); // up here, then down there once it's out of sight
+            } else if (opened) {
+                SetTimer(hwnd, kFollowTimer, kFollowMs, nullptr);
+            }
+            return 0;
+        }
         if (wp == kDevTimer) { // try the device again: the frame picks up where it left off
             needsFrame = true;
             return 0;
@@ -751,6 +769,15 @@ void Drawer::Frame() {
             islandLook = hand = false; // fully retracted, back to the plain strip and arrow cursor
             Resize(kStrip, false); // shrink window so it can't block clicks
             ui.Forget();
+            if (followTo) { // retracted on the old screen: move over and drop open on the new one
+                mon = followTo;
+                followTo = nullptr;
+                FreeDev(); // other screen, maybe other dpi
+                Place();
+                BuildStrips();
+                Open();
+                return;
+            }
             if (cfg.gpuIdleSec > 0) SetTimer(hwnd, kReleaseTimer, (UINT)cfg.gpuIdleSec * 1000, nullptr); // schedule gpu release
         } else if (spring.target > 0) {
             float room = spring.target + (hintFade > 0.01f ? kHintRoom : 0); // a tip outside the panel needs a little window

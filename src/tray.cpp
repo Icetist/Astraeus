@@ -27,7 +27,7 @@ struct Item {
 const Item kItems[] = {{kOpen, glyph::Overview, L"Open dashboard"},
                        {kConfig, glyph::Edit, L"Edit config"},
                        {kStartup, glyph::Rocket, L"Start with Windows"},
-                       {kUpdate, glyph::Update, L"Check for updates"},
+                       {kUpdate, 0, L"Check for updates"},
                        {kSepCmd, 0, nullptr},
                        {kRestart, glyph::Restart, L"Restart"},
                        {kExit, glyph::Power, L"Exit"}};
@@ -63,14 +63,19 @@ std::wstring UpdLabel() {
 
 void UpdRow(Canvas& c, const Theme& t, const D2D1_RECT_F& r, float cy) { // right side of the update row: version, spinner or a tick
     if (UpdBusy()) {
-        float a = (float)(GetTickCount64() % 900) / 900.0f * 360.0f;
+        float a = (float)(GetTickCount64() % 900) / 900.0f * 6.2832f; // arc angles are radians
         c.Ring({r.right - 24, cy}, 7, t.track, 2);
-        c.Arc({r.right - 24, cy}, 7, a, 100, t.accentHi, 2);
+        c.Arc({r.right - 24, cy}, 7, a, 1.75f, t.accentHi, 2);
     } else if (upd == Upd::Current) {
         c.Icon(glyph::Check, {r.right - 24, cy}, 18, t.accentHi, true);
     } else {
         c.Text(L"v" APP_VER_W, {r.right - 80, r.top, r.right - 12, r.bottom}, Weight::Regular, 11, t.textLow, Align::Right);
     }
+}
+
+void UpdIcon(Canvas& c, D2D1_POINT_2F o, Color ink) { // an open circle around a down arrow; the icon font carries no update glyph
+    c.Arc(o, 7.5f, -1.05f, 5.24f, ink, 1.8f); // gap at the top
+    c.Icon(glyph::Down, {o.x, o.y + 0.5f}, 13, ink, true);
 }
 
 float Top(int i) { // y of item i
@@ -145,7 +150,8 @@ void Paint() {
         if (hot) c.Fill(r, 10, danger ? kDanger.Alpha(0.14f) : t.cardHi.Mix(t.track, 0.6f)); // hover pill
         Color ink = hot && danger ? kDanger : t.text;
         Color icon = hot ? (danger ? kDanger : t.accentHi) : t.textDim;
-        c.Icon(it.glyph, {r.left + 22, cy}, 19, icon, hot);
+        if (it.cmd == kUpdate) UpdIcon(c, {r.left + 22, cy}, icon);
+        else c.Icon(it.glyph, {r.left + 22, cy}, 19, icon, hot);
         bool upRow = it.cmd == kUpdate;
         if (upRow && upd == Upd::Failed) ink = hot ? kDanger : t.textDim;
         c.Text(upRow ? UpdLabel() : it.label, {r.left + 44, r.top, r.right - 56, r.bottom}, Weight::Regular, 13, ink);

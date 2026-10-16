@@ -168,6 +168,7 @@ void Model::OpenBt() {
     if (btOpen) return;
     CloseWifi(); // one sheet at a time
     CloseSettings();
+    CloseCal();
     btOpen = true;
     bt.Open(notify, WM_APP_BT);
     OnBt();
@@ -197,6 +198,7 @@ void Model::OpenWifi() {
     if (wifiOpen) return;
     CloseBt(); // one sheet at a time
     CloseSettings();
+    CloseCal();
     wifiOpen = true;
     wifi.Open(notify, WM_APP_WIFI);
     OnWifi();
@@ -268,6 +270,7 @@ void Model::OpenSettings() {
     if (settingsOpen) return;
     CloseBt(); // one sheet at a time
     CloseWifi();
+    CloseCal();
     settingsOpen = true;
     screenList = sys::ListScreens(); // monitors may have changed since last time
 }
@@ -277,6 +280,16 @@ void Model::PickScreen(const std::wstring& name) {
     sys::SaveText(L"Screen", name);
     SetPref(screens, L"Screens", 0);
 }
+
+void Model::OpenCal() {
+    if (calOpen) return;
+    CloseBt(); // one sheet at a time
+    CloseWifi();
+    CloseSettings();
+    calOpen = calFresh = true;
+}
+
+void Model::CloseCal() { calOpen = false; }
 
 void Model::CloseSettings() {
     settingsOpen = false;

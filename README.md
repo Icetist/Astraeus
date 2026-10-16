@@ -41,9 +41,9 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 - **Wi-Fi network picker.** Right-click the Wi-Fi tile, or press **Networks** on the Network page, to see nearby networks and connect to saved or open ones.
 - **Live system stats:** CPU, GPU, memory, top processes, network throughput, local and public IP, all with smooth sparklines.
 - **Tools:** lock, sleep, sign out, restart and shut down (destructive actions are press-and-hold), a timer with notifications, a screenshot shortcut and keep-awake.
-- **Weather** for your location, in Celsius or Fahrenheit.
+- **Weather and a calendar.** Weather for your location, in Celsius or Fahrenheit. Click the weather card for a month at a glance, with holidays from around the world lit up and a greeting when you hover them.
 - **Colors that follow you.** The palette is pulled from your wallpaper, or from the album art of whatever is playing, or from any accent you pick. Four looks: dark (the default), light, glass (a live frosted blur of whatever is behind the panel), and custom, where a color wheel lets you pick any accent and any background, with text that turns white or black to suit.
-- **Settings you touch.** Pick the edge it lives on, which monitor (or all of them), your accent color and look from small pictures of the real thing.
+- **Settings you touch.** Pick the edge it lives on, which monitor (or all of them, with the open panel following your mouse from screen to screen), your accent color and look from small pictures of the real thing.
 - **The island.** Over a maximized window, or tiled windows that fill the screen, a small pill shows what's playing instead of dropping the whole panel over your work. It can stay a moment, minutes, or always while music plays. Windows notifications can arrive as pills too.
 - **Gets out of the way.** Hides itself when a game or video goes fullscreen.
 - **Stays up to date.** New releases install themselves silently in the background, and only after their SHA-256 matches the one published with the release. **Check for updates** in the tray menu looks right away.
@@ -118,7 +118,7 @@ Updates are automatic. Astraeus checks GitHub shortly after launch and every few
 
 - **Open the panel** by hovering the middle of the edge it lives on (the top unless you moved it), or by clicking the tray icon. Over a maximized window the island pill shows first; click it to open the panel.
 - **Close it** by moving the mouse away, clicking the tray icon again or dragging the panel back up.
-- **Switch pages** with the rail: Home, Media, System, Network and Tools. On Home, the media card, CPU, Memory and Download cards also take you to their pages.
+- **Switch pages** with the rail: Home, Media, System, Network and Tools. Hover an icon to see its name. On Home, the media card, CPU, Memory and Download cards also take you to their pages. The weather card opens the calendar.
 - **Fullscreen player:** click the album cover on the Media page. Click it again, press **Esc** or right-click to leave. With lyrics showing, scroll to look around, click a line to jump to it, and press **[** or **]** to nudge the lyrics earlier or later.
 - **Shared audio:** open the Bluetooth menu and switch to the **Shared audio** tab.
 - **Bluetooth devices:** right-click the Bluetooth tile on the Home page.
