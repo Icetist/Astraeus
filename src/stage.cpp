@@ -173,7 +173,8 @@ LRESULT Stage::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == VK_RIGHT) model.media.Next();
         else if (wp == VK_LEFT) model.media.Previous();
         else if (wp == VK_OEM_4 || wp == VK_OEM_6) { // [ and ]: lyrics a touch earlier or later, remembered
-            model.SetPref(model.lyricOffsetMs, L"LyricOffsetMs", (std::clamp)(model.lyricOffsetMs + (wp == VK_OEM_6 ? 100 : -100), -3000, 3000));
+            model.lyricOffsetMs = (std::clamp)(model.lyricOffsetMs + (wp == VK_OEM_6 ? 100 : -100), -3000, 3000);
+            if (!lyrKey.empty()) model.lyrics.SetOffset(lyrKey, model.lyricOffsetMs); // this song's own, kept for next time
             nudgeAt = Seconds();
         }
         return 0;
@@ -290,6 +291,7 @@ void Stage::SyncLyrics(double now) { // asks for the song's lyrics once its leng
     if (key != lyrKey) {
         lyrKey = key;
         lyrDoc.reset();
+        model.lyricOffsetMs = 0; // a new song starts in sync until its own nudge arrives
         lyrAsked = -1;
         lyrKeyAt = now;
     }
@@ -300,7 +302,9 @@ void Stage::SyncLyrics(double now) { // asks for the song's lyrics once its leng
     }
     if ((!lyrDoc || lyrDoc->interim) && lyrAsked >= 0 && now - lyrPoll > 0.25) { // an early version keeps listening for the word-timed one
         lyrPoll = now;
-        lyrDoc = model.lyrics.Get(key);
+        auto got = model.lyrics.Get(key);
+        if (got && got != lyrDoc) model.lyricOffsetMs = got->offsetMs; // the song's remembered nudge
+        lyrDoc = got;
     }
 }
 

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
+#include <ctime>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -86,6 +88,150 @@ std::wstring CleanTitle(const std::wstring& raw) { // "TRIM (with Future)", "Son
     if (size_t d = s.find(L" - "); d != std::wstring::npos && noisy(s.substr(d))) s.erase(d); // trailing " - Remastered 2011"
     s = Trim(s);
     return s.empty() ? Trim(raw) : s;
+}
+
+std::wstring BareTitle(const std::wstring& raw) { // every aside gone: "Song (Live at X) - From Film" -> "Song", for a last try
+    std::wstring s;
+    int depth = 0;
+    for (wchar_t c : raw) {
+        if (c == L'(' || c == L'[') ++depth;
+        else if ((c == L')' || c == L']') && depth > 0) --depth;
+        else if (!depth) s += c;
+    }
+    if (size_t d = s.find(L" - "); d != std::wstring::npos && d > 0) s.erase(d);
+    s = Trim(s);
+    return s.empty() ? Trim(raw) : s;
+}
+
+std::string ToUtf8(const std::wstring& w) {
+    if (w.empty()) return {};
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+    std::string s(n > 0 ? n : 0, '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), s.data(), n, nullptr, nullptr);
+    return s;
+}
+
+// The disk cache: one small file per song in %LOCALAPPDATA%\Astraeus\lyrics, the newest 300 kept, read and written on the lyrics
+// thread (a timing nudge writes from the ui, rarely). A song with no lyrics is believed for 3 days, then asked again.
+constexpr size_t kDiskKeep = 300;
+constexpr long long kNoneDays = 3;
+
+std::wstring DiskDir() {
+    wchar_t base[MAX_PATH];
+    DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH);
+    if (!n || n >= MAX_PATH) return {};
+    std::wstring dir = std::wstring(base) + L"\\Astraeus";
+    CreateDirectoryW(dir.c_str(), nullptr);
+    dir += L"\\lyrics";
+    CreateDirectoryW(dir.c_str(), nullptr);
+    return dir;
+}
+
+const std::wstring& Disk() {
+    static const std::wstring dir = DiskDir();
+    return dir;
+}
+
+std::wstring DiskPath(const std::wstring& key) {
+    if (Disk().empty()) return {};
+    uint64_t h = 1469598103934665603ull; // fnv-1a 64
+    for (wchar_t c : key) h = (h ^ (uint16_t)c) * 1099511628211ull;
+    wchar_t name[24];
+    swprintf_s(name, L"%016llx.lyr", (unsigned long long)h);
+    return Disk() + L"\\" + name;
+}
+
+long long NowDays() { return (long long)(time(nullptr) / 86400); }
+
+void DiskSave(const Lyrics& d) {
+    std::wstring path = DiskPath(d.key);
+    if (path.empty()) return;
+    std::string out = "ALYR1\n" + ToUtf8(d.key) + "\n" + std::to_string(d.offsetMs) + " " + std::to_string(NowDays()) + " " + std::to_string(d.lines.size()) + "\n";
+    for (const LyricLine& l : d.lines) {
+        char head[64];
+        snprintf(head, sizeof(head), "%.3f %.3f %zu", l.start, l.end, l.words.size());
+        out += head;
+        for (const auto& w : l.words) {
+            snprintf(head, sizeof(head), " %.3f %d", w.first, w.second);
+            out += head;
+        }
+        out += "\t" + ToUtf8(l.text) + "\n";
+    }
+    std::wstring tmp = path + L".tmp"; // whole or nothing: written aside, then swapped in
+    HANDLE f = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD wrote = 0;
+    bool ok = WriteFile(f, out.data(), (DWORD)out.size(), &wrote, nullptr) && wrote == out.size();
+    CloseHandle(f);
+    if (!ok || !MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) DeleteFileW(tmp.c_str());
+}
+
+void DiskPrune() { // the least recently played go once there are more than kDiskKeep
+    if (Disk().empty()) return;
+    struct Entry {
+        std::wstring name;
+        FILETIME at;
+    };
+    std::vector<Entry> all;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((Disk() + L"\\*.lyr").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do all.push_back({fd.cFileName, fd.ftLastWriteTime});
+    while (FindNextFileW(h, &fd) && all.size() < 4096);
+    FindClose(h);
+    if (all.size() <= kDiskKeep) return;
+    std::sort(all.begin(), all.end(), [](const Entry& a, const Entry& b) { return CompareFileTime(&a.at, &b.at) < 0; });
+    for (size_t i = 0; i + kDiskKeep < all.size(); ++i) DeleteFileW((Disk() + L"\\" + all[i].name).c_str());
+}
+
+std::shared_ptr<Lyrics> DiskLoad(const std::wstring& key) { // null when not there, stale or not this song
+    std::wstring path = DiskPath(key);
+    if (path.empty()) return nullptr;
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ | FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return nullptr;
+    LARGE_INTEGER size{};
+    std::string in;
+    if (GetFileSizeEx(f, &size) && size.QuadPart > 0 && size.QuadPart < (2 << 20)) {
+        in.resize((size_t)size.QuadPart);
+        DWORD got = 0;
+        if (!ReadFile(f, in.data(), (DWORD)in.size(), &got, nullptr) || got != in.size()) in.clear();
+    }
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    SetFileTime(f, nullptr, nullptr, &now); // played = recent: it outlives the songs not heard in a while
+    CloseHandle(f);
+    size_t a = in.find('\n'), b = a == std::string::npos ? a : in.find('\n', a + 1), c = b == std::string::npos ? b : in.find('\n', b + 1);
+    if (c == std::string::npos || in.compare(0, a, "ALYR1") != 0 || Wide(in.substr(a + 1, b - a - 1)) != key) return nullptr;
+    long long offset = 0, day = 0, count = 0;
+    if (sscanf_s(in.c_str() + b + 1, "%lld %lld %lld", &offset, &day, &count) != 3 || count < 0 || count > (long long)kMaxLines) return nullptr;
+    if (count == 0 && NowDays() - day > kNoneDays) return nullptr; // "none" is only believed for a few days
+    auto doc = std::make_shared<Lyrics>();
+    doc->key = key;
+    doc->done = true;
+    doc->offsetMs = (int)(std::clamp)(offset, -5000LL, 5000LL);
+    for (size_t pos = c + 1; pos < in.size() && (long long)doc->lines.size() < count;) {
+        size_t end = in.find('\n', pos), tab = in.find('\t', pos);
+        if (end == std::string::npos || tab == std::string::npos || tab > end) break;
+        std::string head = in.substr(pos, tab - pos);
+        LyricLine l;
+        size_t words = 0;
+        int used = 0;
+        if (sscanf_s(head.c_str(), "%lf %lf %zu%n", &l.start, &l.end, &words, &used) < 3 || words > 400) break;
+        const char* p = head.c_str() + used;
+        for (size_t k = 0; k < words; ++k) {
+            double at = 0;
+            int off = 0, n = 0;
+            if (sscanf_s(p, " %lf %d%n", &at, &off, &n) < 2) break;
+            l.words.push_back({at, off});
+            p += n;
+        }
+        l.text = Wide(in.substr(tab + 1, end - tab - 1));
+        for (auto& w : l.words) w.second = (std::clamp)(w.second, 0, (int)l.text.size());
+        doc->lines.push_back(std::move(l));
+        pos = end + 1;
+    }
+    if ((long long)doc->lines.size() != count) return nullptr; // cut short: look it up again
+    return doc;
 }
 
 std::wstring MainArtist(const std::wstring& raw) { // first of "A, B & C feat. D"
@@ -453,6 +599,7 @@ struct LyricSrc::Impl {
     std::atomic<bool> queued{false}; // a newer song is waiting: a lookup still hoping for word timing gives up
     std::wstring busyKey; // being looked up
     std::thread th;
+    unsigned saved = 0; // songs written to disk this session, the lyrics thread's own count
     std::atomic<bool> stop{false}; // shutting down
     struct Lane { // one per source, so the slower one can be cut off
         std::atomic<bool> halt{false};
@@ -473,7 +620,7 @@ struct LyricSrc::Impl {
         return lines.size() >= 3 && lines.back().start - lines.front().start > 10;
     }
 
-    static std::vector<LyricLine> Best(const std::string& body, double seconds) { // lrclib: the synced candidate closest in length
+    static std::vector<LyricLine> Best(const std::string& body, double seconds, double maxOff = kMaxOff) { // lrclib: the synced candidate closest in length
         Val root;
         if (!Json{body}.Parse(root)) return {};
         std::vector<const Val*> all;
@@ -490,25 +637,38 @@ struct LyricSrc::Impl {
                 pick = o;
             }
         }
-        if (!pick || off > kMaxOff) return {};
+        if (!pick || off > maxOff) return {};
         auto lines = ParseLrc(Wide(pick->Text("syncedLyrics")));
         return Synced(lines) ? lines : std::vector<LyricLine>{};
     }
 
     std::vector<LyricLine> Netease(Lane& ln, const std::wstring& title, const std::wstring& artist, double seconds, bool& reached) { // strong on hip-hop and pop
+        const std::wstring bare = BareTitle(title);
+        const std::wstring queries[3] = {artist + L" " + title, artist + L" " + bare, bare}; // with the artist, the bare title, then the title alone
+        for (int q = 0; q < 3; ++q) {
+            if (q == 1 && bare == title) continue; // nothing was bare-able
+            if (q == 2 && seconds <= 0) break; // the title alone needs the exact length to be trusted
+            auto lines = NeteaseTry(ln, queries[q], title, bare, artist, seconds, q == 2, reached);
+            if (!lines.empty() || ln.halt.load()) return lines;
+        }
+        return {};
+    }
+
+    std::vector<LyricLine> NeteaseTry(Lane& ln, const std::wstring& query, const std::wstring& title, const std::wstring& bare, const std::wstring& artist, double seconds,
+                                      bool strict, bool& reached) { // one search; strict: the title alone, so the bare name and the length must match exactly
         std::string body;
-        if (!Get(ln, L"https://music.163.com/api/search/get?s=" + Esc(artist + L" " + title) + L"&type=1&limit=8", body)) return {};
+        if (!Get(ln, L"https://music.163.com/api/search/get?s=" + Esc(query) + L"&type=1&limit=8", body)) return {};
         reached = true;
         Val root;
         if (!Json{body}.Parse(root)) return {};
         const Val* result = root["result"];
         const Val* songs = result ? (*result)["songs"] : nullptr;
         if (!songs || songs->kind != Val::kArr) return {};
-        const std::wstring t = Lower(title), a = Lower(artist);
+        const std::wstring t = Lower(title), tb = Lower(bare), a = Lower(artist);
         for (const Val& song : songs->items) {
             if (ln.halt.load()) return {};
-            std::wstring name = Lower(CleanTitle(Wide(song.Text("name"))));
-            bool titleOk = name == t || (!name.empty() && (name.find(t) != std::wstring::npos || t.find(name) != std::wstring::npos));
+            std::wstring raw = Wide(song.Text("name")), name = Lower(CleanTitle(raw)), nameBare = Lower(BareTitle(raw));
+            bool titleOk = name == t || nameBare == tb || (!name.empty() && (name.find(t) != std::wstring::npos || t.find(name) != std::wstring::npos));
             bool artistOk = false;
             if (const Val* artists = song["artists"]; artists && artists->kind == Val::kArr)
                 for (const Val& who : artists->items) {
@@ -516,7 +676,10 @@ struct LyricSrc::Impl {
                     artistOk |= !n.empty() && (n.find(a) != std::wstring::npos || a.find(n) != std::wstring::npos);
                 }
             double len = song.Number("duration") / 1000;
-            if (!titleOk || !artistOk || (seconds > 0 && len > 0 && std::fabs(len - seconds) > kMaxOff)) continue;
+            bool exactLen = seconds > 0 && len > 0 && std::fabs(len - seconds) <= 2;
+            bool ok = strict ? nameBare == tb && exactLen
+                             : titleOk && (artistOk || (exactLen && nameBare == tb)) && !(seconds > 0 && len > 0 && std::fabs(len - seconds) > kMaxOff); // an artist named another way ("Ye") counts when name and length match
+            if (!ok) continue;
             std::string lyric;
             if (!Get(ln, L"https://music.163.com/api/song/lyric/v1?id=" + std::to_wstring((long long)song.Number("id")) + L"&cp=false&lv=0&kv=0&tv=0&rv=0&yv=0&ytv=0&yrv=0", lyric)) continue;
             Val doc;
@@ -537,20 +700,30 @@ struct LyricSrc::Impl {
             reached = true;
             return {};
         }
+        const std::wstring bare = BareTitle(title);
+        const std::wstring queries[2] = {artist + L" " + title, bare}; // with the artist, then the bare title on its own
+        for (int q = 0; q < 2; ++q) {
+            auto lines = KugouTry(ln, queries[q], title, bare, seconds, reached);
+            if (!lines.empty() || ln.halt.load()) return lines;
+        }
+        return {};
+    }
+
+    std::vector<LyricLine> KugouTry(Lane& ln, const std::wstring& query, const std::wstring& title, const std::wstring& bare, double seconds, bool& reached) {
         std::string body;
-        if (!Get(ln, L"https://mobileservice.kugou.com/api/v3/search/song?format=json&page=1&pagesize=8&showtype=1&keyword=" + Esc(artist + L" " + title), body)) return {};
+        if (!Get(ln, L"https://mobileservice.kugou.com/api/v3/search/song?format=json&page=1&pagesize=8&showtype=1&keyword=" + Esc(query), body)) return {};
         reached = true;
         Val root;
         if (!Json{body}.Parse(root)) return {};
         const Val* data = root["data"];
         const Val* info = data ? (*data)["info"] : nullptr;
         if (!info || info->kind != Val::kArr) return {};
-        const std::wstring t = Lower(title);
+        const std::wstring t = Lower(title), tb = Lower(bare);
         for (const Val& song : info->items) {
             if (ln.halt.load()) return {};
-            std::wstring name = Lower(CleanTitle(Wide(song.Text("songname"))));
+            std::wstring listed = Wide(song.Text("songname")), name = Lower(CleanTitle(listed));
             double len = song.Number("duration");
-            if (name != t || len <= 0 || std::fabs(len - seconds) > 2.5) continue; // kugou names artists its own way ("Ye" for Kanye): the exact title and length carry it
+            if ((name != t && Lower(BareTitle(listed)) != tb) || len <= 0 || std::fabs(len - seconds) > 2.5) continue; // kugou names artists its own way ("Ye" for Kanye): the exact title and length carry it
             std::string got;
             if (!Get(ln, L"https://lyrics.kugou.com/search?ver=1&man=yes&client=mobi&keyword=&hash=" + Esc(Wide(song.Text("hash"))) + L"&duration=" +
                              std::to_wstring((long long)std::lround(len * 1000)), got))
@@ -594,7 +767,11 @@ struct LyricSrc::Impl {
         reached = true;
         auto lines = Best(body, seconds);
         if (!lines.empty()) return lines;
-        if (Get(ln, std::wstring(kApi) + L"search?q=" + Esc(artist + L" " + title), body)) return Best(body, seconds); // loose words, last try
+        if (Get(ln, std::wstring(kApi) + L"search?q=" + Esc(artist + L" " + title), body) && !(lines = Best(body, seconds)).empty()) return lines; // loose words
+        const std::wstring bare = BareTitle(title);
+        if (bare != title && Get(ln, std::wstring(kApi) + L"search?track_name=" + Esc(bare) + L"&artist_name=" + Esc(artist), body) && !(lines = Best(body, seconds)).empty())
+            return lines;
+        if (seconds > 0 && Get(ln, std::wstring(kApi) + L"search?track_name=" + Esc(bare), body)) return Best(body, seconds, 2.0); // the title alone: only the exact length is trusted
         return {};
     }
 
@@ -683,6 +860,12 @@ struct LyricSrc::Impl {
                 queued = false;
                 busyKey = a.key;
             }
+            if (auto disk = DiskLoad(a.key)) { // played before: straight from disk, no network at all
+                std::lock_guard lock(mu);
+                busyKey.clear();
+                Keep(std::move(disk));
+                continue;
+            }
             auto doc = std::make_shared<Lyrics>();
             doc->key = a.key;
             bool reached = false;
@@ -692,17 +875,27 @@ struct LyricSrc::Impl {
                 OutputDebugStringW(L"[sys] lyrics lookup failed\n");
             }
             doc->done = true;
-            std::lock_guard lock(mu);
-            busyKey.clear();
-            if (stop.load()) return;
-            if (doc->lines.empty() && !reached) { // offline, or a source didn't answer: not remembered, asked again in a while
-                failed.push_back({doc->key, GetTickCount64()});
-                if (failed.size() > 16) failed.pop_front();
-                continue;
+            {
+                std::lock_guard lock(mu);
+                busyKey.clear();
+                if (stop.load()) return;
+                if (doc->lines.empty() && !reached) { // offline, or a source didn't answer: not remembered, asked again in a while
+                    failed.push_back({doc->key, GetTickCount64()});
+                    if (failed.size() > 16) failed.pop_front();
+                    continue;
+                }
+                for (auto it = kept.begin(); it != kept.end();) { // the final version replaces an early one, keeping a nudge made meanwhile
+                    if ((*it)->key == doc->key) {
+                        doc->offsetMs = (*it)->offsetMs;
+                        it = kept.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+                Keep(doc);
             }
-            for (auto it = kept.begin(); it != kept.end();) // the final version replaces an early one
-                it = (*it)->key == doc->key ? kept.erase(it) : it + 1;
-            Keep(std::move(doc));
+            DiskSave(*doc); // next time this song plays, it's instant
+            if (++saved % 16 == 1) DiskPrune(); // now and then, not every song
         }
     }
 };
@@ -740,6 +933,21 @@ void LyricSrc::Want(const std::wstring& title, const std::wstring& artist, const
     } catch (...) {
         OutputDebugStringW(L"[sys] lyrics request failed\n");
     }
+}
+
+void LyricSrc::SetOffset(const std::wstring& key, int ms) {
+    if (!impl) return;
+    std::shared_ptr<Lyrics> copy;
+    {
+        std::lock_guard lock(impl->mu);
+        for (auto& d : impl->kept)
+            if (d->key == key) {
+                copy = std::make_shared<Lyrics>(*d);
+                copy->offsetMs = ms;
+                d = copy;
+            }
+    }
+    if (copy && !copy->interim) DiskSave(*copy); // an early version waits: the final one carries the nudge and saves it
 }
 
 std::shared_ptr<const Lyrics> LyricSrc::Get(const std::wstring& key) const {

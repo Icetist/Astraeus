@@ -3,6 +3,8 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <shobjidl.h>
+#include <wrl/client.h>
 
 #include <memory>
 #include <string>
@@ -118,6 +120,27 @@ void SetStartup(bool on) {
     }
     SetBoot(dst + L"\\Astraeus.exe");
     if (_wcsicmp(app->dir.c_str(), dst.c_str()) != 0) Restart(dst + L"\\Astraeus.exe"); // switch over to the installed copy
+}
+
+void StartShortcut() { // a shortcut in the start menu, so astraeus can be found again after it's closed; rewritten only when it points somewhere else
+    PWSTR programs = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_Programs, 0, nullptr, &programs))) return;
+    std::wstring lnk = std::wstring(programs) + L"\\Astraeus.lnk";
+    CoTaskMemFree(programs);
+    std::wstring target = app->exePath, inst = InstallDir() + L"\\Astraeus.exe";
+    if (_wcsicmp(BootExe().c_str(), inst.c_str()) == 0 && GetFileAttributesW(inst.c_str()) != INVALID_FILE_ATTRIBUTES) target = inst; // the copy that starts with windows and gets updated
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    Microsoft::WRL::ComPtr<IPersistFile> file;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) || FAILED(link.As(&file))) return;
+    wchar_t now[MAX_PATH] = {};
+    if (SUCCEEDED(file->Load(lnk.c_str(), STGM_READ)) && SUCCEEDED(link->GetPath(now, MAX_PATH, nullptr, SLGP_RAWPATH)) && _wcsicmp(now, target.c_str()) == 0)
+        return; // already right: nothing written
+    std::wstring dir = target.substr(0, target.find_last_of(L'\\'));
+    link->SetPath(target.c_str());
+    link->SetWorkingDirectory(dir.c_str());
+    link->SetDescription(L"Astraeus, a bezel dashboard");
+    link->SetIconLocation(target.c_str(), 0);
+    file->Save(lnk.c_str(), TRUE);
 }
 
 void SyncBoot() { // launch-time housekeeping once startup is known to be on
@@ -384,6 +407,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     state.model->Start(state.drawer->Hwnd()); // background pollers post to drawer
     if (!StartupOn()) tray::Ask(app->host, state.drawer->Shell()); // asks every launch while off
     else SyncBoot();
+    StartShortcut(); // after the boot copy is settled, so the shortcut points at it
     if (sys::FinishUpdate()) state.drawer->Peek(L"Astraeus updated", L"Now on version " APP_VER_W, glyph::Sparkle); // first run after a swap
     gfx::GiveBack(); // trim startup memory
 

@@ -25,7 +25,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     if (look < 0 || look >= kLooks) look = 0; // unknown value: back to dark
     glassBlur = (std::clamp)(sys::ReadNum(L"GlassBlur", 100), 0, 100);
     customBg = sys::ReadNum(L"CustomBg", customBg) & 0xFFFFFF;
-    lyricOffsetMs = (std::clamp)(sys::ReadNum(L"LyricOffsetMs", 0), -3000, 3000);
+    lyricOffsetMs = 0; // per song now, remembered with its lyrics
     edge = (std::clamp)(sys::ReadNum(L"Edge", 0), 0, 2);
     screens = (std::clamp)(sys::ReadNum(L"Screens", 0), 0, 1);
     screen = sys::ReadText(L"Screen");

@@ -99,14 +99,16 @@ bool HttpGet(const wchar_t* url, std::string& body, std::atomic<bool>& stop, std
     std::wstring object = std::wstring(path) + extra;  // rejoin path + query for request
     const bool secure = uc.nScheme == INTERNET_SCHEME_HTTPS;
 
-    HttpH session(WinHttpOpen(L"Astraeus/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,  // honors system/pac proxy
-                                       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
-    if (!session.h) {
+    static const HINTERNET session = [] {  // one session for the app's life: connections to a host are kept alive and reused, no new handshake per request
+        HINTERNET s = WinHttpOpen(L"Astraeus/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);  // honors system/pac proxy
+        if (s) WinHttpSetTimeouts(s, kResolveMs, kConnMs, kSendMs, kRecvMs);  // ms; defaults are too long
+        return s;
+    }();
+    if (!session) {
         OutputDebugStringW(L"[sys] WinHttpOpen failed\n");
         return false;
     }
-    WinHttpSetTimeouts(session.h, kResolveMs, kConnMs, kSendMs, kRecvMs);  // ms; defaults are too long
-    HttpH connect(WinHttpConnect(session.h, host, uc.nPort, 0));  // no network io yet, just binds host
+    HttpH connect(WinHttpConnect(session, host, uc.nPort, 0));  // no network io yet, just binds host
     if (!connect.h) return false;
 
     HINTERNET req = WinHttpOpenRequest(connect.h, L"GET", object.c_str(), nullptr, WINHTTP_NO_REFERER,

@@ -16,6 +16,7 @@ struct Lyrics {
     std::wstring key; // the song these belong to
     bool done = false; // looked up; lines empty = no synced lyrics for it
     bool interim = false; // shown early: a word-timed version may still replace it
+    int offsetMs = 0; // this song's own nudge, [ and ] in fullscreen; kept with it on disk
     std::vector<LyricLine> lines;
 };
 
@@ -30,6 +31,7 @@ public:
     static std::wstring Key(const std::wstring& title, const std::wstring& artist) { return title + L'\x1f' + artist; }
     void Want(const std::wstring& title, const std::wstring& artist, const std::wstring& album, double seconds); // no-op if known or underway
     std::shared_ptr<const Lyrics> Get(const std::wstring& key) const; // null until looked up
+    void SetOffset(const std::wstring& key, int ms); // remembered for that song, on disk too
 private:
     struct Impl;
     std::shared_ptr<Impl> impl;

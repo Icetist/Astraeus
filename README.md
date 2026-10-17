@@ -157,7 +157,7 @@ How it stays this light:
 - The once-a-second housekeeping timer is coalescable, so Windows can batch its wakeups with others.
 - Icon fonts are subset to the glyphs that are actually used (3 MB down to 33 KB) and served straight from the executable without copying.
 - A resting island pill draws its still parts once into a cached image and repaints only its four little bars, and every frame works and presents only the part of the surface the window shows.
-- Lyrics are looked up once per song from three sources at once, and the soft focus of each line is baked once instead of blurred every frame.
+- Lyrics are looked up once per song from three sources at once over reused connections, kept on disk for the last 300 songs so a replay needs no network, and the soft focus of each line is baked once instead of blurred every frame.
 - The volume mixer reads apps only while it's open.
 
 <sub>Private working set from Windows performance counters, after the app settles. Closed was sampled over 20 seconds, open over 10 seconds with the panel sitting on Home. The very first open of a session is higher (about 44 MB) while fonts, cover art and the forecast load; every later open settles around 23 MB.</sub>
