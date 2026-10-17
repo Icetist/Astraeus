@@ -34,16 +34,17 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 
 - **Media player** with album art, a wavy seek bar and soft light that swells up from below with the music, bass to treble. Works with Spotify, browsers, Media Player and anything else that talks to Windows media controls. Loop and restart work even for players that don't offer them, like YouTube in Firefox-based browsers.
 - **Fullscreen player.** Click the album cover to fill the screen with the cover, the song and a glow that moves with the music. Click it again or press Esc to leave, and you're back on the Media page.
-- **Synced lyrics.** For songs from music apps and sites (Spotify, Apple Music, YouTube Music, Tidal, Deezer, SoundCloud and more, in their apps or in the browser), the fullscreen player shows time-synced lyrics beside the cover, even for songs Spotify has no lyrics for. The sung line lights up as it's sung, the rest drift soft and out of focus, and you can click any line to jump there. Can be turned off in Settings.
+- **Synced lyrics.** For songs from music apps and sites (Spotify, Apple Music, YouTube Music, Tidal, Deezer, SoundCloud and more, in their apps or in the browser), the fullscreen player shows time-synced lyrics beside the cover, even for songs Spotify has no lyrics for. Lyrics light up word by word on the beat, from three lyrics sources, the rest drift soft and out of focus, and you can click any line to jump there. Can be turned off in Settings.
 - **Shared audio.** Play the same sound on several outputs at once, Bluetooth and wired, each with its own delay and volume to keep them in sync.
-- **Quick toggles** for Wi-Fi, Bluetooth, microphone and output device (or power mode on laptops), plus volume, mic and brightness sliders.
+- **Quick toggles** for Wi-Fi, Bluetooth, microphone and output device (or power mode and battery on laptops), plus volume, mic and brightness sliders.
+- **Volume mixer.** Click the speaker on the volume slider for a small mixing console: a fader and mute for every app making sound, next to the master.
 - **Bluetooth control center.** Right-click the Bluetooth tile and your devices orbit your PC: connected ones close in with their battery levels, paired ones further out, new finds gliding in while it scans. Click a device to connect, disconnect or pair it, or hold to forget it.
-- **Wi-Fi network picker.** Right-click the Wi-Fi tile, or press **Networks** on the Network page, to see nearby networks and connect to saved or open ones.
+- **Wi-Fi.** Right-click the Wi-Fi tile, or press **Networks** on the Network page: nearby networks ride the arcs of a big Wi-Fi symbol, closer the stronger they are. Join one with its password right in the panel, or hold to forget a saved one.
 - **Live system stats:** CPU, GPU, memory, top processes, network throughput, local and public IP, all with smooth sparklines.
 - **Tools:** lock, sleep, sign out, restart and shut down (destructive actions are press-and-hold), a timer with notifications, a screenshot shortcut and keep-awake.
-- **Weather and a calendar.** Weather for your location, in Celsius or Fahrenheit. Click the weather card for a month at a glance, with holidays from around the world lit up and a greeting when you hover them.
+- **Weather and a calendar.** Weather for your location, in Celsius or Fahrenheit. Click the weather card for a month at a glance, with holidays from around the world lit up and a greeting when you hover them, and click the weather there for the next hours and days.
 - **Colors that follow you.** The palette is pulled from your wallpaper, or from the album art of whatever is playing, or from any accent you pick. Four looks: dark (the default), light, glass (a live frosted blur of whatever is behind the panel), and custom, where a color wheel lets you pick any accent and any background, with text that turns white or black to suit.
-- **Settings you touch.** Pick the edge it lives on, which monitor (or all of them, with the open panel following your mouse from screen to screen), your accent color and look from small pictures of the real thing.
+- **Settings you touch.** Pick the edge it lives on, which monitor (or all of them, with the open panel following your mouse from screen to screen), your accent color and look from small pictures of the real thing. Reduce motion calms every animation.
 - **The island.** Over a maximized window, or tiled windows that fill the screen, a small pill shows what's playing instead of dropping the whole panel over your work. It can stay a moment, minutes, or always while music plays. Windows notifications can arrive as pills too.
 - **Gets out of the way.** Hides itself when a game or video goes fullscreen.
 - **Stays up to date.** New releases install themselves silently in the background, and only after their SHA-256 matches the one published with the release. **Check for updates** in the tray menu looks right away.
@@ -73,33 +74,37 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 ## ⚡ Performance
 
 Astraeus is built to cost nothing while you are not looking at it. Measured on a modest laptop
-(Intel Core i5-4210U, integrated graphics, 8 GB RAM, Windows 11):
+(Intel Core i5-4210U, integrated graphics, 8 GB RAM, Windows 11, 1366x768):
 
-| | Closed (idle) | Open | After closing |
+| | Closed | Open | After closing |
 | --- | --- | --- | --- |
-| **Memory (working set)** | 16.4 MB | ~38 MB | 16.7 MB |
-| **CPU** | 0.04% | ~3.7% | ~0% |
-| **GPU** | 0% | ~12% | 0% |
+| **Memory (as Task Manager shows it)** | 9 MB | ~23 MB | ~2 MB |
+| **CPU (share of one core)** | 0.08% | 1.7% | ~0% |
 
 | | |
 | --- | --- |
-| **Executable size** | 1.5 MB, single file, fonts embedded |
-| **Startup to ready** | 430 ms |
+| **Executable size** | 1.9 MB, single file, fonts embedded |
 | **Install size** | 1 file, no runtime, no installer |
+
+That's light enough for 2 GB machines and entry-level Celeron and Pentium laptops: closed, it uses about a tenth of a percent of 2 GB.
 
 How it stays this light:
 
 - Frames are only drawn while something is actually moving. A closed panel renders nothing at all.
-- Direct3D, Direct2D and the swap chain are released a few seconds after the panel closes and rebuilt on demand when it opens again.
+- Direct3D, Direct2D and the swap chain are released a few seconds after the panel closes and rebuilt on demand when it opens again. On release the driver is told to drop its buffers and freed memory goes straight back to Windows.
+- Direct2D's own cache is capped and cleared after the panel closes, so a long session never grows it.
+- A pill on its own keeps only a pill-sized strip of graphics memory instead of the whole panel's.
+- On a PC that can't keep up, animation settles on a steady rate it can hold instead of stuttering, and tries full speed again later.
 - While closed, the process runs in Windows 11 efficiency mode (EcoQoS) with low memory priority, so Windows can park it on efficiency cores and trim it first.
 - Stats, Bluetooth and network workers only run while the panel is open. Bluetooth does nothing at all until you open its menu, and while closed, stats are sampled only every 5 seconds.
 - The glass blur, shared audio, the fullscreen player, the audio analyser behind the visualizer and the notification watcher are built only when you use them and torn down afterwards.
 - The once-a-second housekeeping timer is coalescable, so Windows can batch its wakeups with others.
 - Icon fonts are subset to the glyphs that are actually used (3 MB down to 33 KB) and served straight from the executable without copying.
 - A resting island pill draws its still parts once into a cached image and repaints only its four little bars, and every frame works and presents only the part of the surface the window shows.
-- Lyrics are looked up once per song from two sources at once, and the soft focus of each line is baked once instead of blurred every frame.
+- Lyrics are looked up once per song from three sources at once, and the soft focus of each line is baked once instead of blurred every frame.
+- The volume mixer reads apps only while it's open.
 
-<sub>Averages over the sampling window, measured with Windows performance counters; CPU is a share of the whole processor. Idle was sampled over 60 seconds. The open column was captured with music playing and the audio visualizer animating, the heaviest case. With nothing moving, the open panel stops drawing entirely.</sub>
+<sub>Private working set from Windows performance counters, after the app settles. Closed was sampled over 20 seconds, open over 10 seconds with the panel sitting on Home. The very first open of a session is higher (about 44 MB) while fonts, cover art and the forecast load; every later open settles around 23 MB.</sub>
 
 ## 📦 Installation
 
@@ -122,6 +127,7 @@ Updates are automatic. Astraeus checks GitHub shortly after launch and every few
 - **Fullscreen player:** click the album cover on the Media page. Click it again, press **Esc** or right-click to leave. With lyrics showing, scroll to look around, click a line to jump to it, and press **[** or **]** to nudge the lyrics earlier or later.
 - **Shared audio:** open the Bluetooth menu and switch to the **Shared audio** tab.
 - **Bluetooth devices:** right-click the Bluetooth tile on the Home page.
+- **Volume mixer:** click the speaker icon on the volume slider, or right-click the slider.
 - **Wi-Fi networks:** right-click the Wi-Fi tile on the Home page, or press **Networks** on the Network page.
 - **Settings:** the **Settings** tile on the Tools page, for the look (dark, light, glass, custom), accent color, edge, screens, notification pills, the island and fullscreen lyrics.
 - **Tray menu:** right-click the tray icon for the dashboard, config, start with Windows, check for updates, restart and exit.
@@ -200,7 +206,7 @@ Yes. Set `AutoUpdate = false` in `astraeus.ini` and restart.
 
 - [Outfit](https://github.com/Outfitio/Outfit-Fonts) by the Outfit Project Authors, licensed under the [SIL Open Font License 1.1](./LICENSES/Outfit-OFL.txt).
 - [Material Symbols](https://github.com/google/material-design-icons) by Google, licensed under the [Apache License 2.0](./LICENSES/MaterialSymbols-Apache-2.0.txt).
-- Synced lyrics from [LRCLIB](https://lrclib.net) and NetEase Cloud Music.
+- Synced lyrics from [LRCLIB](https://lrclib.net), NetEase Cloud Music and Kugou.
 
 
 ---

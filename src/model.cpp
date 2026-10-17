@@ -31,6 +31,9 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     accentHex = sys::ReadNum(L"AccentHex", iniHex) & 0xFFFFFF;
     notifyPills = (std::clamp)(sys::ReadNum(L"NotifyPills", 0), 0, 1);
     fullLyrics = (std::clamp)(sys::ReadNum(L"FullLyrics", 1), 0, 1);
+    BOOL anim = TRUE;
+    SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &anim, 0); // windows' own "animation effects": off means start calm
+    reduceMotion = (std::clamp)(sys::ReadNum(L"ReduceMotion", anim ? 0 : 1), 0, 1);
 }
 
 Model::~Model() {
@@ -54,6 +57,7 @@ void Model::Start(HWND hwnd) {
 
 void Model::SetLive(bool active, bool processes) {
     shown = active; // ui thread: Tick samples every second only while shown
+    if (!active) CloseMixer(); // the audio sessions and icons go with the panel
     {
         std::lock_guard<std::mutex> guard(lock);
         bool wakeNow = active && (!pollOn || (processes && !wantProcs)); // wake only if newly on or procs newly wanted
@@ -97,6 +101,13 @@ void Model::Tick() {
         timerOn = false;
         timerDone = true; // ui consumes via TimerDone()
     }
+    if (portable) { // a laptop's own battery: one cheap call, nothing held
+        SYSTEM_POWER_STATUS ps{};
+        bool have = GetSystemPowerStatus(&ps) && !(ps.BatteryFlag & 128) && ps.BatteryLifePercent <= 100;
+        batPct = have ? ps.BatteryLifePercent : -1;
+        charging = have && ps.ACLineStatus == 1;
+    }
+    if (mixerOpen) mixer.Refresh(); // apps come and go while it's shown
     constexpr int kClosedEvery = 5; // closed: sample every 5s, nobody is looking at the graphs
     if (++unsampled < (shown ? 1 : kClosedEvery)) return;
     Sample(unsampled);
@@ -169,6 +180,7 @@ void Model::OpenBt() {
     CloseWifi(); // one sheet at a time
     CloseSettings();
     CloseCal();
+    CloseMixer();
     btOpen = true;
     bt.Open(notify, WM_APP_BT);
     OnBt();
@@ -199,12 +211,39 @@ void Model::OpenWifi() {
     CloseBt(); // one sheet at a time
     CloseSettings();
     CloseCal();
+    CloseMixer();
     wifiOpen = true;
     wifi.Open(notify, WM_APP_WIFI);
     OnWifi();
 }
 
+void Model::AskPass(const sys::WifiNet& n) {
+    CancelPass();
+    passFor = n.raw;
+    passEdit.reserve(64); // never regrows, so no freed buffer holds part of a password
+    passFocus = true;
+}
+
+void Model::SubmitPass() {
+    for (const auto& n : wifiNets)
+        if (n.raw == passFor && passEdit.size() >= 8) {
+            if (!wifi.Join(n, passEdit)) sys::OpenUri(L"ms-availablenetworks:"); // wipes what was typed; couldn't start: windows' own flyout takes it from here
+            passFocus = passWrong = passShow = false;
+            passFor.clear();
+            OnWifi();
+            return;
+        }
+}
+
+void Model::CancelPass() {
+    if (!passEdit.empty()) SecureZeroMemory(passEdit.data(), passEdit.size() * sizeof(wchar_t)); // passwords don't linger
+    passEdit.clear();
+    passFor.clear();
+    passFocus = passShow = passWrong = false;
+}
+
 void Model::CloseWifi() {
+    CancelPass();
     if (!wifiOpen) return;
     wifiOpen = wifiScan = false;
     wifi.Close(); // list stays until the fade-out ends, see DropWifiList
@@ -271,6 +310,7 @@ void Model::OpenSettings() {
     CloseBt(); // one sheet at a time
     CloseWifi();
     CloseCal();
+    CloseMixer();
     settingsOpen = true;
     screenList = sys::ListScreens(); // monitors may have changed since last time
 }
@@ -286,7 +326,24 @@ void Model::OpenCal() {
     CloseBt(); // one sheet at a time
     CloseWifi();
     CloseSettings();
+    CloseMixer();
     calOpen = calFresh = true;
+    calForecast = false;
+}
+
+void Model::OpenMixer() {
+    if (mixerOpen) return;
+    CloseBt(); // one sheet at a time
+    CloseWifi();
+    CloseSettings();
+    CloseCal();
+    mixerOpen = true;
+    mixer.Open();
+}
+
+void Model::CloseMixer() {
+    mixerOpen = false;
+    mixer.Close(); // the sessions and icons go with it
 }
 
 void Model::CloseCal() { calOpen = false; }

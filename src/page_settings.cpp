@@ -351,6 +351,33 @@ void Lyrics(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a tiny fullscreen 
     if (h.clicked) m.SetPref(m.fullLyrics, L"FullLyrics", m.fullLyrics ? 0 : 1);
 }
 
+void Motion(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a tiny spring: bouncy when full, a smooth arrival when calm
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F in = Box(c, t, r, L"MOTION");
+    Ui::Hit h = live ? ui.Button(Ui::Id("set.motion"), in) : Ui::Hit{};
+    float calm = ui.Smooth(Ui::Id("set.motion", 1), m.reduceMotion ? 1.0f : 0, 12);
+    float mh = (std::min)(Height(in) - 6, 64.0f), mw = mh / 0.6f;
+    D2D1_RECT_F scr = Rect(in.left + 4, in.top + 1, mw, mh);
+    c.Fill(scr, 7, t.track.Alpha(0.7f));
+    c.Stroke(scr, 7, t.hairTop, 1);
+    D2D1_POINT_2F last{};
+    for (int i = 0; i <= 24; ++i) { // where the panel's edge goes over time
+        float x = i / 24.0f, ease = 1 - std::exp(-5 * x), bounce = 0.38f * std::sin(11 * x) * std::exp(-3.5f * x) * (1 - calm);
+        D2D1_POINT_2F pt = {scr.left + 6 + x * (mw - 12), scr.bottom - 8 - (ease + bounce) * (mh - 22)};
+        if (i) c.Line(last, pt, t.accentHi, 2);
+        last = pt;
+    }
+    if (h.hover) c.Stroke(Inset(in, -4, -4), 12, t.accent.Alpha(0.35f), 1.5f);
+    float x0 = scr.right + 16;
+    c.Text(m.reduceMotion ? L"Reduced" : L"Full", Rect(x0, in.top + 6, in.right - x0, 20), Weight::Medium, 14, m.reduceMotion ? t.accentHi : t.textDim);
+    c.Text(m.reduceMotion ? L"No bounce or drifting, pages fade instead of sliding" : L"Springy drops, sliding pages, drifting orbits",
+           Rect(x0, in.top + 28, in.right - x0, 16), Weight::Light, 10.5f, t.textLow);
+    if (h.clicked) m.SetPref(m.reduceMotion, L"ReduceMotion", m.reduceMotion ? 0 : 1);
+}
+
 void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // four swatches drawn in the actual materials
     Ui& ui = p.ui;
     Canvas& c = ui.C();
@@ -640,7 +667,7 @@ void DrawSettings(PageCtx& p, float k) {
 
     int rows = frame.tall ? 3 : 2;
     float ch = (std::max)(kMinRow, (Height(grid) - rows * kGap - kLyricsRow) / rows); // short page: cards keep their size and the page scrolls
-    float content = rows * (ch + kGap) + kLyricsRow;
+    float content = rows * (ch + kGap) + kLyricsRow + (frame.tall ? kLyricsRow + kGap : 0); // the sidebar stacks lyrics and motion
     float scroll = Scroll(ui, "set.scroll", settingsScroll, grid, content);
     D2D1_RECT_F view = grid;
     live = live && Inside(view, ui.In().mouse); // cards scrolled out of view can't be hit through the header
@@ -653,7 +680,9 @@ void DrawSettings(PageCtx& p, float k) {
         Screens(p, Rect(grid.left + 2 * (cw + kGap), grid.top, cw, ch), live);
         Notices(p, Rect(grid.left, grid.top + ch + kGap, cw, ch), live);
         Island(p, Rect(grid.left + cw + kGap, grid.top + ch + kGap, 2 * cw + kGap, ch), live);
-        Lyrics(p, Rect(grid.left, grid.top + 2 * (ch + kGap), Width(grid), kLyricsRow), live);
+        float half = (Width(grid) - kGap) / 2;
+        Lyrics(p, Rect(grid.left, grid.top + 2 * (ch + kGap), half, kLyricsRow), live);
+        Motion(p, Rect(grid.left + half + kGap, grid.top + 2 * (ch + kGap), half, kLyricsRow), live);
     } else { // sidebar: two by two, the island across the bottom
         float cw = (Width(grid) - kGap) / 2;
         Material(p, Rect(grid.left, grid.top, cw, ch), live);
@@ -662,6 +691,7 @@ void DrawSettings(PageCtx& p, float k) {
         Notices(p, Rect(grid.left + cw + kGap, grid.top + ch + kGap, cw, ch), live);
         Island(p, Rect(grid.left, grid.top + 2 * (ch + kGap), Width(grid), ch), live);
         Lyrics(p, Rect(grid.left, grid.top + 3 * (ch + kGap), Width(grid), kLyricsRow), live);
+        Motion(p, Rect(grid.left, grid.top + 3 * (ch + kGap) + kLyricsRow + kGap, Width(grid), kLyricsRow), live);
     }
     c.PopClip();
     Fades(c, t, view, scroll, content);

@@ -97,6 +97,51 @@ bool ParseGeo(std::string_view json, double& lat, double& lon, std::wstring& cit
     return true;
 }
 
+size_t Nth(std::string_view s, size_t i, int k) {  // where the k-th value of the array at i starts, npos past its end
+    if (i == std::string_view::npos || i >= s.size() || s[i] != '[') return std::string_view::npos;
+    ++i;
+    for (int n = 0;; ++n) {
+        SkipWs(s, i);
+        if (i >= s.size() || s[i] == ']') return std::string_view::npos;
+        if (n == k) return i;
+        bool quoted = false;
+        for (; i < s.size(); ++i) {
+            if (s[i] == '"') quoted = !quoted;
+            else if (!quoted && (s[i] == ',' || s[i] == ']')) break;
+        }
+        if (i >= s.size() || s[i] == ']') return std::string_view::npos;
+        ++i;
+    }
+}
+
+void ParseAhead(std::string_view json, Wx& w) {  // hours and days to come; optional, the card works without them
+    const size_t hourly = FindKey(json, "hourly"), daily = FindKey(json, "daily");
+    w.nHours = w.nDays = 0;
+    if (hourly != std::string_view::npos) {
+        size_t times = FindKey(json, "time", hourly), temps = FindKey(json, "temperature_2m", hourly), codes = FindKey(json, "weather_code", hourly),
+               days = FindKey(json, "is_day", hourly);
+        for (int k = 1; k <= 8 && w.nHours < 8; ++k) {  // [0] is this hour
+            std::string at;
+            double t = 0, c = 0, d = 1;
+            if (!StrAt(json, Nth(json, times, k), at) || at.size() < 13 || !NumAt(json, Nth(json, temps, k), t) || !NumAt(json, Nth(json, codes, k), c)) break;
+            NumAt(json, Nth(json, days, k), d);
+            w.hours[w.nHours++] = {std::atoi(at.c_str() + 11), t, static_cast<int>(c), d != 0};
+        }
+    }
+    if (daily != std::string_view::npos) {
+        size_t times = FindKey(json, "time", daily), his = FindKey(json, "temperature_2m_max", daily), los = FindKey(json, "temperature_2m_min", daily),
+               codes = FindKey(json, "weather_code", daily);
+        for (int k = 1; k <= 5 && w.nDays < 5; ++k) {  // [0] is today
+            std::string at;
+            double hi = 0, lo = 0, c = 0;
+            if (!StrAt(json, Nth(json, times, k), at) || at.size() < 10 || !NumAt(json, Nth(json, his, k), hi) || !NumAt(json, Nth(json, los, k), lo) ||
+                !NumAt(json, Nth(json, codes, k), c))
+                break;
+            w.days[w.nDays++] = {std::atoi(at.c_str()), std::atoi(at.c_str() + 5), std::atoi(at.c_str() + 8), hi, lo, static_cast<int>(c)};
+        }
+    }
+}
+
 bool ParseWx(std::string_view json, Wx& w) {
     const size_t cur = FindKey(json, "current");  // search from block start, units block repeats keys
     const size_t daily = FindKey(json, "daily");
@@ -115,6 +160,7 @@ bool ParseWx(std::string_view json, Wx& w) {
     w.highC = hi;
     w.lowC = lo;
     w.valid = true;
+    ParseAhead(json, w);
     return true;
 }
 
@@ -169,8 +215,8 @@ struct WxSvc::Impl {
             AddCoord(url, lat);
             url += L"&longitude=";
             AddCoord(url, lon);
-            url += L"&current=temperature_2m,weather_code,is_day"
-                   L"&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1";  // timezone=auto so "today" is local
+            url += L"&current=temperature_2m,weather_code,is_day&hourly=temperature_2m,weather_code,is_day"
+                   L"&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=auto&forecast_days=6&forecast_hours=9";  // timezone=auto so "today" is local
             Wx w;
             if (!detail::HttpGet(url.c_str(), body, stop, request) || !ParseWx(body, w)) {  // HttpGet clears body first
                 OutputDebugStringW(L"[sys] weather: forecast failed\n");

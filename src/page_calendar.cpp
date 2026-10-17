@@ -123,7 +123,6 @@ void Hero(PageCtx& p, const Frame& f, const SYSTEMTIME& now) { // today, huge, i
     bool back = turn > 0.5f;
     float sx = (std::max)(0.02f, std::fabs(std::cos(turn * kPi))); // squeezes to an edge, then opens on the other face
     float in = p.ui.SmoothFrom(Ui::Id(back ? "cal.ringy" : "cal.ring"), back ? year : month, 0.0f, 4); // each face's ring sweeps up when it shows
-    c.Glow(o, ring * 2.0f, ring * 1.8f, t.accent.Alpha(0.24f));
     D2D1_MATRIX_3X2_F was;
     c.Target()->GetTransform(&was);
     c.Target()->SetTransform(D2D1::Matrix3x2F::Scale(sx, 1, o) * was);
@@ -148,15 +147,67 @@ void Hero(PageCtx& p, const Frame& f, const SYSTEMTIME& now) { // today, huge, i
     }
     const sys::Wx& wx = p.m.wx;
     if (!p.m.cfg.weather || !wx.valid) return;
-    D2D1_RECT_F card = f.pill; // the weather where the sheets keep their main button
-    c.FillH(card, Height(card) / 2, t.accent.Alpha(0.22f), t.accent.Alpha(0.06f));
-    c.Stroke(card, Height(card) / 2, t.accentHi.Alpha(0.35f), 1);
+    D2D1_RECT_F card = f.pill; // the weather where the sheets keep their main button; a click shows the days ahead
+    Ui::Hit wh = wx.nDays > 0 ? p.ui.Button(Ui::Id("cal.wx"), card) : Ui::Hit{};
+    if (wh.clicked) p.m.calForecast = !p.m.calForecast;
+    float sel = p.ui.Smooth(Ui::Id("cal.wx", 1), p.m.calForecast ? 1.0f : wh.hover ? 0.5f : 0, 14);
+    c.Fill(card, Height(card) / 2, t.accent.Alpha(0.16f + 0.16f * sel));
+    c.Stroke(card, Height(card) / 2, t.accentHi.Alpha(0.35f + 0.35f * sel), 1);
     float cy = (card.top + card.bottom) / 2;
     c.Icon(fmt::WxIcon(wx.code, wx.isDay), {card.left + 24, cy}, 22, t.accentHi, true);
     c.Text(fmt::Temp(wx.tempC, p.m.cfg.fahr), Rect(card.left + 44, card.top, 56, Height(card)), Weight::Semi, 15, t.text);
     c.Text(fmt::WxText(wx.code), Rect(card.left + 94, card.top, Width(card) - 106, Height(card)), Weight::Light, 12, t.textDim);
 }
 
+}
+
+std::wstring HourText(int hour) { // "3 PM" or "15", as this pc tells time
+    SYSTEMTIME st{};
+    st.wYear = 2024, st.wMonth = 1, st.wDay = 1, st.wHour = (WORD)hour;
+    wchar_t buf[32];
+    if (!GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOMINUTESORSECONDS, &st, nullptr, buf, 32)) return std::to_wstring(hour);
+    return buf;
+}
+
+void Forecast(PageCtx& p, const D2D1_RECT_F& list) { // the hours and days ahead, where the month was
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    const sys::Wx& wx = m.wx;
+    bool fahr = m.cfg.fahr;
+    c.Text(L"Forecast", Rect(list.left + 2, list.top - 6, 200, 40), Weight::Semi, 26, t.text);
+    c.Text(wx.place, Rect(list.left + 136, list.top + 4, Width(list) - 300, 26), Weight::Thin, 20, t.accentHi);
+    if (w::IconBtn(ui, t, Ui::Id("cal.close"), {list.right - 14, list.top + 15}, 30, glyph::Close, 18)) m.CloseCal();
+    D2D1_RECT_F back = Rect(list.right - 120, list.top + 3, 86, 24); // back to the month
+    Ui::Hit bh = ui.Button(Ui::Id("cal.month.back"), back);
+    c.Fill(back, 12, t.accent.Alpha(0.16f + (bh.hover ? 0.10f : 0.0f)));
+    c.Text(L"Calendar", back, Weight::Medium, 11.5f, t.accentHi, Align::Center);
+    if (bh.clicked) m.calForecast = false;
+
+    float top = list.top + 46;
+    c.TextSp(L"NEXT HOURS", Rect(list.left + 4, top, 200, 14), Weight::Medium, 10, t.textLow, 1.4f);
+    float cw = Width(list) / (std::max)(1, wx.nHours);
+    for (int i = 0; i < wx.nHours; ++i) {
+        const sys::WxHour& h = wx.hours[i];
+        float x = list.left + i * cw;
+        c.Text(HourText(h.hour), Rect(x, top + 20, cw, 16), Weight::Regular, 11, t.textDim, Align::Center);
+        c.Icon(fmt::WxIcon(h.code, h.day), {x + cw / 2, top + 50}, 20, t.accentHi, true);
+        c.Text(fmt::Temp(h.tempC, fahr), Rect(x, top + 66, cw, 18), Weight::Semi, 13, t.text, Align::Center);
+    }
+
+    top += 104;
+    c.Line({list.left + 4, top - 10}, {list.right - 4, top - 10}, t.line, 1, false);
+    c.TextSp(L"NEXT DAYS", Rect(list.left + 4, top, 200, 14), Weight::Medium, 10, t.textLow, 1.4f);
+    float dw = Width(list) / (std::max)(1, wx.nDays);
+    for (int i = 0; i < wx.nDays; ++i) {
+        const sys::WxDay& d = wx.days[i];
+        float x = list.left + i * dw;
+        c.Text(Format(d.y, d.m, d.d, L"ddd"), Rect(x, top + 20, dw, 16), Weight::Medium, 11.5f, t.textDim, Align::Center);
+        c.Icon(fmt::WxIcon(d.code, true), {x + dw / 2, top + 50}, 20, t.accentHi, true);
+        c.Text(fmt::Temp(d.hiC, fahr), Rect(x, top + 68, dw, 18), Weight::Semi, 13, t.text, Align::Center);
+        c.Text(fmt::Temp(d.loC, fahr), Rect(x, top + 86, dw, 16), Weight::Light, 11.5f, t.textDim, Align::Center);
+    }
 }
 
 void DrawCalendar(PageCtx& p, float k) {
@@ -175,6 +226,12 @@ void DrawCalendar(PageCtx& p, float k) {
     }
     Frame frame = Begin(p, k);
     Hero(p, frame, now);
+    if (m.calForecast && m.wx.valid && m.wx.nDays > 0) { // the weather pill swapped the month for the days ahead
+        Forecast(p, frame.list);
+        if (ui.RClick(s)) m.CloseCal();
+        End(p, frame);
+        return;
+    }
 
     D2D1_RECT_F list = frame.list;
     std::wstring month = Format(viewYear, viewMonth, 1, L"MMMM");
@@ -209,7 +266,7 @@ void DrawCalendar(PageCtx& p, float k) {
     if (viewYear == now.wYear && viewMonth == now.wMonth) { // this week as a band
         int lead0 = (Weekday(viewYear, viewMonth, 1) - first + 7) % 7, row = (now.wDay - 1 + lead0) / 7;
         float top = grid.top + 22 + row * rh;
-        c.FillH(Rect(grid.left, top + 2, Width(grid), rh - 4), (rh - 4) / 2, t.accent.Alpha(0.16f), t.accent.Alpha(0.05f));
+        c.Fill(Rect(grid.left, top + 2, Width(grid), rh - 4), (rh - 4) / 2, t.accent.Alpha(0.09f));
     }
     for (int i = 0; i < 7; ++i) { // weekday initials, in the locale's order
         int wd = (first + i) % 7;
@@ -235,8 +292,7 @@ void DrawCalendar(PageCtx& p, float k) {
         bool today = y == now.wYear && mo == now.wMonth && d == now.wDay;
         bool picked = pickD && y == pickY && mo == pickM && d == pickD;
         if (today) {
-            c.Glow(o, rad * 2.4f, rad * 2.4f, t.accent.Alpha(0.40f * in));
-            c.FillV(Rect(o.x - rad * 1.08f, o.y - rad * 1.08f, rad * 2.16f, rad * 2.16f), rad * 1.08f, t.accentHi.Alpha(in), t.accent.Alpha(in));
+            c.Dot(o, rad * 1.08f, t.accent.Alpha(in)); // flat accent, no glow
         } else if (hover > 0.01f) {
             c.Dot(o, rad, t.text.Alpha(0.08f * hover * in));
         }
@@ -245,15 +301,14 @@ void DrawCalendar(PageCtx& p, float k) {
         bool past = DayIndex(y, mo, d) < DayIndex(now.wYear, now.wMonth, now.wDay);
         const Feast* feast = Holiday(y, mo, d);
         Color ink = today ? t.onAccent : outside ? t.textLow.Alpha(0.45f) : past ? t.textLow : (wd == 0 || wd == 6) ? t.textDim : t.text; // what's gone fades back
-        if (feast) { // a holiday: an accent-tinted disc with a fine rim, its number in the accent and a sparkle at its shoulder
+        if (feast) { // a holiday: an accent-tinted disc with a fine rim, its number in the accent and no ornament
             float lit = (outside ? 0.35f : past ? 0.55f : 1.0f) * in;
             if (!today) {
-                c.FillV(Rect(o.x - rad, o.y - rad, 2 * rad, 2 * rad), rad, t.accent.Alpha((0.30f + 0.14f * hover) * lit), t.accent.Alpha((0.10f + 0.10f * hover) * lit));
+                c.Dot(o, rad, t.accent.Alpha((0.20f + 0.10f * hover) * lit)); // a flat tint
                 if (!picked) c.Ring(o, rad, t.accentHi.Alpha((0.40f + 0.30f * hover) * lit), 1);
                 ink = t.accentHi.Alpha(outside ? 0.5f : past ? 0.7f : 1.0f);
             }
-            float spark = 9.5f + 2.0f * hover;
-            c.Icon(glyph::Sparkle, {o.x + rad * 0.80f, o.y - rad * 0.80f}, spark, (today ? t.onAccent : t.accentHi).Alpha(lit), true);
+            if (today) c.Ring(o, rad * 1.34f, t.accentHi.Alpha(0.7f * lit), 1.2f); // a holiday that is today: a fine ring around its circle
             if (h.hover && !outside) greet = feast, greetAt = {o.x, o.y - rad};
         }
         c.Text(std::to_wstring(d), Rect(o.x - rad, o.y - rad, 2 * rad, 2 * rad), today || feast ? Weight::Semi : past ? Weight::Light : Weight::Medium, today ? 15.0f : 13.5f, ink.Alpha(in), Align::Center);
@@ -269,17 +324,19 @@ void DrawCalendar(PageCtx& p, float k) {
     float ga = ui.Smooth(Ui::Id("cal.greet"), greet ? 1.0f : 0, 18);
     if (shown && ga > 0.01f) {
         std::wstring hi = shown->greet;
-        float gw = 48, gh = 28, lift = (1 - ga) * 6;
+        float gw = 42, gh = 26, lift = (1 - ga) * 6;
         ComPtr<IDWriteTextLayout> gl;
         DWRITE_TEXT_METRICS gm{};
-        if (SUCCEEDED(gfx::DWrite()->CreateTextLayout(hi.c_str(), (UINT32)hi.size(), gfx::TextFmt(Weight::Semi, 12.5f, Align::Left), 1000, 30, &gl)) && SUCCEEDED(gl->GetMetrics(&gm)))
+        if (SUCCEEDED(gfx::DWrite()->CreateTextLayout(hi.c_str(), (UINT32)hi.size(), gfx::TextFmt(Weight::Medium, 12, Align::Left), 1000, 30, &gl)) && SUCCEEDED(gl->GetMetrics(&gm)))
             gw += gm.widthIncludingTrailingWhitespace;
         float gx = std::clamp(shownAt.x - gw / 2, grid.left, grid.right - gw);
         D2D1_RECT_F r = Rect(gx, shownAt.y - gh - 6 + lift, gw, gh);
-        c.Glow({(r.left + r.right) / 2, (r.top + r.bottom) / 2}, gw * 0.7f, gh * 1.2f, t.accent.Alpha(0.30f * ga));
-        c.FillH(r, gh / 2, t.accent.Alpha(ga), t.accentHi.Alpha(ga)); // a bold accent pill, like the rail's
-        c.Icon(glyph::Sparkle, {r.left + 17, (r.top + r.bottom) / 2}, 13, t.onAccent.Alpha(ga), true);
-        c.Text(hi, Rect(r.left + 28, r.top, gw - 40, gh), Weight::Semi, 12.5f, t.onAccent.Alpha(ga), Align::Center);
+        c.Fill(Inset(r, -1, -2), gh / 2 + 2, Color{0, 0, 0, 0.22f * ga}); // a quiet tag, like the rail's: soft shadow, card body, hairline
+        c.Fill(r, gh / 2, t.veil.Alpha(0.94f * ga)); // solid: under glass the days behind would read through
+        c.Fill(r, gh / 2, t.cardHi.Alpha(ga));
+        c.StrokeV(r, gh / 2, t.hairTop.Alpha(ga), t.hairBot.Alpha(ga), 1);
+        c.Icon(glyph::Sparkle, {r.left + 16, (r.top + r.bottom) / 2}, 12, t.accentHi.Alpha(ga), true);
+        c.Text(hi, Rect(r.left + 26, r.top, gw - 36, gh), Weight::Medium, 12, t.text.Alpha(ga), Align::Center);
     }
 
     int sy = pickD ? pickY : now.wYear, sm = pickD ? pickM : now.wMonth, sd = pickD ? pickD : now.wDay; // the line under the month

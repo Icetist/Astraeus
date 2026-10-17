@@ -15,6 +15,7 @@ struct LyricLine {
 struct Lyrics {
     std::wstring key; // the song these belong to
     bool done = false; // looked up; lines empty = no synced lyrics for it
+    bool interim = false; // shown early: a word-timed version may still replace it
     std::vector<LyricLine> lines;
 };
 

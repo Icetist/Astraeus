@@ -1,18 +1,30 @@
-## What's new in 1.2.5
+## What's new in 1.2.6
 
-### A calendar
-- **Click the weather card on Home** to open a month at a glance: today big on the left with a ring that fills as the month goes by, the weather beside it, and the month on the right.
-- **Hover the date** and it turns over to show how much of the year has gone.
-- **Holidays light up.** New Year, Valentine's, Easter, Eid, Diwali, Christmas and more get an accent glow and a sparkle. Hover one for a greeting, like "Merry Christmas!" on the 25th of December, or click it to see its name.
-- Click any day to see how far away it is. Days from the next or last month take you there, and **Today** brings you back.
+### Lighter than ever
+- **Down to about 9 MB when closed, about 2 MB after you've used it.** Memory now goes back to Windows every time the panel closes instead of piling up through the day, and the graphics cache is capped.
+- **A pill on its own keeps only a small strip of graphics memory** instead of the whole panel's.
+- **Smooth on slow machines.** If a PC can't keep up, Astraeus settles on a steady frame rate it can hold instead of stuttering, then tries full speed again a little later.
+- **Reduce motion** in Settings: no bounce, no drifting, pages fade instead of sliding. It starts on by itself if Windows' animation effects are off.
 
-### Small touches
-- **Labels on the rail.** Hover an icon on the side rail to see the name of its page.
-- **A bigger blur slider** for the Glass look in Settings.
-- **A muted mic or volume slider greys out** while keeping its level, so you can tell at a glance. Dragging it unmutes.
+### New
+- **Volume mixer.** Click the speaker on Home's volume slider for a small mixing console: every app making sound gets its own fader and mute, next to the master.
+- **Weather forecast.** In the calendar, click the weather to see the next hours and the next five days.
+- **Laptop battery** in the Power tile, with charging.
+- **Join Wi-Fi with a password right in the panel**, no Windows flyout. A wrong password is never saved. Saved networks can be forgotten with a hold.
+- **Word-by-word lyrics.** Songs light up on the beat of each word, with a third lyrics source for many more songs. Songs that only have line timing still light up word by word.
+- **A new Wi-Fi panel**, the Wi-Fi symbol itself: networks ride its arcs, closer to the source the stronger they are.
+- **Holidays** around the world are marked in the calendar, with a greeting on hover.
+- **The tray icon turns dark on a light taskbar.**
 
-### Multiple monitors
-- With the panel set to show on every screen, the open panel now follows the mouse to whichever monitor it moves to.
+### Better
+- **Every screen mode:** the open panel follows your mouse to another monitor, and a fullscreen game on one screen no longer hides the panel on the others.
+- **Pills always open on a click**, never on hover, so they stay out of your way.
+- **Glass:** the blur and the glass now drop together, and the pill no longer jumps aside when it opens.
+- Calmer labels on the rail and in the calendar, flatter colours, and a softer shadow under album art.
+- A muted slider empties and says "Muted".
 
 ### Fixes
-- The **Check for updates** icon in the tray menu showed up broken. It's back, and the spinner while it checks turns again.
+- Lyrics with brackets like "(Yeah)" no longer confuse the timing.
+- Network names with characters like / or : can be joined.
+- The Shared Audio tip is no longer cut off.
+- Hardened against oversized or malformed lyrics downloads.

@@ -10,6 +10,7 @@
 #include <mutex>
 #include <thread>
 
+#include "inflate.h"
 #include "sys.h"
 
 namespace sys {
@@ -20,6 +21,7 @@ constexpr size_t kMaxBody = 4u << 20; // search results carry every candidate's 
 constexpr size_t kKeep = 12; // songs remembered, so going back and forth costs nothing
 constexpr DWORD kBusyWaitMs = 1500; // the service answers 503 when busy: one more try after a breath
 constexpr ULONGLONG kFailWaitMs = 15000; // a song no source answered for is asked again after this
+constexpr size_t kMaxRow = 2000, kMaxLines = 5000; // a lyric line and a song, generously; anything bigger is hostile
 constexpr double kMaxOff = 6; // seconds a candidate's length may differ before its timing is someone else's cut
 
 std::string Utf8(const std::wstring& w) {
@@ -140,6 +142,7 @@ struct Json {
     const std::string& s;
     size_t i = 0;
     int depth = 0;
+    size_t nodes = 0;
 
     void Ws() {
         while (i < s.size() && (s[i] == ' ' || s[i] == '\n' || s[i] == '\r' || s[i] == '\t')) ++i;
@@ -179,7 +182,7 @@ struct Json {
     }
     bool Parse(Val& v) {
         Ws();
-        if (i >= s.size() || depth > 64) return false;
+        if (i >= s.size() || depth > 64 || ++nodes > 60000) return false; // deep or huge: not a lyrics answer
         char c = s[i];
         if (c == '{' || c == '[') {
             bool obj = c == '{';
@@ -231,9 +234,10 @@ struct Json {
             return true;
         }
         char* end = nullptr;
+        if (c != '-' && (c < '0' || c > '9')) return false; // json numbers only: no nan, inf or hex
         v.kind = Val::kNum;
         v.num = std::strtod(s.c_str() + i, &end);
-        if (!end || end == s.c_str() + i) return false;
+        if (!end || end == s.c_str() + i || !std::isfinite(v.num)) return false;
         i = (size_t)(end - s.c_str());
         return true;
     }
@@ -255,15 +259,14 @@ bool Noise(const std::wstring& text) { // section headers like "[Chorus]", credi
     return false;
 }
 
-bool Stamp(const std::wstring& s, size_t& i, wchar_t close, double& t) { // "mm:ss.xx" up to close, i moves past it
-    size_t e = s.find(close, i);
-    if (e == std::wstring::npos) return false;
-    std::wstring in = s.substr(i, e - i);
-    size_t colon = in.find(L':');
-    if (colon == std::wstring::npos || colon == 0) return false;
-    for (wchar_t c : in)
-        if (!std::iswdigit(c) && c != L':' && c != L'.') return false;
-    t = _wtoi(in.substr(0, colon).c_str()) * 60.0 + _wtof(in.substr(colon + 1).c_str());
+bool Stamp(const std::wstring& s, size_t& i, wchar_t close, double& t) { // "mm:ss.xx" up to close, i moves past it; looks no further than a stamp can be
+    size_t e = i, colon = std::wstring::npos;
+    for (; e < s.size() && e - i <= 12 && s[e] != close; ++e) {
+        if (s[e] == L':' && colon == std::wstring::npos) colon = e;
+        else if (!std::iswdigit(s[e]) && s[e] != L'.') return false;
+    }
+    if (e >= s.size() || s[e] != close || colon == std::wstring::npos || colon == i) return false;
+    t = _wtoi(s.c_str() + i) * 60.0 + _wtof(s.c_str() + colon + 1); // both stop at the first non-digit
     i = e + 1;
     return true;
 }
@@ -294,19 +297,123 @@ LyricLine ParseText(const std::wstring& rest) { // the words after the line stam
     return line;
 }
 
+bool Latin(wchar_t c) { return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || (c >= L'0' && c <= L'9') || c == L'\''; }
+
+// Word-timed lines: netease's yrc "[start,dur](ms,dur,0)word" with absolute word times, kugou's krc "[start,dur]<off,dur,0>word" relative to the line.
+std::vector<LyricLine> ParseTimed(const std::wstring& doc, wchar_t open, bool relative) {
+    const wchar_t close = open == L'(' ? L')' : L'>';
+    std::vector<LyricLine> out;
+    for (size_t pos = 0; pos < doc.size();) {
+        size_t nl = doc.find(L'\n', pos);
+        if (nl == std::wstring::npos) nl = doc.size();
+        std::wstring row = doc.substr(pos, (std::min)(nl - pos, kMaxRow));
+        pos = nl + 1;
+        if (out.size() >= kMaxLines) break;
+        if (row.size() < 4 || row[0] != L'[' || !std::iswdigit(row[1])) continue; // metadata and credit blocks
+        size_t rb = row.find(L']'), comma = row.find(L',');
+        if (rb == std::wstring::npos) continue;
+        LyricLine line;
+        line.start = _wtof(row.c_str() + 1) / 1000;
+        line.end = line.start + (comma < rb ? _wtof(row.c_str() + comma + 1) / 1000 : 0);
+        for (size_t k = rb + 1; k < row.size();) {
+            size_t e = k + 1, commas = 0; // a timing tuple is digits and two commas, nothing else: "(Yeah)" in the words stays words
+            while (e < row.size() && e - k < 32 && (std::iswdigit(row[e]) || row[e] == L',')) commas += row[e++] == L',';
+            if (row[k] != open || e >= row.size() || row[e] != close || commas != 2 || line.words.size() >= 400) {
+                if (!line.words.empty()) line.text += row[k]; // part of the last word
+                ++k;
+                continue;
+            }
+            double at = _wtof(row.c_str() + k + 1) / 1000 + (relative ? line.start : 0);
+            size_t j = e + 1;
+            std::wstring word;
+            while (j < row.size() && row[j] != L'\r') { // up to the next real tuple
+                if (row[j] == open) {
+                    size_t q = j + 1, c2 = 0;
+                    while (q < row.size() && q - j < 32 && (std::iswdigit(row[q]) || row[q] == L',')) c2 += row[q++] == L',';
+                    if (q < row.size() && row[q] == close && c2 == 2) break;
+                }
+                word += row[j++];
+            }
+            if (!word.empty()) {
+                if (open == L'(' && !line.text.empty() && Latin(line.text.back()) && Latin(word.front())) line.text += L' '; // yrc drops some spaces between words
+                size_t lead = 0;
+                while (lead < word.size() && word[lead] == L' ') ++lead, line.text += L' ';
+                line.words.push_back({at, (int)line.text.size()});
+                line.text += word.substr(lead);
+            }
+            k = j;
+        }
+        size_t lead = 0;
+        while (lead < line.text.size() && std::iswspace(line.text[lead])) ++lead;
+        line.text = Trim(line.text);
+        for (auto& w : line.words) w.second = (std::clamp)(w.second - (int)lead, 0, (int)line.text.size());
+        if (line.text.empty() || Noise(line.text)) continue;
+        if (line.end <= line.start) line.end = line.start + 2;
+        out.push_back(std::move(line));
+    }
+    std::stable_sort(out.begin(), out.end(), [](const LyricLine& a, const LyricLine& b) { return a.start < b.start; });
+    return out;
+}
+
+bool Worded(const std::vector<LyricLine>& lines) { // real word timing on most lines
+    size_t n = 0;
+    for (const auto& l : lines) n += l.words.empty() ? 0 : 1;
+    return !lines.empty() && n * 2 >= lines.size();
+}
+
+// Line-timed lyrics still light word by word: each word gets a beat from its syllables, a breath after commas, the last word held a little.
+void Placeholder(LyricLine& l) {
+    if (!l.words.empty() || l.text.empty()) return;
+    struct Beat {
+        int at;
+        double weight;
+    };
+    std::vector<Beat> beats;
+    const std::wstring& s = l.text;
+    for (size_t i = 0; i < s.size();) {
+        while (i < s.size() && std::iswspace(s[i])) ++i;
+        if (i >= s.size()) break;
+        bool wide = s[i] >= 0x2E80; // cjk: a character is a syllable
+        size_t j = i + 1;
+        if (!wide)
+            while (j < s.size() && !std::iswspace(s[j]) && s[j] < 0x2E80) ++j;
+        double syllables = 0;
+        bool vowel = false;
+        for (size_t k = i; k < j; ++k) {
+            bool v = std::wcschr(L"aeiouyAEIOUY", s[k]) != nullptr && s[k] != 0;
+            if (v && !vowel) syllables += 1;
+            vowel = v;
+        }
+        double w = wide ? 1.0 : (std::max)(1.0, syllables);
+        if (std::wcschr(L",;:-", s[j - 1])) w += 0.6; // a breath before the next word
+        beats.push_back({(int)i, w});
+        i = j;
+    }
+    if (beats.size() < 2) return; // one word: the plain sweep is the same thing
+    beats.back().weight *= 1.35;
+    double total = 0;
+    for (const Beat& b : beats) total += b.weight;
+    double span = (std::max)(0.3, l.end - l.start), t = l.start;
+    for (const Beat& b : beats) {
+        l.words.push_back({t, b.at});
+        t += span * b.weight / total;
+    }
+}
+
 std::vector<LyricLine> ParseLrc(const std::wstring& lrc) {
     std::vector<std::pair<double, LyricLine>> raw;
     for (size_t pos = 0; pos < lrc.size();) {
         size_t nl = lrc.find(L'\n', pos);
         if (nl == std::wstring::npos) nl = lrc.size();
-        std::wstring row = lrc.substr(pos, nl - pos);
+        std::wstring row = lrc.substr(pos, (std::min)(nl - pos, kMaxRow)); // no line is that long; a hostile one is cut
         pos = nl + 1;
+        if (raw.size() >= kMaxLines) break;
         std::vector<double> times;
         size_t i = 0;
         double t;
         while (i < row.size() && row[i] == L'[') { // one or more line stamps
             size_t j = i + 1;
-            if (!Stamp(row, j, L']', t)) break;
+            if (!Stamp(row, j, L']', t) || times.size() >= 32) break; // a few stamps share a line at most
             times.push_back(t);
             i = j;
         }
@@ -342,6 +449,7 @@ struct LyricSrc::Impl {
         double seconds = 0;
     };
     Ask next; // waiting to start, key empty = none
+    std::atomic<bool> queued{false}; // a newer song is waiting: a lookup still hoping for word timing gives up
     std::wstring busyKey; // being looked up
     std::thread th;
     std::atomic<bool> stop{false}; // shutting down
@@ -349,7 +457,7 @@ struct LyricSrc::Impl {
         std::atomic<bool> halt{false};
         std::atomic<void*> req{nullptr};
     };
-    Lane lanes[2];
+    Lane lanes[3]; // lrclib, netease, kugou
     std::deque<std::pair<std::wstring, ULONGLONG>> failed; // songs no source could be reached for, not asked again for a while
 
     bool Get(Lane& ln, const std::wstring& url, std::string& body, int tries = 2) {
@@ -409,11 +517,60 @@ struct LyricSrc::Impl {
             double len = song.Number("duration") / 1000;
             if (!titleOk || !artistOk || (seconds > 0 && len > 0 && std::fabs(len - seconds) > kMaxOff)) continue;
             std::string lyric;
-            if (!Get(ln, L"https://music.163.com/api/song/lyric?id=" + std::to_wstring((long long)song.Number("id")) + L"&lv=1", lyric)) continue;
+            if (!Get(ln, L"https://music.163.com/api/song/lyric/v1?id=" + std::to_wstring((long long)song.Number("id")) + L"&cp=false&lv=0&kv=0&tv=0&rv=0&yv=0&ytv=0&yrv=0", lyric)) continue;
             Val doc;
             if (!Json{lyric}.Parse(doc)) continue;
+            if (const Val* yrc = doc["yrc"]) { // word-timed, when they have it
+                auto words = ParseTimed(Wide(yrc->Text("lyric")), L'(', false);
+                if (Synced(words)) return words;
+            }
             const Val* lrc = doc["lrc"];
             auto lines = lrc ? ParseLrc(Wide(lrc->Text("lyric"))) : std::vector<LyricLine>{};
+            if (Synced(lines)) return lines;
+        }
+        return {};
+    }
+
+    std::vector<LyricLine> Kugou(Lane& ln, const std::wstring& title, const std::wstring& artist, double seconds, bool& reached) { // word-timed across much of the western catalogue
+        if (seconds <= 0) return {}; // matched on title and exact length, so the length must be known
+        std::string body;
+        if (!Get(ln, L"https://mobileservice.kugou.com/api/v3/search/song?format=json&page=1&pagesize=8&showtype=1&keyword=" + Esc(artist + L" " + title), body)) return {};
+        reached = true;
+        Val root;
+        if (!Json{body}.Parse(root)) return {};
+        const Val* data = root["data"];
+        const Val* info = data ? (*data)["info"] : nullptr;
+        if (!info || info->kind != Val::kArr) return {};
+        const std::wstring t = Lower(title);
+        for (const Val& song : info->items) {
+            if (ln.halt.load()) return {};
+            std::wstring name = Lower(CleanTitle(Wide(song.Text("songname"))));
+            double len = song.Number("duration");
+            if (name != t || len <= 0 || std::fabs(len - seconds) > 2.5) continue; // kugou names artists its own way ("Ye" for Kanye): the exact title and length carry it
+            std::string got;
+            if (!Get(ln, L"https://lyrics.kugou.com/search?ver=1&man=yes&client=mobi&keyword=&hash=" + Esc(Wide(song.Text("hash"))) + L"&duration=" +
+                             std::to_wstring((long long)std::lround(len * 1000)), got))
+                continue;
+            Val found;
+            if (!Json{got}.Parse(found)) continue;
+            const Val* cands = found["candidates"];
+            if (!cands || cands->kind != Val::kArr || cands->items.empty()) continue;
+            const Val& c = cands->items[0];
+            std::wstring id = Wide(c.Text("id"));
+            if (id.empty()) id = std::to_wstring((long long)c.Number("id"));
+            if (!Get(ln, L"https://lyrics.kugou.com/download?ver=1&client=pc&fmt=krc&charset=utf8&id=" + Esc(id) + L"&accesskey=" + Esc(Wide(c.Text("accesskey"))), got))
+                continue;
+            Val doc;
+            std::string packed, krc;
+            if (!Json{got}.Parse(doc) || !detail::Unbase64(doc.Text("content"), packed) || packed.size() < 8 || packed.compare(0, 4, "krc1") != 0) continue;
+            static const uint8_t kKey[16] = {64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, 206, 210, 110, 105}; // krc's fixed xor mask
+            std::string raw(packed.begin() + 4, packed.end());
+            for (size_t i = 0; i < raw.size(); ++i) raw[i] = (char)(raw[i] ^ kKey[i % 16]);
+            if (!detail::Unzlib(reinterpret_cast<const uint8_t*>(raw.data()), raw.size(), krc, 1u << 20)) continue;
+            auto lines = ParseTimed(Wide(krc), L'<', true);
+            size_t head = 0;
+            while (head < lines.size() && head < 3 && lines[head].start < 10 && lines[head].text.find(L" - ") != std::wstring::npos) ++head;
+            lines.erase(lines.begin(), lines.begin() + head); // "Artist - Title" up top
             if (Synced(lines)) return lines;
         }
         return {};
@@ -437,12 +594,17 @@ struct LyricSrc::Impl {
         return {};
     }
 
+    void Keep(std::shared_ptr<Lyrics> doc) { // caller holds mu
+        kept.push_back(std::move(doc));
+        if (kept.size() > kKeep) kept.pop_front();
+    }
+
     std::vector<LyricLine> Look(const Ask& a, bool& reached) { // both sources at once, the first with lyrics wins; reached: one answered, so empty means none
         const std::wstring title = CleanTitle(a.title), artist = MainArtist(a.artist);
         struct Out {
             std::vector<LyricLine> lines;
             bool reached = false, done = false;
-        } out[2];
+        } out[3];
         std::mutex m;
         std::condition_variable cv2;
         for (Lane& ln : lanes) {
@@ -453,7 +615,9 @@ struct LyricSrc::Impl {
             std::vector<LyricLine> got;
             bool hit = false;
             try {
-                got = k == 0 ? Lrclib(lanes[0], title, artist, a.album, a.seconds, hit) : Netease(lanes[1], title, artist, a.seconds, hit);
+                got = k == 0 ? Lrclib(lanes[0], title, artist, a.album, a.seconds, hit)
+                    : k == 1 ? Netease(lanes[1], title, artist, a.seconds, hit)
+                             : Kugou(lanes[2], title, artist, a.seconds, hit);
             } catch (...) {
                 OutputDebugStringW(L"[sys] lyrics source failed\n");
             }
@@ -463,20 +627,44 @@ struct LyricSrc::Impl {
             out[k].done = true;
             cv2.notify_all();
         };
-        std::thread t0(run, 0), t1(run, 1);
+        std::thread t0(run, 0), t1(run, 1), t2(run, 2);
         {
             std::unique_lock g(m);
             auto found = [&](int k) { return out[k].done && !out[k].lines.empty(); };
-            cv2.wait(g, [&] { return found(0) || found(1) || (out[0].done && out[1].done); });
-            if (found(1) && !out[0].done) cv2.wait_for(g, std::chrono::milliseconds(1200), [&] { return out[0].done; }); // lrclib's timing is usually finer: a moment's grace
+            auto worded = [&] { return (found(1) && Worded(out[1].lines)) || (found(2) && Worded(out[2].lines)); };
+            auto all = [&] { return out[0].done && out[1].done && out[2].done; };
+            cv2.wait(g, [&] { return found(0) || found(1) || found(2) || all(); });
+            if (!worded() && !all()) { // show what came first now; word timing from the slower sources replaces it if it arrives
+                for (int k : {0, 1, 2})
+                    if (found(k)) {
+                        auto early = std::make_shared<Lyrics>();
+                        early->key = a.key;
+                        early->lines = out[k].lines;
+                        for (LyricLine& l : early->lines) Placeholder(l);
+                        early->done = early->interim = true;
+                        std::lock_guard lock(mu);
+                        Keep(std::move(early));
+                        break;
+                    }
+                auto until = std::chrono::steady_clock::now() + std::chrono::seconds(9);
+                while (!worded() && !all() && !stop.load() && !queued.load() && std::chrono::steady_clock::now() < until)
+                    cv2.wait_for(g, std::chrono::milliseconds(250));
+            }
         }
-        for (int k = 0; k < 2; ++k)
-            if (!out[k].done) detail::HttpCancel(lanes[k].halt, lanes[k].req); // the slower one is no longer needed
+        for (int k = 0; k < 3; ++k)
+            if (!out[k].done) detail::HttpCancel(lanes[k].halt, lanes[k].req); // the slower ones are no longer needed
         t0.join();
         t1.join();
-        reached = out[0].reached || out[1].reached;
-        if (!out[0].lines.empty()) return std::move(out[0].lines);
-        return std::move(out[1].lines);
+        t2.join();
+        reached = out[0].reached || out[1].reached || out[2].reached;
+        int pick = -1;
+        for (int k : {1, 2, 0}) // word-timed first: netease's yrc, then kugou, then lrclib's rare enhanced lrc
+            if (pick < 0 && Worded(out[k].lines)) pick = k;
+        for (int k : {0, 1, 2}) // otherwise lrclib's lines are usually the finest
+            if (pick < 0 && !out[k].lines.empty()) pick = k;
+        if (pick < 0) return {};
+        for (LyricLine& l : out[pick].lines) Placeholder(l); // lines without word timing still light word by word
+        return std::move(out[pick].lines);
     }
 
     void Loop() {
@@ -488,6 +676,7 @@ struct LyricSrc::Impl {
                 if (stop.load()) return;
                 a = std::move(next);
                 next = {};
+                queued = false;
                 busyKey = a.key;
             }
             auto doc = std::make_shared<Lyrics>();
@@ -507,8 +696,9 @@ struct LyricSrc::Impl {
                 if (failed.size() > 16) failed.pop_front();
                 continue;
             }
-            kept.push_back(std::move(doc));
-            if (kept.size() > kKeep) kept.pop_front();
+            for (auto it = kept.begin(); it != kept.end();) // the final version replaces an early one
+                it = (*it)->key == doc->key ? kept.erase(it) : it + 1;
+            Keep(std::move(doc));
         }
     }
 };
@@ -539,6 +729,7 @@ void LyricSrc::Want(const std::wstring& title, const std::wstring& artist, const
             for (const auto& f : impl->failed)
                 if (f.first == key && GetTickCount64() - f.second < kFailWaitMs) return;
             impl->next = {key, title, artist, album, seconds}; // a newer song replaces one still waiting
+            impl->queued = true;
         }
         if (!impl->th.joinable()) impl->th = std::thread([p = impl.get()] { p->Loop(); }); // one worker, started the first time lyrics are wanted
         impl->cv.notify_one();

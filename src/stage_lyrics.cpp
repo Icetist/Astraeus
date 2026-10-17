@@ -56,15 +56,18 @@ bool LyricView::Lay(Piece& pc, const std::wstring& text, IDWriteTextFormat* f, f
 void LyricView::Sync(ID2D1DeviceContext* ctx, const std::shared_ptr<const sys::Lyrics>& d, float w, float sz) {
     (void)ctx;
     if (d == doc && std::fabs(w - width) < 0.5f && std::fabs(sz - size) < 0.1f) return;
+    bool same = doc && d && doc->key == d->key; // the word-timed version of the same song: stay where you are
     doc = d;
     width = w;
     size = sz;
     pad = size * kHazeSigma * 3.2f; // room for the blur to spread
     rows.clear();
-    placed = false;
-    manual = 0;
-    gap = 0;
-    focus = 0;
+    if (!same) {
+        placed = false;
+        manual = 0;
+        gap = 0;
+        focus = 0;
+    }
     if (!doc || doc->lines.empty() || width < 40) return;
     IDWriteTextFormat* f = gfx::TextFmt(Weight::Semi, size, Align::Left);
     if (!f) return;

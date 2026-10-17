@@ -30,6 +30,7 @@ struct App {
     std::unique_ptr<Drawer> drawer;
     HWND host = nullptr; // hidden window owning tray + timer
     UINT tbMsg = 0; // TaskbarCreated, explorer restarted
+    HICON trayIcon = nullptr; // ours to free when the taskbar's theme swaps it
     bool appbar = false; // registered for fullscreen notices
     HANDLE mutex = nullptr; // single instance guard
     sys::Updater updater;
@@ -128,15 +129,63 @@ void SyncBoot() { // launch-time housekeeping once startup is known to be on
     } // else a copy the user placed elsewhere, leave it alone
 }
 
+bool LightTaskbar() { // the taskbar's own light/dark setting, not the panel's look or the apps' mode
+    DWORD v = 0, size = sizeof(v);
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"SystemUsesLightTheme", RRF_RT_REG_DWORD,
+                 nullptr, &v, &size);
+    return v != 0;
+}
+
+HICON TrayIcon() { // the white mark, or the same mark in near-black on a light taskbar
+    UINT dpi = GetDpiForWindow(app->host);
+    HICON white = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(101), IMAGE_ICON, GetSystemMetricsForDpi(SM_CXSMICON, dpi),
+                                    GetSystemMetricsForDpi(SM_CYSMICON, dpi), 0);
+    if (!white || !LightTaskbar()) return white;
+    ICONINFO ii{};
+    if (!GetIconInfo(white, &ii)) return white;
+    if (!ii.hbmColor) {
+        if (ii.hbmMask) DeleteObject(ii.hbmMask);
+        return white;
+    }
+    BITMAP bm{};
+    GetObjectW(ii.hbmColor, sizeof(bm), &bm);
+    BITMAPINFO bi{};
+    bi.bmiHeader = {sizeof(BITMAPINFOHEADER), bm.bmWidth, -bm.bmHeight, 1, 32, BI_RGB};
+    HICON dark = nullptr;
+    void* bits = nullptr;
+    HDC dc = GetDC(nullptr);
+    HBITMAP color = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (color && GetDIBits(dc, ii.hbmColor, 0, bm.bmHeight, bits, &bi, DIB_RGB_COLORS)) {
+        auto* px = static_cast<BYTE*>(bits);
+        for (int i = 0; i < bm.bmWidth * bm.bmHeight; ++i) px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = 0x1C; // keep the alpha, darken the ink
+        ICONINFO di = ii;
+        di.hbmColor = color;
+        dark = CreateIconIndirect(&di);
+    }
+    ReleaseDC(nullptr, dc);
+    if (color) DeleteObject(color);
+    DeleteObject(ii.hbmColor);
+    if (ii.hbmMask) DeleteObject(ii.hbmMask);
+    if (!dark) return white;
+    DestroyIcon(white);
+    return dark;
+}
+
+void SetTrayIcon(NOTIFYICONDATAW& nid) {
+    HICON old = app->trayIcon;
+    app->trayIcon = TrayIcon();
+    nid.hIcon = app->trayIcon;
+    nid.uFlags |= NIF_ICON;
+    if (old) DestroyIcon(old); // the shell copied it
+}
+
 void AddTray() {
     NOTIFYICONDATAW nid = {sizeof(nid)};
     nid.hWnd = app->host;
     nid.uID = kTrayId;
-    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    nid.uFlags = NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_APP_TRAY; // clicks come back to HostProc
-    nid.hIcon = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(101), IMAGE_ICON,
-                                  GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForWindow(app->host)),
-                                  GetSystemMetricsForDpi(SM_CYSMICON, GetDpiForWindow(app->host)), 0);
+    SetTrayIcon(nid);
     wcscpy_s(nid.szTip, L"Astraeus");
     Shell_NotifyIconW(NIM_ADD, &nid);
 }
@@ -174,6 +223,14 @@ void Restart(const std::wstring& exe) {
 }
 
 LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (app && msg == WM_SETTINGCHANGE && wp == 0 && lp && !wcsncmp(reinterpret_cast<const wchar_t*>(lp), L"ImmersiveColorSet", 18)) { // taskbar went light or dark
+        NOTIFYICONDATAW nid = {sizeof(nid)};
+        nid.hWnd = app->host;
+        nid.uID = kTrayId;
+        SetTrayIcon(nid);
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
+        return 0;
+    }
     if (app && app->tbMsg != 0 && msg == app->tbMsg) { // explorer restarted, icon lost
         AddTray();
         return 0;
@@ -313,7 +370,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     if (!StartupOn()) tray::Ask(app->host, state.drawer->Shell()); // asks every launch while off
     else SyncBoot();
     if (sys::FinishUpdate()) state.drawer->Peek(L"Astraeus updated", L"Now on version " APP_VER_W, glyph::Sparkle); // first run after a swap
-    SetProcessWorkingSetSizeEx(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1, 0); // trim startup memory
+    gfx::GiveBack(); // trim startup memory
 
     Run();
 

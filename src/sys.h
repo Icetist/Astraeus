@@ -125,12 +125,29 @@ private:
     std::unique_ptr<Impl> impl;
 };
 
+struct WxHour {
+    int hour = 0;  // local hour of day
+    double tempC = 0;
+    int code = 0;
+    bool day = true;
+};
+
+struct WxDay {
+    int y = 0, m = 0, d = 0;
+    double hiC = 0, loC = 0;
+    int code = 0;
+};
+
 struct Wx {
     bool valid = false;
     double tempC = 0, highC = 0, lowC = 0;
     int code = 0;  // wmo weather code
     bool isDay = true;
     std::wstring place;
+    WxHour hours[8];  // the next hours, from the one after now
+    int nHours = 0;
+    WxDay days[5];  // the days after today
+    int nDays = 0;
 };
 
 class WxSvc {

@@ -176,7 +176,7 @@ void MediaTall(PageCtx& p) { // sidebar: big centered art, everything else stack
     c.StrokeV(r, radius, t.hairTop, t.hairBot, 1);
     float side = (std::min)(Width(r) - 64, Height(r) * 0.46f);
     D2D1_RECT_F art = ArtHover(p, Rect((r.left + r.right - side) / 2, r.top + 32, side, side));
-    c.Fill(Inset(art, -6, -6), 24, Color{0, 0, 0, 0.22f});
+    c.Glow({(art.left + art.right) / 2, (art.top + art.bottom) / 2 + Height(art) * 0.06f}, Width(art) * 0.62f, Height(art) * 0.62f, Color{0, 0, 0, 0.30f}); // a soft shadow under the art, no ring
     c.Fill(art, 18, t.cardHi);
     if (p.cover) c.Art(p.cover, p.coverBlur, art, 18, p.artFade);
     else c.Icon(glyph::Music, {(art.left + art.right) / 2, (art.top + art.bottom) / 2}, 64, t.textLow);
@@ -231,7 +231,7 @@ void DrawMedia(PageCtx& p) {
     c.StrokeV(r, radius, t.hairTop, t.hairBot, 1);
 
     D2D1_RECT_F art = ArtHover(p, Rect(r.left + 26, r.top + 26, side, side));
-    c.Fill(Inset(art, -6, -6), 24, Color{0, 0, 0, 0.22f}); // soft shadow ring behind art
+    c.Glow({(art.left + art.right) / 2, (art.top + art.bottom) / 2 + Height(art) * 0.06f}, Width(art) * 0.62f, Height(art) * 0.62f, Color{0, 0, 0, 0.30f}); // a soft shadow under the art, no ring
     c.Fill(art, 18, t.cardHi);
     if (p.cover) c.Art(p.cover, p.coverBlur, art, 18, p.artFade);
     else c.Icon(glyph::Music, {(art.left + art.right) / 2, (art.top + art.bottom) / 2}, 64, t.textLow);

@@ -59,7 +59,8 @@ private:
     }
 
     bool EnsureDev();
-    void FreeDev(); // drop gpu objects when idle
+    void FreeDev();
+    void TrimDev(); // keep the device, drop its caches // drop gpu objects when idle
     void ReleaseLater(); // schedule FreeDev if the panel stays shut
     UINT ambientSync = 2; // present interval for ambient-only motion, ~30 fps at any refresh rate
     double hz = 60; // screen refresh, paces glass frames
@@ -105,6 +106,8 @@ private:
     void DrawRail(const Theme& t);
     void SyncWall();
     void Perf(double drawSec);
+    void Log(const wchar_t* what) const; // with perflog on: one line about where the panel is, for multi screen reports
+    bool FullOn(HMONITOR m) const; // another app fills that screen
     void SetShell(const Theme& t);
     Theme Make(Seed s) const; // palette for a seed in the current appearance
     void SyncLook(); // appearance changed: crossfade palettes, swap presentation for glass
@@ -117,6 +120,9 @@ private:
     void GlassPresent(); // hand this frame to composition, it lands together with the blur outline
     void GlassMask(ID2D1Geometry* shape); // cut the blur to this frame's shape
     void FreeGlass();
+    bool GlassResize(UINT w, UINT h); // the composition surface and visuals to a new pixel size, in place
+    void FitSurfaces(); // a pill alone needs a short strip, not the whole panel's surfaces
+    UINT surfW = 0, surfH = 0; // the surfaces' size now, pixels
     void GlassBlur(float amount); // 0 clear .. 1 fully frosted
     void SampleBehind(); // glass: how bright the screen under the panel is
     float glassShade = 0; // 0 .. 1, deepens the glass tint over bright backgrounds so white text stays readable
@@ -135,6 +141,8 @@ private:
     const float overshoot = 46; // extra room for spring bounce below H
     float winH = 0; // current window height in dips
     bool hidden = false, fullApp = false, tracking = false, armed = false;
+    bool pillRgn = false; // the island's window region is on: the window is panel-wide, only the pill is live
+    RECT pillRect{}; // that region, to skip setting it again unchanged
     bool eco = false; // process in efficiency mode
 
     static constexpr float kPeekH = 66; // peek banner height in dips
@@ -171,6 +179,11 @@ private:
     float railTop = 0, railBot = 0;
 
     double lastFrame = 0;
+    int framesSeen = 0, framesLate = 0; // the governor's window of animation frames
+    UINT fastSync = 1; // vsyncs per animation frame: 1 normally, more on a machine that can't keep up
+    bool lastFast = false;
+    double syncRetry = 0; // when to try full rate again
+    void Govern(bool fast, double gap); // steps animation down to a rate the machine holds, and back up
     bool needsFrame = false;
     double perfT0 = 0, perfDraw = 0;
     int perfN = 0;

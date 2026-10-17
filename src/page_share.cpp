@@ -100,8 +100,8 @@ void DrawShare(PageCtx& p, const D2D1_RECT_F& view) {
         if (y + h > view.top && y < view.bottom) refresh = Row(p, {view.left, y, view.right, y + h - kRowGap}, view, o) || refresh;
         y += h;
     }
-    c.Text(L"Tip: make your slowest device (usually Bluetooth) the main output, then add delay to the others until they line up.",
-           {view.left + 6, y + 4, view.right - 6, y + kNoteH + 8}, Weight::Light, 11.5f, t.textDim);
+    c.Text(L"Tip: make your slowest device (usually Bluetooth) the main output,", {view.left + 6, y + 4, view.right - 6, y + 22}, Weight::Light, 11.5f, t.textDim);
+    c.Text(L"then add delay to the others until they line up.", {view.left + 6, y + 22, view.right - 6, y + 40}, Weight::Light, 11.5f, t.textDim); // two lines: text here never wraps
     c.PopClip();
     Fades(c, t, view, scroll, total);
     if (refresh) m.OnShare(); // after the loop: re-listing replaces the rows it walked

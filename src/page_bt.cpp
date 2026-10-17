@@ -47,9 +47,22 @@ bool Tab(Ui& ui, const Theme& t, const char* idName, const D2D1_RECT_F& r, const
     float hover = ui.Smooth(id + 1, h.hover ? 1.0f : 0, 16);
     Canvas& c = ui.C();
     c.TextSp(label, {r.left + 4, r.top + 8, r.right, r.top + 22}, Weight::Medium, 10, t.textLow.Mix(t.text, 0.5f * hover).Mix(t.accent, lit), 1.4f);
-    float len = (r.right - r.left - 8) * lit; // underline grows in under the active tab
-    if (len > 2) c.Line({r.left + 4, r.top + 27}, {r.left + 4 + len, r.top + 27}, t.accent, 2);
     return h.clicked;
+}
+
+float TabW(const wchar_t* label) { // a tab label's drawn width, letter spacing included
+    size_t n = std::wcslen(label);
+    float w = n * 7.0f;
+    ComPtr<IDWriteTextLayout> lay;
+    DWRITE_TEXT_METRICS tm{};
+    if (SUCCEEDED(gfx::DWrite()->CreateTextLayout(label, (UINT32)n, gfx::TextFmt(Weight::Medium, 10, Align::Left), 400, 20, &lay)) && SUCCEEDED(lay->GetMetrics(&tm)))
+        w = tm.widthIncludingTrailingWhitespace;
+    return w + 1.4f * (n - 1);
+}
+
+void TabLine(Ui& ui, const Theme& t, float top, float left, float width) { // one slim marker that glides to the active tab, as wide as its word
+    float l = ui.Smooth(Ui::Id("bt.tabline", 0), left, 18), w = ui.Smooth(Ui::Id("bt.tabline", 1), width, 18);
+    ui.C().Fill(Rect(l, top, w, 2), 1, t.accent);
 }
 
 void Badge(Ui& ui, const Theme& t, D2D1_POINT_2F o, float r, const sys::BtDev& d, bool busy, float lit) {
@@ -151,7 +164,7 @@ void Orbit(PageCtx& p, const D2D1_RECT_F& v) { // this pc in the middle, its dev
             c.Target()->DrawEllipse(D2D1::Ellipse(o, rx, ry), guide.Get(), 1);
         }
 
-    orbitTime += ui.Dt(); // always turning; slow enough that a bubble is easy to click
+    if (!p.m.reduceMotion) orbitTime += ui.Dt(); // always turning, slow enough that a bubble is easy to click; calm: still
     ui.KeepAlive(); // the drift and the core: the ambient rate is plenty, and only while this sheet is open
 
     struct Place { const sys::BtDev* d; D2D1_POINT_2F at; float r, appear; };
@@ -259,6 +272,8 @@ void DrawBt(PageCtx& p, float k) {
         m.shareTab = true;
         m.OnShare();
     }
+    static const float kDevW = TabW(L"DEVICES"), kShareW = TabW(L"SHARED AUDIO"); // measured once
+    TabLine(ui, t, list.top + 25, m.shareTab ? list.left + 92 : list.left + 4, m.shareTab ? kShareW : kDevW);
     if (w::IconBtn(ui, t, Ui::Id("bt.close"), {list.right - 14, list.top + 14}, 30, glyph::Close, 18)) m.CloseBt();
     if (w::IconBtn(ui, t, Ui::Id("bt.more"), {list.right - 48, list.top + 14}, 30, glyph::OpenNew, 16)) {
         p.wantClose = true; // hand off to windows settings

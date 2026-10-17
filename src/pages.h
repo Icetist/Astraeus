@@ -41,6 +41,8 @@ void DrawWifi(PageCtx& p, float t); // wi-fi network picker overlay, same sheet 
 void DrawShare(PageCtx& p, const D2D1_RECT_F& view); // shared-audio tab inside the bluetooth sheet
 void DrawSettings(PageCtx& p, float t); // astraeus settings sheet
 void DrawCalendar(PageCtx& p, float t); // a month at a glance, from the weather card
+void DrawMixer(PageCtx& p, float t); // per-app volume, from the volume slider
+ID2D1Bitmap* AppIcon(Canvas& c, const sys::MixApp& a); // an app's icon as a bitmap on this device, made once
 
 namespace fmt {
 std::wstring Rate(double bps); // auto-scaled bytes/s units

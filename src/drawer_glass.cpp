@@ -70,6 +70,8 @@ struct Drawer::Glass {
     WUC::CompositionPathGeometry outline{nullptr}; // clips the blur to the panel shape
     WUC::CompositionGraphicsDevice gfx{nullptr};
     WUC::CompositionDrawingSurface surface{nullptr}; // our frame, updated in the same composition batch as the outline
+    WUC::SpriteVisual content{nullptr}; // shows the surface
+    WUC::ContainerVisual root{nullptr};
     bool filled = false; // a new surface must be drawn whole once before it accepts partial updates
     float blurShown = -1;
 };
@@ -104,6 +106,8 @@ bool Drawer::OpenGlass(const DXGI_SWAP_CHAIN_DESC1& desc) {
         auto root = g->comp.CreateContainerVisual();
         root.Size(size);
         g->frost = frost;
+        g->content = content;
+        g->root = root;
         root.Children().InsertAtBottom(frost);
         root.Children().InsertAtTop(content);
         g->target.Root(root);
@@ -111,6 +115,21 @@ bool Drawer::OpenGlass(const DXGI_SWAP_CHAIN_DESC1& desc) {
         return true;
     } catch (...) {
         return false; // no composition: the caller falls back to the plain path
+    }
+}
+
+bool Drawer::GlassResize(UINT w, UINT h) {
+    if (!glass) return false;
+    try {
+        glass->surface.Resize({(int32_t)w, (int32_t)h}); // keeps its place; only how far it reaches changes
+        winrt::Windows::Foundation::Numerics::float2 size{(float)w, (float)h};
+        glass->frost.Size(size);
+        glass->content.Size(size);
+        glass->root.Size(size);
+        glass->filled = false; // a resized surface wants one whole draw first
+        return true;
+    } catch (...) {
+        return false;
     }
 }
 

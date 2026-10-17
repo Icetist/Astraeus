@@ -11,7 +11,7 @@
 
 namespace sheet {
 
-Frame Begin(PageCtx& p, float k) {
+Frame Begin(PageCtx& p, float k, bool split) {
     Canvas& c = p.ui.C();
     const Theme& t = p.shell;
     const D2D1_RECT_F& s = p.area;
@@ -42,11 +42,14 @@ Frame Begin(PageCtx& p, float k) {
                                                           D2D1::IdentityMatrix(), k), nullptr);
     c.Fill(Inset(s, -10, -10), 30, t.veil.Alpha(0.5f)); // dim what's behind
     c.Fill(s, 24, t.card); // sheet body
-    c.PushClip(s);
-    c.Glow(f.badge, 200, 160, t.accent.Alpha(0.09f)); // tint around the hero badge
-    c.PopClip();
+    if (split) {
+        c.PushClip(s);
+        c.Glow(f.badge, 200, 160, t.accent.Alpha(0.09f)); // tint around the hero badge
+        c.PopClip();
+    }
     c.FillV({s.left, s.top, s.right, s.top + 80}, 24, t.sheen, t.sheen.Alpha(0)); // top sheen
     c.StrokeV(s, 24, t.hairTop, t.hairBot, 1);
+    if (!split) return f; // the page lays out the whole sheet itself
     if (f.tall) c.Line({s.left + 22, f.list.top - 6}, {s.right - 22, f.list.top - 6}, t.line, 1, false); // header / list divider
     else c.Line({s.left + kHero, s.top + 22}, {s.left + kHero, s.bottom - 22}, t.line, 1, false);
     return f;

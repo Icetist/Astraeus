@@ -13,6 +13,7 @@
 #include "sys.h"
 #include "bt.h"
 #include "wifi.h"
+#include "mixer.h"
 #include "share.h"
 #include "notify.h"
 
@@ -95,6 +96,8 @@ public:
     void CloseSettings();
     void OpenCal(); // the calendar sheet, from the weather card
     void CloseCal();
+    void OpenMixer(); // per-app volume, from the volume slider on Home
+    void CloseMixer();
     void SetAccent(int mode, int hex); // persisted, drawer crossfades to it
     void SetNotifyPills(bool on); // persisted, starts or stops the watcher
     bool CommitHex(); // apply the typed hex if it parses, ends typing either way
@@ -104,6 +107,8 @@ public:
 
     const bool portable; // laptop: power mode tile, else output tile
     int pwrMode = -1; // 0 eco, 1 balanced, 2 perf, -1 unknown
+    int batPct = -1; // laptop battery, -1 none or unknown
+    bool charging = false;
     std::vector<sys::OutDev> outs;
     std::wstring outId;
     sys::Meter meter; // peak meter for visualizer
@@ -139,6 +144,8 @@ public:
     std::vector<sys::ShareOut> shareOuts; // ui copy for the shared-audio tab
     bool shareTab = false; // bluetooth sheet shows the shared-audio tab
     sys::Wifi wifi;
+    sys::Mixer mixer; // holds nothing unless the mixer sheet is open
+    bool mixerOpen = false;
     std::vector<sys::WifiNet> wifiNets; // ui copy, empty while closed
     bool wifiOpen = false, wifiScan = false;
     sys::WifiState wifiState = sys::WifiState::Ok;
@@ -169,12 +176,21 @@ public:
     int accentMode = 0; // 0 colors from the wallpaper (default), 1 custom
     int accentHex = 0xB8C4FF; // custom accent, 0xRRGGBB
     bool hexFocus = false; // the settings hex field is taking keystrokes
+    bool passFocus = false, passShow = false, passWrong = false; // the wi-fi password field: taking keystrokes, shown in clear, last try failed
+    std::string passFor; // raw ssid of the network being joined
+    std::wstring passEdit; // what's typed so far, wiped once used
+    bool Typing() const { return hexFocus || passFocus; } // the panel holds the keyboard
+    void AskPass(const sys::WifiNet& n); // a new secured network: type its password in the panel
+    void SubmitPass();
+    void CancelPass();
     int hexTarget = 0; // what the typed hex sets: 0 the accent, 1 the custom background
     std::wstring hexEdit; // what's typed so far, without the #
     int notifyPills = 0; // 1: windows notifications also drop as a pill
     int fullLyrics = 1; // the fullscreen player shows synced lyrics beside the cover (on by default)
     bool settingsOpen = false;
     bool calOpen = false, calFresh = false; // fresh: just opened, start on this month
+    bool calForecast = false; // the calendar sheet shows the forecast instead of the month
+    int reduceMotion = 0; // calmer animation: no bounce, no drifting, no sliding
     sys::NotifyWatch notifyWatch; // only runs while notification pills are on
     bool timerOn = false;
 

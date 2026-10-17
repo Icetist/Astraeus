@@ -63,6 +63,13 @@ Stage::Stage(Model& m, HMONITOR mon) : model(m), mode(m.look) {
 Stage::~Stage() {
     canvas.reset();
     FreeGlass();
+    visual.Reset(); // let go of everything on the device first, then let the driver drop it all
+    target.Reset();
+    dcomp.Reset();
+    backBuf.Reset();
+    swap.Reset();
+    ctx.Reset();
+    gfx::Settle(d3d.Get());
     if (frameWait) CloseHandle(frameWait);
     if (leaveTick) CloseHandle(leaveTick);
     if (hwnd) DestroyWindow(hwnd);
@@ -80,7 +87,8 @@ bool Stage::MakeDev(UINT pxW, UINT pxH) {
     ComPtr<IDXGISwapChain1> sc;
     ComPtr<IDXGISurface> surface;
     ComPtr<ID2D1DeviceContext> dc;
-    if (FAILED(d3d.As(&dxgi)) || FAILED(gfx::D2D()->CreateDevice(dxgi.Get(), &device)) || FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &dc)) ||
+    if (FAILED(d3d.As(&dxgi)) || FAILED(gfx::D2D()->CreateDevice(dxgi.Get(), &device)) || (device->SetMaximumTextureMemory(32ull << 20), false) ||
+        FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &dc)) ||
         FAILED(dxgi->GetAdapter(&adapter)) || FAILED(adapter->GetParent(IID_PPV_ARGS(&factory))))
         return false;
     DXGI_SWAP_CHAIN_DESC1 d = {};
@@ -290,7 +298,7 @@ void Stage::SyncLyrics(double now) { // asks for the song's lyrics once its leng
         model.lyrics.Want(tr.title, tr.artist, tr.album, tr.duration / 1e7);
         lyrAsked = now;
     }
-    if (!lyrDoc && lyrAsked >= 0 && now - lyrPoll > 0.25) {
+    if ((!lyrDoc || lyrDoc->interim) && lyrAsked >= 0 && now - lyrPoll > 0.25) { // an early version keeps listening for the word-timed one
         lyrPoll = now;
         lyrDoc = model.lyrics.Get(key);
     }

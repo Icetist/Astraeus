@@ -3,6 +3,9 @@
 #include <d2d1_1helper.h>
 #include <d2d1effects.h>
 
+#include <d3d11.h>
+#include <dxgi1_3.h>
+
 #include <cmath>
 #include <utility>
 
@@ -170,6 +173,24 @@ void Shutdown() {
     if (g && g->mem) g->dw->UnregisterFontFileLoader(g->mem.Get());
     delete g;
     g = nullptr;
+}
+
+void Settle(ID3D11Device* d) {
+    if (!d) return;
+    ComPtr<ID3D11DeviceContext> ic;
+    d->GetImmediateContext(&ic);
+    if (ic) {
+        ic->ClearState(); // unbind everything so the driver can free it now, not at some later flush
+        ic->Flush();
+    }
+    ComPtr<IDXGIDevice3> dx;
+    if (SUCCEEDED(d->QueryInterface(IID_PPV_ARGS(&dx)))) dx->Trim(); // drops the driver's internal buffers
+}
+
+void GiveBack() {
+    HEAP_OPTIMIZE_RESOURCES_INFORMATION info{HEAP_OPTIMIZE_RESOURCES_CURRENT_VERSION, 0};
+    HeapSetInformation(nullptr, HeapOptimizeResources, &info, sizeof(info)); // decommit free heap blocks
+    SetProcessWorkingSetSizeEx(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1, 0); // then trim what's left idle
 }
 
 ID2D1Factory3* D2D() { return g->d2d.Get(); }
@@ -433,6 +454,15 @@ void Canvas::Text(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float s
     IDWriteTextFormat* f = gfx::TextFmt(w, size, a);
     IDWriteTextLayout* l = f ? Layout(s, f, Width(r), Height(r), 0) : nullptr; // cached layout, no reshaping per frame
     if (l) rt->DrawTextLayout({r.left, r.top}, l, Brush(c), D2D1_DRAW_TEXT_OPTIONS_CLIP); // clip to rect
+}
+
+float Canvas::TextOnce(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c) {
+    IDWriteTextFormat* f = gfx::TextFmt(w, size, Align::Left);
+    ComPtr<IDWriteTextLayout> l;
+    DWRITE_TEXT_METRICS tm{};
+    if (s.empty() || !f || FAILED(gfx::DWrite()->CreateTextLayout(s.c_str(), (UINT32)s.size(), f, Width(r), Height(r), &l))) return 0;
+    rt->DrawTextLayout({r.left, r.top}, l.Get(), Brush(c), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    return SUCCEEDED(l->GetMetrics(&tm)) ? tm.widthIncludingTrailingWhitespace : 0;
 }
 
 void Canvas::TextSp(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c, float spacing, Align a) {

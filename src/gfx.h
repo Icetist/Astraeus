@@ -11,6 +11,8 @@
 
 using Microsoft::WRL::ComPtr;
 
+struct ID3D11Device;
+
 struct Color {
     float r = 0, g = 0, b = 0, a = 1; // straight alpha, 0..1
 
@@ -31,6 +33,8 @@ namespace gfx {
 
 bool Init(const std::wstring& fontDir); // factories + bundled fonts, call once after CoInitialize
 void Shutdown();
+void Settle(ID3D11Device* d); // before a device goes: finish its work and let the driver drop its scratch memory
+void GiveBack(); // freed heap and idle pages back to windows; only when nothing is animating, it costs page faults after
 ID2D1Factory3* D2D();
 IDWriteFactory5* DWrite();
 IWICImagingFactory* Wic();
@@ -66,6 +70,7 @@ public:
     void FillH(const D2D1_RECT_F& r, float radius, Color left, Color right);
 
     void Text(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c, Align a = Align::Left);
+    float TextOnce(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c); // never cached (secrets); returns the drawn width
     void TextSp(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c, float spacing, Align a = Align::Left);
     void Icon(int glyph, D2D1_POINT_2F center, float size, Color c, bool filled = false);
 

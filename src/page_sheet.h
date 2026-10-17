@@ -20,7 +20,7 @@ struct Frame { // what Begin pushed, End pops, plus where the header and list go
     Align align = Align::Center;
     float titleSize = 21;
 };
-Frame Begin(PageCtx& p, float k); // rise-in + fade (k = open anim 0..1), dims the page, draws the sheet body
+Frame Begin(PageCtx& p, float k, bool split = true); // rise-in + fade (k = open anim 0..1), dims the page, draws the sheet body; split: the hero column and its divider
 void End(PageCtx& p, const Frame& f);
 
 int Key(const std::wstring& s); // stable per-row ui id, survives re-sorting

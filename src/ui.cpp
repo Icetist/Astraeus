@@ -211,7 +211,7 @@ bool Tile(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, 
 bool Pill(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, float& value, bool* iconTap, bool off) {
     float h = Height(r);
     D2D1_RECT_F iconZone = {r.left, r.top, r.left + h, r.bottom}; // square at left, e.g. mute toggle
-    Ui::Hit iconHit = ui.Button(id + 7, iconZone);
+    Ui::Hit iconHit = iconTap ? ui.Button(id + 7, iconZone) : Ui::Hit{}; // no tap wanted: the icon is just a picture
     if (iconTap) *iconTap = iconHit.clicked;
     D2D1_RECT_F track = {r.left + h + 10, r.top, r.right - 50, r.bottom}; // 50px reserved for percent label
     bool changed = ui.Slider(id, track, value, false);
@@ -233,8 +233,8 @@ bool Pill(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, 
 
     float th = 5 + 2 * glow; // track thickens on hover
     c.Fill({track.left, cy - th / 2, track.right, cy + th / 2}, th / 2, t.track);
-    float x = track.left + Width(track) * shown;
     float mute = ui.Smooth(id + 5, off ? 1.0f : 0, 14);
+    float x = track.left + Width(track) * shown * (1 - mute); // muted: the bar empties, the level is kept for when it comes back
     if (x > track.left + th) { // skip fill when too short to round
         c.Fill({track.left - 2, cy - th / 2 - 3, x + 2, cy + th / 2 + 3}, th / 2 + 3, t.accent.Alpha((0.10f + 0.10f * glow) * (1 - mute)));
         c.FillH({track.left, cy - th / 2, x, cy + th / 2}, th / 2, t.accent.Mix(t.textLow, mute), t.accentHi.Mix(t.textLow, mute)); // muted: the level is kept, greyed
@@ -242,7 +242,7 @@ bool Pill(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, 
     float knob = 6.5f + 2.5f * glow;
     if (glow > 0.001f) c.Dot({x, cy}, knob + 5, t.accent.Alpha(0.20f * glow));
     c.Dot({x, cy}, knob, t.text);
-    c.Text(Pct(value), {r.right - 44, r.top, r.right, r.bottom}, Weight::Medium, 12, t.textDim.Mix(t.text, glow), Align::Right);
+    c.Text(off ? std::wstring(L"Muted") : Pct(value), {r.right - 44, r.top, r.right, r.bottom}, Weight::Medium, 12, t.textDim.Mix(t.text, glow), Align::Right);
     return changed;
 }
 

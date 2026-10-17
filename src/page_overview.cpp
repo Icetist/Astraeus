@@ -137,8 +137,9 @@ void Toggles(PageCtx& p, const D2D1_RECT_F& r) {
         static const wchar_t* kModes[] = {L"Efficiency", L"Balanced", L"Performance"};
         static const int kModeIcons[] = {glyph::Eco, glyph::Balance, glyph::Bolt};
         int mode = m.pwrMode;
-        if (w::Tile(ui, t, Ui::Id("tg.power"), cells[2], mode >= 0 ? kModeIcons[mode] : glyph::Bolt, L"Power",
-                    mode >= 0 ? kModes[mode] : L"Unavailable", mode == 2, mode >= 0)) // lit only in perf
+        std::wstring bat = m.batPct >= 0 ? std::to_wstring(m.batPct) + L"%" : L"Power"; // the battery is the title on a laptop; desktops never get this tile
+        std::wstring sub = m.charging ? L"Charging" : mode >= 0 ? kModes[mode] : L"Unavailable"; // the icon still shows the mode
+        if (w::Tile(ui, t, Ui::Id("tg.power"), cells[2], mode >= 0 ? kModeIcons[mode] : glyph::Bolt, bat.c_str(), sub, mode == 2, mode >= 0)) // lit only in perf
             m.CyclePower();
     } else { // desktop: output device tile
         const sys::OutDev* current = nullptr;
@@ -170,14 +171,13 @@ void Sliders(PageCtx& p, const D2D1_RECT_F& r) {
     float v = m.vol;
     if (w::Pill(ui, t, Ui::Id("sl.vol"), Rect(x, y, wdt, h), m.muted || v < 0.005f ? glyph::VolumeOff : glyph::VolumeUp, v, &icon, m.muted)) // ~0 shows muted icon
         m.SetVol(v);
-    if (icon) m.ToggleMute(); // icon click = mute toggle
+    if (icon || ui.RClick(Rect(x, y, wdt, h))) m.OpenMixer(); // the speaker opens every app's own volume
     y += h + gap;
 
     if (m.mic.Ready()) {
         float mv = m.micVol;
-        if (w::Pill(ui, t, Ui::Id("sl.mic"), Rect(x, y, wdt, h), m.micMuted ? glyph::MicOff : glyph::Mic, mv, &icon, m.micMuted)) // muted: greyed, a drag unmutes
+        if (w::Pill(ui, t, Ui::Id("sl.mic"), Rect(x, y, wdt, h), m.micMuted ? glyph::MicOff : glyph::Mic, mv, nullptr, m.micMuted)) // muted: greyed, a drag unmutes; the mic tile mutes
             m.SetMic(mv);
-        if (icon) m.ToggleMic();
         y += h + gap;
     }
     if (m.brightPct >= 0) {
