@@ -1,7 +1,14 @@
-## What's new in 1.2.7
+## What's new in 1.2.8
 
-### Lyrics keep time with the music
-- **Word-by-word lyrics no longer run ahead of the song.** When a song only has line timing, its words are now paced across the time until the next line instead of being guessed from the length of the text, so slow songs light up as they're sung.
-- **More songs get exact word timing.** The slower lyrics source now has more time to answer. The first lyrics found still show right away and are swapped for the word-timed version, without losing your place, once it arrives.
+### New
+- **A keyboard shortcut.** Win+Alt+A opens the panel on the screen your mouse is on. Arrow keys and 1 to 5 move between pages, Esc closes it, and clicking anywhere else gives the keyboard back. Change it with `hotkey =` in the config, or turn it off.
+- **Color picker** in Tools. A magnifier follows your cursor; click to copy the color's hex code, right-click or Esc to cancel. It starts once the panel has gone up.
+- **Stopwatch** with laps, and **focus sessions**: 25/5, 50/10 or 90/15 rounds of focus and break, with a notification at every change, even with the panel closed.
+- **Latency** on the Network page, with jitter, measured only while the page is open.
 
-Everything from 1.2.6 is included: the volume mixer, weather forecast, laptop battery, joining Wi-Fi in the panel, word-by-word lyrics, reduce motion and the much lighter memory use.
+### Better
+- The volume mixer names the speakers it controls.
+- Tools keeps its tiles roomy: Task Manager moved to a button on the System page's process list.
+- New screenshots in the readme.
+
+Everything still costs nothing while you're not using it: the shortcut waits for Windows to call, the color picker only exists while you pick, and latency is only measured on the Network page.
