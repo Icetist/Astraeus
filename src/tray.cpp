@@ -7,6 +7,7 @@
 #include <cmath>
 #include <memory>
 
+#include "gfx.h"
 #include "glyphs.h"
 #include "version.h"
 
@@ -24,8 +25,7 @@ struct Item {
     int glyph;
     const wchar_t* label;
 };
-const Item kItems[] = {{kOpen, glyph::Overview, L"Open dashboard"},
-                       {kConfig, glyph::Edit, L"Edit config"},
+const Item kItems[] = {{kConfig, glyph::Edit, L"Edit config"}, // no "open": clicking the icon does that
                        {kStartup, glyph::Rocket, L"Start with Windows"},
                        {kUpdate, 0, L"Check for updates"},
                        {kSepCmd, 0, nullptr},
@@ -42,6 +42,7 @@ struct Menu {
     bool tracking = false; // leave events armed
     float scale = 1; // dpi / 96
     ComPtr<ID2D1HwndRenderTarget> rt; // plain hwnd target, no swapchain needed
+    ComPtr<ID2D1Bitmap> logo; // the app's own icon for the header, made with the target
     std::unique_ptr<Canvas> canvas;
 };
 Menu* g = nullptr; // one menu at a time, null while hidden
@@ -125,6 +126,14 @@ void Paint() {
             return;
         g->rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         g->canvas = std::make_unique<Canvas>(g->rt.Get());
+        int px = (int)std::lround(28 * g->scale); // the ico's own art at this size, not a stretched one
+        HICON ico = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(101), IMAGE_ICON, px, px, LR_DEFAULTCOLOR);
+        ComPtr<IWICBitmap> wb;
+        ComPtr<IWICFormatConverter> conv;
+        if (ico && gfx::Wic() && SUCCEEDED(gfx::Wic()->CreateBitmapFromHICON(ico, &wb)) && SUCCEEDED(gfx::Wic()->CreateFormatConverter(&conv)) &&
+            SUCCEEDED(conv->Initialize(wb.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeMedianCut)))
+            g->rt->CreateBitmapFromWicBitmap(conv.Get(), nullptr, &g->logo);
+        if (ico) DestroyIcon(ico);
     }
     const Theme& t = g->t;
     Canvas& c = *g->canvas;
@@ -132,10 +141,19 @@ void Paint() {
     g->rt->BeginDraw();
     g->rt->Clear(t.card.D2D()); // opaque card, same as panel
     c.FillV({0, 0, kW, kHead + 20}, 0, t.accent.Alpha(0.12f), t.accent.Alpha(0)); // accent wash behind header
-    D2D1_POINT_2F badge = {kPad + 22, kHead / 2}; // sparkle echoes the logo
-    c.Dot(badge, 16, t.accent.Alpha(0.20f));
-    c.Ring(badge, 16, t.accentHi.Alpha(0.35f), 1);
-    c.Icon(glyph::Sparkle, badge, 18, t.accentHi, true);
+    D2D1_POINT_2F badge = {kPad + 22, kHead / 2};
+    if (g->logo) { // the app's own icon, same as the taskbar and start menu
+        ComPtr<ID2D1SolidColorBrush> ink; // painted in the text colour, so it shows on a light menu too
+        if (SUCCEEDED(g->rt->CreateSolidColorBrush(t.text.D2D(), &ink))) {
+            D2D1_RECT_F at = {badge.x - 14, badge.y - 14, badge.x + 14, badge.y + 14};
+            g->rt->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED); // the mask call wants it
+            g->rt->FillOpacityMask(g->logo.Get(), ink.Get(), D2D1_OPACITY_MASK_CONTENT_GRAPHICS, &at, nullptr);
+            g->rt->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        }
+    } else { // no icon resource: the old badge
+        c.Dot(badge, 16, t.accent.Alpha(0.20f));
+        c.Icon(glyph::Sparkle, badge, 18, t.accentHi, true);
+    }
     c.Text(L"Astraeus", Rect(kPad + 48, 13, 160, 18), Weight::Medium, 14, t.text);
     c.Text(L"Bezel dashboard", Rect(kPad + 48, 30, 160, 14), Weight::Light, 11, t.textLow);
 
@@ -163,6 +181,7 @@ void Paint() {
     c.StrokeV({0, 0, kW, h}, 8, t.hairTop, t.hairBot, 1); // inner rim, dwm rounds the outside
     if (g->rt->EndDraw() == D2DERR_RECREATE_TARGET) { // gpu reset, rebuild next paint
         g->canvas.reset();
+        g->logo.Reset();
         g->rt.Reset();
     }
 }

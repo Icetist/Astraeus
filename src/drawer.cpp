@@ -1007,8 +1007,11 @@ void Drawer::Frame() {
         }
         outline = shape;
         if (glass && std::fabs(spring.vel) > 1 && !dragging) { // composition applies the blur's outline a few frames late: cut it where the glass will be, both ways
-            float frames = spring.vel < 0 ? 3.0f : 1.5f; // dropping: a shorter lead, any more and the blur runs ahead of the glass
-            float lead = (std::clamp)(h + spring.vel * dt * frames, 0.0f, Depth() + overshoot);
+            bool closing = spring.target < h - overshoot; // really going away, not the bounce settling back after a drop
+            float frames = closing ? 3.0f : 1.5f; // dropping and its bounce: a shorter lead, any more and the blur runs ahead of the glass
+            anim::Spring ahead = spring; // where the spring will really be, not a straight line: that overshot the bounce's peak
+            ahead.Step(dt * frames);
+            float lead = (std::clamp)(ahead.value, 0.0f, Depth() + overshoot);
             outline = lead > 0.5f ? BuildShape(lead, !islandLook && grow ? wideAt(lead) : shapeWide) : nullptr;
         }
         ctx->SetTransform(Side() ? D2D1::Matrix3x2F::Identity() : shapeXform);
