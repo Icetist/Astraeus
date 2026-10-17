@@ -104,6 +104,29 @@ No Electron, no web view, no runtime to install. Just one small native executabl
   </tr>
 </table>
 
+### Four looks
+
+Glass (above), Dark, Light and Custom, where a color wheel picks any accent and any background.
+
+<table>
+  <tr>
+    <td width="50%"><img src="./.github/assets/screenshots/look_dark.png" alt="Dark look" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/look_light.png" alt="Light look" /></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Dark</b></td>
+    <td align="center"><b>Light</b></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="./.github/assets/screenshots/look_custom.png" alt="Custom look" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/look_light_media.png" alt="Light look on the Media page" /></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Custom</b></td>
+    <td align="center"><b>Light, with the album's colors</b></td>
+  </tr>
+</table>
+
 ## ⚡ Performance
 
 Astraeus is built to cost nothing while you are not looking at it. Measured on a modest laptop

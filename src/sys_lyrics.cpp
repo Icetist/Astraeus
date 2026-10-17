@@ -533,7 +533,10 @@ struct LyricSrc::Impl {
     }
 
     std::vector<LyricLine> Kugou(Lane& ln, const std::wstring& title, const std::wstring& artist, double seconds, bool& reached) { // word-timed across much of the western catalogue
-        if (seconds <= 0) return {}; // matched on title and exact length, so the length must be known
+        if (seconds <= 0) { // matched on title and exact length: without the length there's nothing to match, a definite no
+            reached = true;
+            return {};
+        }
         std::string body;
         if (!Get(ln, L"https://mobileservice.kugou.com/api/v3/search/song?format=json&page=1&pagesize=8&showtype=1&keyword=" + Esc(artist + L" " + title), body)) return {};
         reached = true;
@@ -657,7 +660,7 @@ struct LyricSrc::Impl {
         t0.join();
         t1.join();
         t2.join();
-        reached = out[0].reached || out[1].reached || out[2].reached;
+        reached = out[0].reached && out[1].reached && out[2].reached; // "no lyrics" only counts when every source answered; a timeout means ask again
         int pick = -1;
         for (int k : {1, 2, 0}) // word-timed first: netease's yrc, then kugou, then lrclib's rare enhanced lrc
             if (pick < 0 && Worded(out[k].lines)) pick = k;
@@ -692,7 +695,7 @@ struct LyricSrc::Impl {
             std::lock_guard lock(mu);
             busyKey.clear();
             if (stop.load()) return;
-            if (doc->lines.empty() && !reached) { // offline or both services busy: not remembered, asked again in a while
+            if (doc->lines.empty() && !reached) { // offline, or a source didn't answer: not remembered, asked again in a while
                 failed.push_back({doc->key, GetTickCount64()});
                 if (failed.size() > 16) failed.pop_front();
                 continue;

@@ -131,6 +131,8 @@ void Model::Tick() {
         charging = have && ps.ACLineStatus == 1;
     }
     if (mixerOpen) mixer.Refresh(); // apps come and go while it's shown
+    if (fullLyrics && hasTrack && track.music && track.duration > 0) // the song's lyrics, fetched while it plays: ready long before fullscreen opens; a cache check once known
+        lyrics.Want(track.title, track.artist, track.album, track.duration / 1e7);
     if (focusOn && GetTickCount64() >= focusEnd) { // a block ends: focus hands over to a break, a break to the next round
         focusEvent = focusBreak ? 2 : 1;
         if (focusBreak) ++focusRound;
