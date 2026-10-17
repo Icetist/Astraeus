@@ -1,14 +1,12 @@
-## What's new in 1.2.8
+## What's new in 1.2.9
 
-### New
-- **A keyboard shortcut.** Win+Alt+A opens the panel on the screen your mouse is on. Arrow keys and 1 to 5 move between pages, Esc closes it, and clicking anywhere else gives the keyboard back. Change it with `hotkey =` in the config, or turn it off.
-- **Color picker** in Tools. A magnifier follows your cursor; click to copy the color's hex code, right-click or Esc to cancel. It starts once the panel has gone up.
-- **Stopwatch** with laps, and **focus sessions**: 25/5, 50/10 or 90/15 rounds of focus and break, with a notification at every change, even with the panel closed.
-- **Latency** on the Network page, with jitter, measured only while the page is open.
+### Lyrics, instantly
+- **Songs you've played before show their lyrics instantly,** even offline: the last 300 are kept in a small cache on disk.
+- **Lyrics are fetched while the song plays,** long before you open fullscreen, so they're already there when you do.
+- **Each song remembers its own timing.** Nudge it with [ or ] once and it stays in sync every time that song plays.
+- **More songs found.** Titles like "Song (feat. X)", "Song - 2015 Remaster" or "Song - Single Version" are tried in their bare form too, and an artist named differently (like "Ye") still matches when the title and length do.
+- **No more "no lyrics" by mistake:** a song is only marked as having none once every source has answered. A slow source means it's asked again shortly.
+- **Faster lookups:** connections to each lyrics service are reused instead of reopened.
 
-### Better
-- The volume mixer names the speakers it controls.
-- Tools keeps its tiles roomy: Task Manager moved to a button on the System page's process list.
-- New screenshots in the readme.
-
-Everything still costs nothing while you're not using it: the shortcut waits for Windows to call, the color picker only exists while you pick, and latency is only measured on the Network page.
+### Find it again
+- **Astraeus is in the Start menu.** Search for it or find it in your app list to open it again after closing it.
