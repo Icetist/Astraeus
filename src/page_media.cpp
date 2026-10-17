@@ -31,7 +31,7 @@ void Wave(PageCtx& p, const D2D1_RECT_F& r, float fraction, bool playing, bool c
     WaveLine(c, a0, a1, cy, amp, ui.Now(), t.accent, 4, 28);
     if (amp >= 0.05f && a1 > a0) ui.KeepAlive(); // keep repainting while wave moves
     if (!known) return;
-    if (x + gap < r.right - 2) c.Line({x + gap, cy}, {r.right - 2, cy}, t.track, 4); // unplayed part stays flat
+    if (x + gap < r.right - 2) c.Line({x + gap, cy}, {r.right - 2, cy}, t.accent.Alpha(0.3f), 4); // unplayed part stays flat, a faint wash of the album colour
     float grow = ui.Smooth(id + 2, ui.IsActive(id) || Inside(r, ui.In().mouse) ? 1.0f : 0, 16); // head grows on hover/drag
     c.Fill({x - 2, cy - 11 - 3 * grow, x + 2, cy + 11 + 3 * grow}, 2, t.accentHi); // vertical bar playhead
 }

@@ -269,7 +269,7 @@ void Stage::Seek(const D2D1_RECT_F& r, float show) { // the media page's wave, s
     float amp = ui.Smooth(id + 1, tr.playing && !ui.IsActive(id) ? 2.8f * k : 0, 5); // flattens when paused or dragging
     WaveLine(c, r.left + 2, known ? x - gap : r.right - 2, cy, amp, ui.Now(), look.accent, 4.5f * k, 34 * k);
     if (!known) return;
-    if (x + gap < r.right - 2) c.Line({x + gap, cy}, {r.right - 2, cy}, look.track, 4.5f * k); // unplayed part stays flat
+    if (x + gap < r.right - 2) c.Line({x + gap, cy}, {r.right - 2, cy}, look.accent.Alpha(0.3f), 4.5f * k); // unplayed part stays flat, a faint wash of the album colour
     float grow = ui.Smooth(id + 2, ui.IsActive(id) || (show > 0.5f && Inside(r, ui.In().mouse)) ? 1.0f : 0, 16);
     float hh = (12 + 3 * grow) * k;
     c.Fill({x - 2.5f, cy - hh, x + 2.5f, cy + hh}, 2.5f, look.accentHi); // vertical bar playhead

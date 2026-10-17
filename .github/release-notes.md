@@ -1,12 +1,15 @@
-## What's new in 1.2.9
+## What's new in 1.2.10
 
-### Lyrics, instantly
-- **Songs you've played before show their lyrics instantly,** even offline: the last 300 are kept in a small cache on disk.
-- **Lyrics are fetched while the song plays,** long before you open fullscreen, so they're already there when you do.
-- **Each song remembers its own timing.** Nudge it with [ or ] once and it stays in sync every time that song plays.
-- **More songs found.** Titles like "Song (feat. X)", "Song - 2015 Remaster" or "Song - Single Version" are tried in their bare form too, and an artist named differently (like "Ye") still matches when the title and length do.
-- **No more "no lyrics" by mistake:** a song is only marked as having none once every source has answered. A slow source means it's asked again shortly.
-- **Faster lookups:** connections to each lyrics service are reused instead of reopened.
+### Your logo, everywhere
+- **The app icon is now the real Astraeus logo** in the taskbar, tray, Start menu and Explorer. The small sizes are drawn slightly bolder so the orbit stays visible at tray size.
+- **The tray menu wears the logo too,** in white on dark themes and near-black on light ones.
 
-### Find it again
-- **Astraeus is in the Start menu.** Search for it or find it in your app list to open it again after closing it.
+### Tray menu
+- **Shows the version you're on.** After an update it says **Updated · v1.2.10 ✓**, and checking when you're current says **Up to date · v1.2.10 ✓**.
+- **"Open dashboard" is gone:** clicking the tray icon already does that.
+
+### Media
+- **The unplayed part of the seek line takes the album's colour,** a faint wash of it instead of plain white or grey, in the Media tab and fullscreen.
+
+### Glass
+- **The blur keeps up with the panel's bounce.** When the panel drops open, the clear glass no longer dips below the blur before settling.

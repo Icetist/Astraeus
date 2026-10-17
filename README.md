@@ -186,7 +186,7 @@ Updates are automatic. Astraeus checks GitHub shortly after launch and every few
 - **Volume mixer:** click the speaker icon on the volume slider, or right-click the slider.
 - **Wi-Fi networks:** right-click the Wi-Fi tile on the Home page, or press **Networks** on the Network page.
 - **Settings:** the **Settings** tile on the Tools page, for the look (dark, light, glass, custom), accent color, edge, screens, notification pills, the island and fullscreen lyrics.
-- **Tray menu:** right-click the tray icon for the dashboard, config, start with Windows, check for updates, restart and exit.
+- **Tray menu:** click the tray icon to open the dashboard; right-click it for config, start with Windows, check for updates, restart and exit.
 
 ## ⚙️ Configuration
 
