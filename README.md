@@ -264,8 +264,4 @@ Yes. Set `AutoUpdate = false` in `astraeus.ini` and restart.
 - [Outfit](https://github.com/Outfitio/Outfit-Fonts) by the Outfit Project Authors, licensed under the [SIL Open Font License 1.1](./LICENSES/Outfit-OFL.txt).
 - [Material Symbols](https://github.com/google/material-design-icons) by Google, licensed under the [Apache License 2.0](./LICENSES/MaterialSymbols-Apache-2.0.txt).
 - Synced lyrics from [LRCLIB](https://lrclib.net), NetEase Cloud Music and Kugou.
-
-
----
-
-<p align="center"><b>NO FORM OF AI WAS USED TO WRITE THE CODE IN THE MAKING OF THIS PROJECT</b></p>
+- Alpha and beta testing by [Abrar Awwal](https://www.instagram.com/abrarr.png) and [ATK](https://github.com/atkftw).
