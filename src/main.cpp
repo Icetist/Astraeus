@@ -18,6 +18,7 @@
 namespace {
 
 constexpr UINT kTrayId = 1;
+constexpr int kHotId = 1; // the open-the-panel shortcut
 constexpr UINT_PTR kSecTimer = 1;
 constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"; // per-user autostart
 constexpr const wchar_t* kApprovedKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
@@ -245,6 +246,15 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 app->updater.Check(app->host, WM_APP_UPDATE);
             if (app->restartPending && !app->drawer->Busy()) Restart(app->exePath); // never yank the panel away mid-use
             app->drawer->OnSecond();
+            if (int ev = app->model->focusEvent) { // a focus block or a break just ended
+                app->model->focusEvent = 0;
+                const wchar_t* title = ev == 1 ? L"Focus done" : L"Break's over";
+                std::wstring detail = ev == 1 ? std::to_wstring(app->model->breakMin) + L" min break, then round " + std::to_wstring(app->model->focusRound + 1)
+                                              : L"Round " + std::to_wstring(app->model->focusRound) + L", " + std::to_wstring(app->model->focusMin) + L" min";
+                MessageBeep(MB_ICONASTERISK);
+                app->drawer->Peek(title, detail);
+                Notify(title, detail.c_str());
+            }
             if (app->model->TimerDone()) { // countdown just hit zero
                 std::wstring detail = std::to_wstring(app->model->TimerMins()) + L" min timer is up";
                 MessageBeep(MB_ICONASTERISK);
@@ -263,6 +273,9 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case sys::Updater::kCurrent: tray::SetUpdate(tray::Upd::Current); break;
         default: tray::SetUpdate(tray::Upd::Failed); break;
         }
+        return 0;
+    case WM_HOTKEY:
+        if (wp == kHotId && app->drawer) app->drawer->KeyOpen(); // the shortcut
         return 0;
     case WM_APP_TRAY:
         if (LOWORD(lp) == WM_LBUTTONUP) app->drawer->Toggle(); // left click opens/closes
@@ -303,6 +316,8 @@ bool CreateHost(HINSTANCE instance) {
     abd.uCallbackMessage = WM_APP_APPBAR;
     app->appbar = SHAppBarMessage(ABM_NEW, &abd) != FALSE; // appbar only to get fullscreen notices
     SetCoalescableTimer(app->host, kSecTimer, 1000, nullptr, 250); // 1s tick drives model
+    if (app->cfg.hotKey && !RegisterHotKey(app->host, kHotId, app->cfg.hotMods | MOD_NOREPEAT, app->cfg.hotKey)) // windows tells us when it's pressed, nothing polls
+        Log(L"The shortcut is taken by another app; set another with hotkey = in astraeus.ini");
     return true;
 }
 

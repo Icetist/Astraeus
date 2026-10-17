@@ -92,9 +92,10 @@ void DrawMixer(PageCtx& p, float k) {
 
     float hy = s.top + 30;
     c.Text(L"Mixer", Rect(s.left + 24, s.top + 12, 200, 28), Weight::Semi, 21, t.text);
-    std::wstring out = L"No output";
+    std::wstring out = m.mixer.Device(); // laptops never list outputs, so ask the mixer's own device
     for (const auto& d : m.outs)
         if (d.id == m.outId) out = d.name;
+    if (out.empty()) out = L"No output";
     c.Text(out, Rect(s.left + 24, s.top + 40, Width(s) - 140, 16), Weight::Light, 12, t.textDim);
     if (w::IconBtn(ui, t, Ui::Id("mix.close"), {s.right - 30, hy}, 30, glyph::Close, 18)) m.CloseMixer();
     if (w::IconBtn(ui, t, Ui::Id("mix.more"), {s.right - 64, hy}, 30, glyph::OpenNew, 16)) {

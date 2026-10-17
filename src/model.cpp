@@ -1,5 +1,9 @@
 #include "model.h"
 
+#include <iphlpapi.h>
+#include <icmpapi.h>
+#include "picker.h"
+
 #include <algorithm>
 
 namespace {
@@ -43,6 +47,7 @@ Model::~Model() {
     }
     wake.notify_all(); // break worker out of wait
     if (worker.joinable()) worker.join();
+    if (icmp != INVALID_HANDLE_VALUE) IcmpCloseHandle(icmp);
 }
 
 void Model::Start(HWND hwnd) {
@@ -55,7 +60,7 @@ void Model::Start(HWND hwnd) {
     worker = std::thread([this] { Worker(); });
 }
 
-void Model::SetLive(bool active, bool processes) {
+void Model::SetLive(bool active, bool processes, bool ping) {
     shown = active; // ui thread: Tick samples every second only while shown
     if (!active) CloseMixer(); // the audio sessions and icons go with the panel
     {
@@ -63,6 +68,7 @@ void Model::SetLive(bool active, bool processes) {
         bool wakeNow = active && (!pollOn || (processes && !wantProcs)); // wake only if newly on or procs newly wanted
         pollOn = active;
         wantProcs = processes;
+        wantPing = active && ping;
         if (!wakeNow) return; // otherwise next 1s cycle picks it up
     }
     wake.notify_all(); // notify outside lock, avoids instant re-block
@@ -74,13 +80,24 @@ void Model::Worker() {
     while (!quit) {
         wake.wait(lk, [this] { return quit || pollOn; }); // sleep while drawer closed
         if (quit) break;
-        bool procsNow = wantProcs; // snapshot, flags may change while unlocked
+        bool procsNow = wantProcs, pingNow = wantPing; // snapshot, flags may change while unlocked
         lk.unlock(); // slow sampling runs without lock
         sys::Stats s = statSrc.Sample();
         std::vector<sys::ProcRow> top;
         if (procsNow) top = procSrc.Top(6); // top 6 procs, only on sys page
+        float ping = -2;
+        if (pingNow) { // one echo to a public resolver, only while the network page shows
+            if (icmp == INVALID_HANDLE_VALUE) icmp = IcmpCreateFile();
+            char reply[sizeof(ICMP_ECHO_REPLY) + 32];
+            char data[8] = {'a', 's', 't', 'r', 'a', 'e', 'u', 's'};
+            IPAddr to = 0x01010101; // 1.1.1.1
+            DWORD n = icmp != INVALID_HANDLE_VALUE ? IcmpSendEcho(icmp, to, data, sizeof(data), nullptr, reply, sizeof(reply), 900) : 0;
+            const auto* r = reinterpret_cast<const ICMP_ECHO_REPLY*>(reply);
+            ping = n && r->Status == IP_SUCCESS ? (float)r->RoundTripTime : -1;
+        }
         lk.lock();
         newStats = s;
+        newPing = ping;
         if (procsNow) newProcs = std::move(top);
         ready = true;
         PostMessageW(notify, WM_APP_STATS, 0, 0); // ui thread pulls via OnStats
@@ -94,6 +111,12 @@ void Model::OnStats() {
     ready = false;
     stats = newStats;
     if (wantProcs) procs = newProcs; // keep old list when procs not polled
+    if (newPing > -2) {
+        if (newPing >= 0 && pingMs >= 0) jitterMs = jitterMs * 0.8f + std::fabs(newPing - pingMs) * 0.2f; // how much it wobbles, smoothed
+        pingMs = newPing;
+        pingHist.Push((std::max)(0.0f, newPing));
+        newPing = -2;
+    }
 }
 
 void Model::Tick() {
@@ -108,6 +131,13 @@ void Model::Tick() {
         charging = have && ps.ACLineStatus == 1;
     }
     if (mixerOpen) mixer.Refresh(); // apps come and go while it's shown
+    if (focusOn && GetTickCount64() >= focusEnd) { // a block ends: focus hands over to a break, a break to the next round
+        focusEvent = focusBreak ? 2 : 1;
+        if (focusBreak) ++focusRound;
+        focusBreak = !focusBreak;
+        focusLen = (ULONGLONG)(focusBreak ? breakMin : focusMin) * 60000;
+        focusEnd = GetTickCount64() + focusLen;
+    }
     constexpr int kClosedEvery = 5; // closed: sample every 5s, nobody is looking at the graphs
     if (++unsampled < (shown ? 1 : kClosedEvery)) return;
     Sample(unsampled);
@@ -330,6 +360,47 @@ void Model::OpenCal() {
     calOpen = calFresh = true;
     calForecast = false;
 }
+
+void Model::SwToggle() {
+    ULONGLONG now = GetTickCount64();
+    if (swOn) swAccum += now - swStart;
+    else swStart = now;
+    swOn = !swOn;
+}
+
+void Model::SwReset() {
+    swOn = false;
+    swAccum = 0;
+    laps.clear();
+}
+
+void Model::SwLap() {
+    if (SwMs() == 0) return;
+    laps.insert(laps.begin(), SwMs()); // newest first
+    if (laps.size() > 20) laps.pop_back();
+}
+
+void Model::StartFocus(int focus, int rest) {
+    focusMin = focus;
+    breakMin = rest;
+    focusOn = true;
+    focusBreak = false;
+    focusRound = 1;
+    focusLen = (ULONGLONG)focus * 60000;
+    focusEnd = GetTickCount64() + focusLen;
+}
+
+void Model::StopFocus() { focusOn = false; }
+
+void Model::SkipFocus() {
+    if (focusOn) focusEnd = GetTickCount64(); // the next tick moves on
+}
+
+double Model::FocusLeft() const { return focusOn ? (std::max)(0.0, (double)(long long)(focusEnd - GetTickCount64()) / 1000.0) : 0; }
+
+double Model::FocusFrac() const { return focusOn && focusLen ? 1 - FocusLeft() * 1000.0 / focusLen : 0; }
+
+void Model::StartPicker() { sys::picker::Start(notify, WM_APP_PICKED); }
 
 void Model::OpenMixer() {
     if (mixerOpen) return;

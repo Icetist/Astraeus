@@ -33,6 +33,10 @@ void Procs(PageCtx& p, const D2D1_RECT_F& r) {
     const Theme& t = p.shell;
     w::Card(p.ui, t, r);
     c.TextSp(L"TOP PROCESSES", Rect(r.left + 18, r.top + 16, Width(r) - 36, 16), Weight::Medium, 10, t.textLow, 1.4f);
+    if (w::IconBtn(p.ui, t, Ui::Id("sys.taskmgr"), {r.right - 26, r.top + 23}, 28, glyph::OpenNew, 15)) { // the whole list, in task manager
+        p.wantClose = true;
+        sys::OpenUri(L"taskmgr.exe");
+    }
     float y = r.top + 42; // rows start under header
     const float rowH = 40;
     for (size_t i = 0; i < p.m.procs.size() && y + rowH <= r.bottom - 6; ++i, y += rowH) { // stop when next row would overflow card
@@ -155,6 +159,12 @@ void DrawNet(PageCtx& p) {
     c.Text(fmt::Rate(n.upBps), Rect(graph.left + 46, graph.top + 42, 170, 30), Weight::Light, 22, t.text);
     c.Icon(glyph::Down, {graph.left + 250, graph.top + 56}, 20, t.accent);
     c.Text(fmt::Rate(n.downBps), Rect(graph.left + 266, graph.top + 42, 170, 30), Weight::Light, 22, t.text);
+    float pm = p.m.pingMs; // latency to the internet, measured only while this page shows
+    D2D1_RECT_F lat = Rect(graph.right - 170, graph.top + 16, 150, 70);
+    c.TextSp(L"LATENCY", Rect(lat.left, lat.top + 2, Width(lat), 14), Weight::Medium, 10, t.textLow, 1.4f, Align::Right);
+    std::wstring ms = pm >= 0 ? std::to_wstring((int)std::lround(pm)) + L" ms" : pm == -1 ? L"No reply" : L"\u2026";
+    c.Text(ms, Rect(lat.left, lat.top + 26, Width(lat), 30), Weight::Light, 22, pm >= 0 ? t.text : t.textDim, Align::Right);
+    if (pm >= 0) c.Text(L"\u00B1 " + std::to_wstring((int)std::lround(p.m.jitterMs)) + L" ms jitter", Rect(lat.left, lat.top + 54, Width(lat), 16), Weight::Light, 11, t.textDim, Align::Right);
 
     float top = graph.top + 92, bottom = graph.bottom - 16, mid = (top + bottom) / 2; // graph split: up on top, down mirrored below
     float peak = (std::max)((std::max)(p.m.upHist.Max(), p.m.downHist.Max()), 64.0f * 1024); // shared scale, 64 KB/s floor
@@ -166,6 +176,59 @@ void DrawNet(PageCtx& p) {
     c.PopClip();
     c.Line({graph.left + 20, mid}, {graph.right - 20, mid}, t.hairTop, 1, false);
     c.Text(L"60 s", Rect(graph.right - 60, bottom - 16, 44, 14), Weight::Regular, 10, t.textLow, Align::Right);
+}
+
+std::wstring Watch(ULONGLONG ms) { // 1:02.4, or 1:02:03.4 past an hour
+    ULONGLONG s = ms / 1000, tenth = ms / 100 % 10;
+    wchar_t buf[32];
+    if (s >= 3600) swprintf_s(buf, L"%llu:%02llu:%02llu.%llu", s / 3600, s / 60 % 60, s % 60, tenth);
+    else swprintf_s(buf, L"%llu:%02llu.%llu", s / 60, s % 60, tenth);
+    return buf;
+}
+
+void Stopwatch(PageCtx& p, const D2D1_RECT_F& r, bool tall) {
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    float cy = r.top + 74;
+    c.Text(Watch(m.SwMs()), Rect(r.left + 20, cy - 28, Width(r) - 40, 60), Weight::Thin, 46, t.text);
+    if (m.swOn) ui.KeepAlive(); // tenths tick only while it runs and you can see it
+    float bx = r.left + 20, by = r.bottom - 52;
+    if (sheet::Act(ui, t, Ui::Id("tl.sw.go"), Rect(bx, by, 96, 34), m.swOn ? L"Pause" : m.SwMs() ? L"Resume" : L"Start", true, false, true)) m.SwToggle();
+    if (sheet::Act(ui, t, Ui::Id("tl.sw.lap"), Rect(bx + 104, by, 76, 34), L"Lap", false, false, m.swOn)) m.SwLap();
+    if (sheet::Act(ui, t, Ui::Id("tl.sw.reset"), Rect(bx + 188, by, 76, 34), L"Reset", false, false, !m.swOn && m.SwMs() > 0)) m.SwReset();
+    float lx = tall ? r.left + 20 : r.right - 150, ly = tall ? cy + 34 : r.top + 52;
+    for (size_t i = 0; i < m.laps.size() && i < (tall ? 2u : 4u); ++i) { // the latest laps, newest first
+        ULONGLONG prev = i + 1 < m.laps.size() ? m.laps[i + 1] : 0;
+        c.Text(L"Lap " + std::to_wstring(m.laps.size() - i), Rect(lx, ly + i * 20, 60, 18), Weight::Regular, 11.5f, t.textDim);
+        c.Text(Watch(m.laps[i] - prev), Rect(lx + 56, ly + i * 20, 80, 18), Weight::Medium, 11.5f, t.text);
+    }
+}
+
+void Focus(PageCtx& p, const D2D1_RECT_F& r, bool tall) {
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    if (!m.focusOn) { // pick a rhythm
+        struct Plan { int focus, rest; } plans[] = {{25, 5}, {50, 10}, {90, 15}};
+        float cw = (Width(r) - 40 - 16) / 3;
+        for (int i = 0; i < 3; ++i) {
+            std::wstring label = std::to_wstring(plans[i].focus) + L" / " + std::to_wstring(plans[i].rest);
+            if (w::Chip(ui, t, Ui::Id("tl.focus", i), Rect(r.left + 20 + i * (cw + 8), r.top + 52, cw, 32), label, false)) m.StartFocus(plans[i].focus, plans[i].rest);
+        }
+        c.Text(L"Minutes of focus, then a break, round after round.", Rect(r.left + 20, r.top + (tall ? 100 : 100), Width(r) - 40, 18), Weight::Light, 12, t.textDim);
+        return;
+    }
+    D2D1_POINT_2F rc = {r.left + 72, (r.top + r.bottom) / 2 + 6};
+    w::Gauge(ui, t, Ui::Id("tl.focus.ring"), rc, 40, 5, (float)m.FocusFrac());
+    c.Icon(m.focusBreak ? glyph::Coffee : glyph::Timer, rc, 22, t.accent);
+    c.TextSp(m.focusBreak ? std::wstring(L"BREAK") : L"FOCUS  \u00B7  ROUND " + std::to_wstring(m.focusRound), Rect(r.left + 134, rc.y - 40, 240, 14), Weight::Medium, 10,
+             m.focusBreak ? t.textDim : t.accentHi, 1.4f);
+    c.Text(fmt::Clock(std::ceil(m.FocusLeft())), Rect(r.left + 134, rc.y - 26, 220, 64), Weight::Thin, 50, t.text);
+    if (w::IconBtn(ui, t, Ui::Id("tl.focus.skip"), {r.right - 92, rc.y}, 44, glyph::Next, 24)) m.SkipFocus();
+    if (w::IconBtn(ui, t, Ui::Id("tl.focus.stop"), {r.right - 44, rc.y}, 44, glyph::Stop, 26, true, true)) m.StopFocus();
 }
 
 void DrawTools(PageCtx& p) {
@@ -195,8 +258,22 @@ void DrawTools(PageCtx& p) {
     bool tall = Height(a) > Width(a); // sidebar: timer and tiles stack under the power row
     D2D1_RECT_F timer = tall ? Rect(a.left, power.bottom + 12, Width(a), 190) : Rect(a.left, power.bottom + 12, 470, a.bottom - power.bottom - 12);
     w::Card(ui, t, timer);
-    c.TextSp(L"TIMER", Rect(timer.left + 20, timer.top + 16, 200, 14), Weight::Medium, 10, t.textLow, 1.4f);
-    if (!m.timerOn) {
+    static const wchar_t* kTabs[] = {L"TIMER", L"STOPWATCH", L"FOCUS"};
+    float tx = timer.left + 20;
+    for (int i = 0; i < 3; ++i) { // three tools in one card, a slim marker under the one showing
+        float tw = 13 + 7.4f * std::wcslen(kTabs[i]);
+        Ui::Hit th = ui.Button(Ui::Id("tl.tab", i), Rect(tx - 4, timer.top + 8, tw + 8, 28));
+        float on = ui.Smooth(Ui::Id("tl.tab", 10 + i), m.toolTab == i ? 1.0f : 0, 14);
+        c.TextSp(kTabs[i], Rect(tx, timer.top + 16, tw, 14), Weight::Medium, 10, t.textLow.Mix(t.text, th.hover ? 0.5f : 0).Mix(t.accent, on), 1.4f);
+        if (on > 0.02f) c.Fill(Rect(tx, timer.top + 34, (tw - 13) * on, 2), 1, t.accent);
+        if (th.clicked) m.toolTab = i;
+        tx += tw + 14;
+    }
+    if (m.toolTab == 1) {
+        Stopwatch(p, timer, tall);
+    } else if (m.toolTab == 2) {
+        Focus(p, timer, tall);
+    } else if (!m.timerOn) {
         const int minutes[] = {1, 5, 10, 15, 25, 45, 60};
         int perRow = tall ? 4 : 7; // sidebar: two rows so the labels fit
         float cx = timer.left + 20, cw = (Width(timer) - 40 - (perRow - 1) * 8) / perRow; // 8px gaps
@@ -218,21 +295,23 @@ void DrawTools(PageCtx& p) {
 
     D2D1_RECT_F quick = tall ? D2D1_RECT_F{a.left, timer.bottom + 12, a.right, a.bottom} : D2D1_RECT_F{timer.right + 12, timer.top, a.right, a.bottom};
     float tw = (Width(quick) - 10) / 2, th = (Height(quick) - 10) / 2; // 2x2 quick grid, 10px gaps
-    int top = m.portable ? 2 : 1; // laptops fit awake in the top row too
-    float cw = (Width(quick) - 10 * (top - 1)) / top;
-    if (w::Tile(ui, t, Ui::Id("tl.snip"), Rect(quick.left, quick.top, cw, th), glyph::Snip, L"Screenshot", L"Pick a region", false)) {
+    // two by two: screenshot and color on top; awake and settings below on laptops, settings across on desktops (task manager lives on the system page)
+    if (w::Tile(ui, t, Ui::Id("tl.snip"), Rect(quick.left, quick.top, tw, th), glyph::Snip, L"Screenshot", L"Pick a region", false)) {
         p.wantClose = true; // hide drawer so it's not in the snip
         sys::OpenSnip();
     }
-    if (m.portable && w::Tile(ui, t, Ui::Id("tl.awake"), Rect(quick.left + cw + 10, quick.top, cw, th), glyph::Coffee, L"Awake",
-                              m.awake ? L"Screen stays on" : L"Off", m.awake))
-        m.SetAwake(!m.awake);
-    if (w::Tile(ui, t, Ui::Id("tl.taskmgr"), Rect(quick.left, quick.top + th + 10, tw, th), glyph::System, L"Task Manager", L"Processes", false)) {
-        p.wantClose = true;
-        sys::OpenUri(L"taskmgr.exe");
+    if (w::Tile(ui, t, Ui::Id("tl.pick"), Rect(quick.left + tw + 10, quick.top, tw, th), glyph::Edit, L"Color", L"Pick from screen", false)) {
+        p.wantClose = true; // out of the way of what you're picking from
+        m.pickPending = true; // the picker starts once the panel is all the way up
     }
-    if (w::Tile(ui, t, Ui::Id("tl.settings"), Rect(quick.left + tw + 10, quick.top + th + 10, tw, th), glyph::Settings, L"Settings",
-                L"Astraeus", false))
+    float sx = quick.left, sw = Width(quick);
+    if (m.portable) {
+        if (w::Tile(ui, t, Ui::Id("tl.awake"), Rect(quick.left, quick.top + th + 10, tw, th), glyph::Coffee, L"Awake", m.awake ? L"Screen stays on" : L"Off", m.awake))
+            m.SetAwake(!m.awake);
+        sx += tw + 10;
+        sw = tw;
+    }
+    if (w::Tile(ui, t, Ui::Id("tl.settings"), Rect(sx, quick.top + th + 10, sw, th), glyph::Settings, L"Settings", L"Astraeus", false))
         m.OpenSettings(); // windows settings is one tap away inside the sheet
 }
 

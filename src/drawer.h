@@ -27,6 +27,7 @@ public:
         return shellNow.glass ? Theme::From(Seed{shellSeed.hue, shellSeed.chroma, 0}) : shellNow;
     }
     void Toggle();
+    void KeyOpen(); // from the shortcut: open on the screen with the mouse and take the keyboard, or close
     void Peek(const std::wstring& title, const std::wstring& detail, int icon = 0); // brief notification drop, 0 = timer icon
     void SetFull(bool on); // fullscreen app present, stay out of the way
     void SyncHide();
@@ -141,6 +142,8 @@ private:
     const float overshoot = 46; // extra room for spring bounce below H
     float winH = 0; // current window height in dips
     bool hidden = false, fullApp = false, tracking = false, armed = false;
+    bool keys = false; // opened from the shortcut: the panel holds the keyboard until it closes
+    HWND keysFrom = nullptr; // where the keyboard goes back to
     bool pillRgn = false; // the island's window region is on: the window is panel-wide, only the pill is live
     RECT pillRect{}; // that region, to skip setting it again unchanged
     bool eco = false; // process in efficiency mode

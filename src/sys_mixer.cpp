@@ -1,6 +1,8 @@
 #include "mixer.h"
 
 #include <audiopolicy.h>
+#include <propkeydef.h>
+#include <functiondiscoverykeys_devpkey.h>
 #include <mmdeviceapi.h>
 #include <shellapi.h>
 #include <wrl/client.h>
@@ -80,6 +82,7 @@ struct Mixer::Impl {
         std::shared_ptr<const std::vector<uint32_t>> icon;
     };
     std::map<std::wstring, Known> known; // name and icon per exe, read once while open
+    std::wstring device;
 };
 
 Mixer::Mixer() = default;
@@ -94,12 +97,20 @@ bool Mixer::Open() {
         FAILED(en->GetDefaultAudioEndpoint(eRender, eMultimedia, &dev)) ||
         FAILED(dev->Activate(__uuidof(IAudioSessionManager2), CLSCTX_INPROC_SERVER, nullptr, reinterpret_cast<void**>(i->mgr.GetAddressOf()))))
         return false;
+    ComPtr<IPropertyStore> props; // the device's own name, for the header
+    PROPVARIANT pv;
+    PropVariantInit(&pv);
+    if (SUCCEEDED(dev->OpenPropertyStore(STGM_READ, &props)) && SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &pv)) && pv.vt == VT_LPWSTR && pv.pwszVal)
+        i->device = pv.pwszVal;
+    PropVariantClear(&pv);
     impl = std::move(i);
     Refresh();
     return true;
 }
 
 void Mixer::Close() { impl.reset(); }
+
+std::wstring Mixer::Device() const { return impl ? impl->device : std::wstring(); }
 
 bool Mixer::IsOpen() const { return impl != nullptr; }
 

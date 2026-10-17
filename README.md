@@ -40,8 +40,9 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 - **Volume mixer.** Click the speaker on the volume slider for a small mixing console: a fader and mute for every app making sound, next to the master.
 - **Bluetooth control center.** Right-click the Bluetooth tile and your devices orbit your PC: connected ones close in with their battery levels, paired ones further out, new finds gliding in while it scans. Click a device to connect, disconnect or pair it, or hold to forget it.
 - **Wi-Fi.** Right-click the Wi-Fi tile, or press **Networks** on the Network page: nearby networks ride the arcs of a big Wi-Fi symbol, closer the stronger they are. Join one with its password right in the panel, or hold to forget a saved one.
-- **Live system stats:** CPU, GPU, memory, top processes, network throughput, local and public IP, all with smooth sparklines.
-- **Tools:** lock, sleep, sign out, restart and shut down (destructive actions are press-and-hold), a timer with notifications, a screenshot shortcut and keep-awake.
+- **Live system stats:** CPU, GPU, memory, top processes, network throughput and latency, local and public IP, all with smooth sparklines.
+- **Tools:** lock, sleep, sign out, restart and shut down (destructive actions are press-and-hold), a timer, a stopwatch with laps and focus sessions (focus and break rounds with notifications), a screen color picker that copies the hex code, a screenshot shortcut and keep-awake.
+- **A keyboard shortcut.** Win+Alt+A opens the panel on the screen your mouse is on; arrow keys and 1 to 5 move between pages and Esc closes it.
 - **Weather and a calendar.** Weather for your location, in Celsius or Fahrenheit. Click the weather card for a month at a glance, with holidays from around the world lit up and a greeting when you hover them, and click the weather there for the next hours and days.
 - **Colors that follow you.** The palette is pulled from your wallpaper, or from the album art of whatever is playing, or from any accent you pick. Four looks: dark (the default), light, glass (a live frosted blur of whatever is behind the panel), and custom, where a color wheel lets you pick any accent and any background, with text that turns white or black to suit.
 - **Settings you touch.** Pick the edge it lives on, which monitor (or all of them, with the open panel following your mouse from screen to screen), your accent color and look from small pictures of the real thing. Reduce motion calms every animation.
@@ -54,20 +55,52 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 
 <table>
   <tr>
-    <td width="50%"><img src="./.github/assets/screenshots/media.png" alt="Media player page" /></td>
-    <td width="50%"><img src="./.github/assets/screenshots/bluetooth.png" alt="Bluetooth control center" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/media.png" alt="Media player" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/lyrics.png" alt="Fullscreen lyrics" /></td>
   </tr>
   <tr>
     <td align="center"><b>Media player</b></td>
-    <td align="center"><b>Bluetooth control center</b></td>
+    <td align="center"><b>Fullscreen lyrics</b></td>
   </tr>
   <tr>
-    <td width="50%"><img src="./.github/assets/screenshots/system.png" alt="System stats page" /></td>
-    <td width="50%"><img src="./.github/assets/screenshots/tools.png" alt="Tools page" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/bluetooth.png" alt="Bluetooth control center" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/wifi.png" alt="Wi-Fi" /></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Bluetooth control center</b></td>
+    <td align="center"><b>Wi-Fi</b></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="./.github/assets/screenshots/mixer.png" alt="Volume mixer" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/calendar.png" alt="Calendar" /></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Volume mixer</b></td>
+    <td align="center"><b>Calendar</b></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="./.github/assets/screenshots/forecast.png" alt="Forecast" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/settings.png" alt="Settings" /></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Forecast</b></td>
+    <td align="center"><b>Settings</b></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="./.github/assets/screenshots/system.png" alt="System" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/network.png" alt="Network" /></td>
   </tr>
   <tr>
     <td align="center"><b>System</b></td>
+    <td align="center"><b>Network</b></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="./.github/assets/screenshots/tools.png" alt="Tools" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/pill.png" alt="The island pill" /></td>
+  </tr>
+  <tr>
     <td align="center"><b>Tools</b></td>
+    <td align="center"><b>The island pill</b></td>
   </tr>
 </table>
 
@@ -121,7 +154,7 @@ Updates are automatic. Astraeus checks GitHub shortly after launch and every few
 
 ## 🖱️ Usage
 
-- **Open the panel** by hovering the middle of the edge it lives on (the top unless you moved it), or by clicking the tray icon. Over a maximized window the island pill shows first; click it to open the panel.
+- **Open the panel** by hovering the middle of the edge it lives on (the top unless you moved it), with **Win+Alt+A**, or by clicking the tray icon. Over a maximized window the island pill shows first; click it to open the panel.
 - **Close it** by moving the mouse away, clicking the tray icon again or dragging the panel back up.
 - **Switch pages** with the rail: Home, Media, System, Network and Tools. Hover an icon to see its name. On Home, the media card, CPU, Memory and Download cards also take you to their pages. The weather card opens the calendar.
 - **Fullscreen player:** click the album cover on the Media page. Click it again, press **Esc** or right-click to leave. With lyrics showing, scroll to look around, click a line to jump to it, and press **[** or **]** to nudge the lyrics earlier or later.
@@ -143,6 +176,7 @@ Everything lives in `astraeus.ini` next to the executable. Open it from the tray
 | `HoverOpen` | `true` | Open the panel when the mouse touches the hover zone. |
 | `HoverWidth` | `240` | Width of the hover zone at the top of the screen, centered. |
 | `HoverDelayMs` / `CloseDelayMs` | `70` / `450` | How long to wait before opening and closing. |
+| `Hotkey` | `Win+Alt+A` | The shortcut that opens the panel, like `Ctrl+Shift+Space` or `Win+Alt+F2`; `off` for none. |
 | `HideOnFullscreen` | `true` | Hide while a fullscreen app is in front. |
 | `ReleaseGpuAfterSec` | `8` | Free GPU memory this many seconds after the panel closes. |
 | `Theme` | `wallpaper` | `wallpaper`, or a hex color such as `#B8C4FF`. |

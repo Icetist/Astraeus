@@ -93,6 +93,33 @@ std::wstring Widen(const std::string& s) {
 
 }
 
+bool ParseHotkey(const std::wstring& val, UINT& mods, UINT& key) { // "Win+Alt+A", "Ctrl+Shift+Space", "off"
+    std::wstring v = Lower(val);
+    if (v == L"off" || v == L"none" || v.empty()) {
+        mods = key = 0;
+        return true;
+    }
+    UINT m = 0, k = 0;
+    for (size_t pos = 0; pos <= v.size();) {
+        size_t plus = v.find(L'+', pos);
+        if (plus == std::wstring::npos) plus = v.size();
+        std::wstring part = Trim(v.substr(pos, plus - pos));
+        pos = plus + 1;
+        if (part == L"win") m |= MOD_WIN;
+        else if (part == L"alt") m |= MOD_ALT;
+        else if (part == L"ctrl" || part == L"control") m |= MOD_CONTROL;
+        else if (part == L"shift") m |= MOD_SHIFT;
+        else if (part == L"space") k = VK_SPACE;
+        else if (part.size() == 1 && ((part[0] >= L'a' && part[0] <= L'z') || (part[0] >= L'0' && part[0] <= L'9'))) k = (UINT)towupper(part[0]);
+        else if (part.size() >= 2 && part[0] == L'f' && _wtoi(part.c_str() + 1) >= 1 && _wtoi(part.c_str() + 1) <= 12) k = VK_F1 + _wtoi(part.c_str() + 1) - 1;
+        else return false;
+    }
+    if (!k || !m) return false; // a bare key would steal it from every app
+    mods = m;
+    key = k;
+    return true;
+}
+
 Config Config::Load(const std::wstring& path) {
     Config c;
     std::ifstream in(path, std::ios::binary);
@@ -125,6 +152,7 @@ Config Config::Load(const std::wstring& path) {
         else if (key == L"hideonfullscreen") ok = ParseBool(val, c.hideFull);
         else if (key == L"releasegpuaftersec") ok = ParseInt(val, 0, 3600, c.gpuIdleSec);
         else if (key == L"perflog") ok = ParseBool(val, c.perfLog);
+        else if (key == L"hotkey") ok = ParseHotkey(val, c.hotMods, c.hotKey);
         else if (key == L"theme") {
             c.wallTheme = Lower(val) == L"wallpaper";
             if (!c.wallTheme) ok = ParseColor(val, c.themeCol); // anything else must be a hex color

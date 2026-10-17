@@ -31,6 +31,7 @@ enum : UINT { // posted to ui thread by services/worker
     WM_APP_WIFI,
     WM_APP_SHARE,
     WM_APP_NOTIFY,
+    WM_APP_PICKED, // the color picker finished: wParam rgb, lParam 1 picked / 0 cancelled
 };
 
 class Hist { // fixed-size rolling graph history
@@ -64,7 +65,7 @@ public:
 
     void Start(HWND notify);
     void Tick(); // cheap per-second sample on ui thread
-    void SetLive(bool active, bool processes); // gates worker polling
+    void SetLive(bool active, bool processes, bool ping = false); // gates worker polling
     void ReadAudio();
     void OnOpen(); // refresh slow stuff when drawer opens
     void Prefetch(); // a few seconds after launch: weather ready before the panel first opens
@@ -116,6 +117,28 @@ public:
     ULONGLONG spectrumAsked = 0;
     void Bands(float (&out)[sys::Spectrum::kBands]); // starts the analyser on first use
     void IdleSpectrum(); // stops it once nothing has asked for a few seconds
+    float pingMs = -2, jitterMs = 0; // latency to the internet while the network page shows; -1 no answer, -2 not measured
+    Hist pingHist{60};
+    // stopwatch and focus sessions, on the timer's own once-a-second tick
+    int toolTab = 0; // 0 timer, 1 stopwatch, 2 focus
+    bool swOn = false;
+    ULONGLONG swStart = 0, swAccum = 0; // running since, and time banked before it
+    std::vector<ULONGLONG> laps;
+    ULONGLONG SwMs() const { return swAccum + (swOn ? GetTickCount64() - swStart : 0); }
+    void SwToggle();
+    void SwReset();
+    void SwLap();
+    bool focusOn = false, focusBreak = false;
+    int focusRound = 1, focusMin = 25, breakMin = 5;
+    ULONGLONG focusEnd = 0, focusLen = 0;
+    int focusEvent = 0; // 1 a focus block ended, 2 a break ended; main shows it
+    void StartFocus(int focus, int rest);
+    void StopFocus();
+    void SkipFocus(); // to the next block now
+    double FocusLeft() const;
+    double FocusFrac() const;
+    void StartPicker(); // the screen color picker
+    bool pickPending = false; // asked for: starts once the panel has gone up, so it's not in the way
     void StartTimer(int seconds);
     void StopTimer();
     bool TimerDone();
@@ -204,6 +227,9 @@ private:
     std::mutex lock; // guards fields shared with worker
     std::condition_variable wake;
     bool quit = false, pollOn = false, wantProcs = false, ready = false; // ready = fresh sample waiting
+    bool wantPing = false; // the network page is showing: measure latency
+    float newPing = -2; // worker writes, -1 no answer, -2 not measured
+    HANDLE icmp = INVALID_HANDLE_VALUE; // opened the first time latency is wanted
     sys::Stats newStats; // worker writes, OnStats copies out
     std::vector<sys::ProcRow> newProcs;
     ULONGLONG timerEnd = 0, timerTotal = 0;

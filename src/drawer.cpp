@@ -13,6 +13,7 @@
 
 namespace {
 
+constexpr int kPageCount = 5; // home, media, system, network, tools: the keys walk them
 constexpr UINT_PTR kHoverTimer = 1, kCloseTimer = 2, kReleaseTimer = 3, kPeekTimer = 4, kDevTimer = 5, kFollowTimer = 6;
 constexpr UINT kFollowMs = 120; // every screen mode, open: how often to look which screen the cursor is on
 constexpr int kDevTries = 30; // windows lets go of an old composition target a moment later: ~3 seconds of retries, 100 ms apart
@@ -332,7 +333,7 @@ void Drawer::Open() {
         opened = true;
         SyncWall(); // wallpaper may have changed while closed
         model.OnOpen();
-        model.SetLive(true, page == 2); // fast polling only while visible, the process list only on the system page (2)
+        model.SetLive(true, page == 2, page == 3); // fast polling only while visible, the process list only on the system page (2), latency only on the network page (3)
     }
     Resize(Depth() + overshoot, true); // grow first so bounce isn't clipped
     spring.target = Depth();
@@ -341,7 +342,36 @@ void Drawer::Open() {
     Redraw();
 }
 
+void Drawer::KeyOpen() {
+    if (opened) {
+        Close();
+        return;
+    }
+    if (hidden) return;
+    if (screensNow == 1) { // every screen: open on the one with the mouse
+        POINT pt;
+        GetCursorPos(&pt);
+        HMONITOR m = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+        if (m != mon && !dragging && spring.value <= 0.5f) {
+            mon = m;
+            FreeDev();
+            Place();
+            BuildStrips();
+            SyncHide();
+        }
+    }
+    Open();
+    keys = true;
+    keysFrom = GetForegroundWindow();
+    SetForegroundWindow(hwnd); // the shortcut lets us take the keyboard: arrows, numbers and esc work at once
+    SetFocus(hwnd);
+}
+
 void Drawer::Close() {
+    if (keys) { // the keyboard goes back where it was
+        keys = false;
+        if (GetForegroundWindow() == hwnd && keysFrom && IsWindow(keysFrom)) SetForegroundWindow(keysFrom);
+    }
     KillTimer(hwnd, kFollowTimer);
     if (cfg.gpuIdleSec > 0) SetTimer(hwnd, kReleaseTimer, (UINT)cfg.gpuIdleSec * 1000 + 1000, nullptr); // freed, or trimmed if the pill stays
     KillTimer(hwnd, kCloseTimer);
@@ -431,7 +461,7 @@ void Drawer::SetPage(int p) {
     prevPage = page;
     page = p;
     pageT = 0;
-    model.SetLive(opened, page == 2);
+    model.SetLive(opened, page == 2, page == 3);
     Redraw();
 }
 
@@ -770,6 +800,13 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     }
+    case WM_APP_PICKED: // the color picker finished
+        if (lp) {
+            wchar_t hex[8];
+            swprintf_s(hex, L"#%06X", (unsigned)wp);
+            Peek(std::wstring(L"Copied ") + hex, L"Picked from the screen", glyph::Copy);
+        }
+        return 0;
     case WM_APP_NOTIFY: { // a windows notification arrived and pills are on
         sys::Toast toast;
         if (peeking) return 0; // one is showing: the rest wait their turn
@@ -818,7 +855,21 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         break;
+    case WM_ACTIVATE:
+        if (LOWORD(wp) == WA_INACTIVE && keys && opened && !model.Typing()) { // clicked away from a panel opened by the keyboard: it goes too
+            keys = false;
+            Close();
+        }
+        return 0;
     case WM_KEYDOWN:
+        if (keys && !model.Typing()) { // a panel opened from the shortcut: move with the keys
+            if (wp == VK_ESCAPE) Close();
+            else if (wp == VK_RIGHT || wp == VK_DOWN) SetPage((std::min)(page + 1, kPageCount - 1));
+            else if (wp == VK_LEFT || wp == VK_UP) SetPage((std::max)(page - 1, 0));
+            else if (wp >= '1' && wp < '1' + (WPARAM)kPageCount) SetPage((int)(wp - '1'));
+            Redraw();
+            return 0;
+        }
         if (model.passFocus) {
             if (wp == VK_RETURN) model.SubmitPass();
             else if (wp == VK_ESCAPE) model.CancelPass();
@@ -888,6 +939,10 @@ void Drawer::Frame() {
             islandLook = hand = false; // fully retracted, back to the plain strip and arrow cursor
             Resize(kStrip, false); // shrink window so it can't block clicks
             ui.Forget();
+            if (model.pickPending) { // the color picker waited for the panel to be gone
+                model.pickPending = false;
+                model.StartPicker();
+            }
             if (followTo) { // retracted on the old screen: move over and drop open on the new one
                 mon = followTo;
                 followTo = nullptr;

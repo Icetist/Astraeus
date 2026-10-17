@@ -14,6 +14,7 @@ struct Config {
     float hoverW = 240; // hot zone width at screen top while closed
     int closeMs = 450;
     bool hideFull = true;
+    UINT hotMods = MOD_WIN | MOD_ALT, hotKey = 'A'; // the shortcut that opens the panel, hotKey 0 = none
     int gpuIdleSec = 8; // drop d2d resources after closed this long
     bool perfLog = false;
 

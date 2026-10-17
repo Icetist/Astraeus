@@ -29,6 +29,7 @@ public:
     bool IsOpen() const;
     void Refresh(); // re-reads apps and levels; cheap, call about once a second while shown
     const std::vector<MixApp>& Apps() const;
+    std::wstring Device() const; // the output it mixes for, "Speakers (Realtek(R) Audio)"
     void SetVolume(const std::wstring& key, float v); // every session of that app
     void SetMuted(const std::wstring& key, bool muted);
 
