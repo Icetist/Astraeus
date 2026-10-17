@@ -432,6 +432,7 @@ std::vector<LyricLine> ParseLrc(const std::wstring& lrc) {
         double next = k + 1 < raw.size() ? raw[k + 1].first : l.start + 6, room = (std::max)(0.3, next - l.start - 0.05);
         double sing = (std::max)(1.0, l.text.size() * 0.085); // roughly how long it takes to sing
         if (!l.words.empty()) sing = (std::max)(sing, l.words.back().first - l.start + 0.45);
+        else sing = (std::max)(sing, (std::min)(room * 0.82, sing * 2.2)); // no word timing: the song's own pace, most of the way to the next line, so slow songs don't race ahead
         l.end = l.start + (std::min)(room, sing);
         out.push_back(std::move(l));
     }
@@ -646,7 +647,7 @@ struct LyricSrc::Impl {
                         Keep(std::move(early));
                         break;
                     }
-                auto until = std::chrono::steady_clock::now() + std::chrono::seconds(9);
+                auto until = std::chrono::steady_clock::now() + std::chrono::seconds(25); // the early lines show meanwhile, so waiting costs nothing you can see
                 while (!worded() && !all() && !stop.load() && !queued.load() && std::chrono::steady_clock::now() < until)
                     cv2.wait_for(g, std::chrono::milliseconds(250));
             }
