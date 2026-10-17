@@ -408,7 +408,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     if (!StartupOn()) tray::Ask(app->host, state.drawer->Shell()); // asks every launch while off
     else SyncBoot();
     StartShortcut(); // after the boot copy is settled, so the shortcut points at it
-    if (sys::FinishUpdate()) state.drawer->Peek(L"Astraeus updated", L"Now on version " APP_VER_W, glyph::Sparkle); // first run after a swap
+    if (sys::FinishUpdate()) { // first run after a swap
+        state.drawer->Peek(L"Astraeus updated", L"Now on version " APP_VER_W, glyph::Sparkle);
+        tray::SetUpdate(tray::Upd::Updated); // the tray says so too until the next check
+    }
     gfx::GiveBack(); // trim startup memory
 
     Run();

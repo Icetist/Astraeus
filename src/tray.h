@@ -7,7 +7,7 @@
 namespace tray {
 
 enum Cmd : UINT { kOpen = 100, kConfig, kStartup, kRestart, kExit, kUpdate }; // sent to owner as WM_COMMAND
-enum class Upd { Idle, Checking, Downloading, Current, Failed, Installed }; // what the update row says
+enum class Upd { Idle, Checking, Downloading, Current, Failed, Installed, Updated }; // Updated: first run after a swap // what the update row says
 
 void Show(HWND owner, const Theme& t, bool startup); // themed menu at the cursor, built on demand, freed on close
 void Ask(HWND owner, const Theme& t); // themed start-with-windows prompt, yes posts kStartup

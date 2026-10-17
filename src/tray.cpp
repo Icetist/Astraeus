@@ -55,7 +55,8 @@ std::wstring UpdLabel() {
     case Upd::Checking: return L"Checking\u2026";
     case Upd::Downloading: return L"Downloading " + updTag + L"\u2026";
     case Upd::Installed: return L"Updating to " + updTag + L"\u2026";
-    case Upd::Current: return L"You're up to date";
+    case Upd::Current: return L"Up to date";
+    case Upd::Updated: return L"Updated";
     case Upd::Failed: return L"Couldn't reach GitHub";
     default: return L"Check for updates";
     }
@@ -66,8 +67,9 @@ void UpdRow(Canvas& c, const Theme& t, const D2D1_RECT_F& r, float cy) { // righ
         float a = (float)(GetTickCount64() % 900) / 900.0f * 6.2832f; // arc angles are radians
         c.Ring({r.right - 24, cy}, 7, t.track, 2);
         c.Arc({r.right - 24, cy}, 7, a, 1.75f, t.accentHi, 2);
-    } else if (upd == Upd::Current) {
-        c.Icon(glyph::Check, {r.right - 24, cy}, 18, t.accentHi, true);
+    } else if (upd == Upd::Current || upd == Upd::Updated) { // the version it's on, ticked
+        c.Icon(glyph::Check, {r.right - 20, cy}, 16, t.accentHi, true);
+        c.Text(L"v" APP_VER_W, {r.right - 96, r.top, r.right - 32, r.bottom}, Weight::Medium, 11.5f, t.accentHi, Align::Right);
     } else {
         c.Text(L"v" APP_VER_W, {r.right - 80, r.top, r.right - 12, r.bottom}, Weight::Regular, 11, t.textLow, Align::Right);
     }
