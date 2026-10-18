@@ -100,11 +100,11 @@ No Electron, no web view, no runtime to install. Just one small native executabl
   </tr>
   <tr>
     <td align="center"><b>Tools</b></td>
-    <td align="center"><b>The island pill</b></td>
+    <td align="center"><b>The Island pill</b></td>
   </tr>
 </table>
 
-### Four looks
+### Four Themes, Infinite Possibilities
 
 Glass (above), Dark, Light and Custom, where a color wheel picks any accent and any background.
 
