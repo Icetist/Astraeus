@@ -8,6 +8,8 @@
 #include "page_sheet.h"
 #include "theme.h"
 
+#include <shellapi.h>
+
 using namespace sheet;
 
 namespace {
@@ -210,6 +212,118 @@ void Forecast(PageCtx& p, const D2D1_RECT_F& list) { // the hours and days ahead
     }
 }
 
+namespace {
+
+// ---- the user's own calendars: the picked day's events, and what's connected ----
+constexpr float kRowH = 42, kHeadH = 40;
+
+SYSTEMTIME LocalOf(int64_t unix) {
+    ULARGE_INTEGER u;
+    u.QuadPart = (ULONGLONG)(unix + 11644473600LL) * 10000000ULL; // unix seconds to filetime
+    FILETIME ft{u.LowPart, u.HighPart};
+    SYSTEMTIME utc{}, loc{};
+    FileTimeToSystemTime(&ft, &utc);
+    SystemTimeToTzSpecificLocalTimeEx(nullptr, &utc, &loc);
+    return loc;
+}
+
+std::wstring TimeText(int64_t unix) { // "3:30 PM" or "15:30", as this pc tells time
+    SYSTEMTIME st = LocalOf(unix);
+    wchar_t buf[32] = {};
+    GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &st, nullptr, buf, 32);
+    return buf;
+}
+
+std::wstring HostOf(const std::wstring& url) { // which calendar it is, without the private part of its link
+    size_t cal = url.find(L"/ical/");
+    if (cal != std::wstring::npos) { // google: the calendar's own address
+        size_t b = cal + 6, e = url.find(L'/', b);
+        std::wstring id = url.substr(b, e == std::wstring::npos ? std::wstring::npos : e - b);
+        for (size_t at; (at = id.find(L"%40")) != std::wstring::npos;) id.replace(at, 3, L"@");
+        return id.size() > 34 ? id.substr(0, 31) + L"..." : id;
+    }
+    size_t b = url.find(L"://");
+    b = b == std::wstring::npos ? 0 : b + 3;
+    return url.substr(b, url.find(L'/', b) - b);
+}
+
+bool TextBtn(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, const std::wstring& label, bool strong) { // a pill with words, as the sheets' own
+    uint32_t k = Ui::Id(id);
+    Ui::Hit h = ui.Button(k, r);
+    float hov = ui.Smooth(k + 1, h.hover ? 1.0f : 0, 16);
+    Canvas& c = ui.C();
+    c.Fill(r, Height(r) / 2, t.accent.Alpha((strong ? 0.22f : 0.10f) + 0.12f * hov));
+    c.Text(label, r, Weight::Medium, 11.5f, strong ? t.text : t.accentHi, Align::Center);
+    return h.clicked;
+}
+
+void Agenda(PageCtx& p, const D2D1_RECT_F& list, int y, int mo, int d) { // the picked day's events, where the month was
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    if (Arrow(ui, t, Ui::Id("cal.ag.back"), {list.left + 14, list.top + 15}, false)) m.calAgenda = false;
+    c.Text(Format(y, mo, d, L"dddd, d MMMM"), Rect(list.left + 36, list.top + 2, Width(list) - 170, 26), Weight::Semi, 17, t.text);
+    if (TextBtn(ui, t, "cal.ag.cals", Rect(list.right - 128, list.top + 3, 82, 24), L"Calendars", false)) m.calLinks = true;
+    if (w::IconBtn(ui, t, Ui::Id("cal.ag.new"), {list.right - 18, list.top + 15}, 30, glyph::Add, 19)) { // google's own new-event page: saved there, it's in the account
+        ShellExecuteW(nullptr, L"open", sys::cal::Calendars::NewEventUrl(y, mo, d).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        m.CloseCal();
+    }
+    auto events = m.cals.Day(y, mo, d);
+    float ry = list.top + kHeadH + 4;
+    if (events.empty()) {
+        c.Text(m.cals.Busy() ? L"Syncing\u2026" : L"Nothing on this day", Rect(list.left + 4, ry, Width(list) - 8, 24), Weight::Light, 13, t.textDim);
+        return;
+    }
+    size_t fit = (size_t)(std::max)(1.0f, (list.bottom - ry) / kRowH);
+    for (size_t i = 0; i < events.size() && i < fit; ++i, ry += kRowH) {
+        const auto& e = events[i];
+        D2D1_RECT_F row = Rect(list.left, ry, Width(list), kRowH - 6);
+        c.Fill(row, 12, t.text.Alpha(0.04f));
+        c.Fill(Rect(row.left + 8, row.top + 9, 3, Height(row) - 18), 1.5f, t.accent);
+        if (i + 1 == fit && events.size() > fit) { // the last row that fits says how many more
+            c.Text(L"+" + std::to_wstring(events.size() - i) + L" more", Rect(row.left + 20, row.top, Width(row) - 28, Height(row)), Weight::Medium, 12.5f, t.textDim);
+            break;
+        }
+        std::wstring when = e.allDay ? L"All day" : TimeText(e.start) + L" \u2013 " + TimeText(e.end);
+        c.Text(e.title.empty() ? std::wstring(L"(No title)") : e.title, Rect(row.left + 20, row.top + 3, Width(row) - 28, 18), Weight::Medium, 13, t.text);
+        c.Text(e.where.empty() ? when : when + L"  \u00B7  " + e.where, Rect(row.left + 20, row.top + 19, Width(row) - 28, 16), Weight::Light, 11.5f, t.accentHi);
+    }
+}
+
+void Links(PageCtx& p, const D2D1_RECT_F& list) { // what's connected: remove one, or connect another
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    if (Arrow(ui, t, Ui::Id("cal.ln.back"), {list.left + 14, list.top + 15}, false)) m.calLinks = false;
+    c.Text(L"Calendars", Rect(list.left + 36, list.top + 2, 200, 26), Weight::Semi, 17, t.text);
+    auto links = m.cals.Links();
+    float ry = list.top + kHeadH + 4;
+    if (links.empty()) {
+        c.Text(L"None connected yet", Rect(list.left + 4, ry, Width(list) - 8, 22), Weight::Light, 13, t.textDim);
+        ry += 30;
+    }
+    for (size_t i = 0; i < links.size() && ry + kRowH < list.bottom - 40; ++i, ry += kRowH) {
+        D2D1_RECT_F row = Rect(list.left, ry, Width(list), kRowH - 6);
+        c.Fill(row, 12, t.text.Alpha(0.04f));
+        c.Text(links[i].name, Rect(row.left + 14, row.top + 3, Width(row) - 60, 18), Weight::Medium, 13, t.text);
+        c.Text(HostOf(links[i].url), Rect(row.left + 14, row.top + 19, Width(row) - 60, 16), Weight::Light, 11.5f, t.textDim);
+        if (w::IconBtn(ui, t, Ui::Id("cal.ln.rm", (int)i), {row.right - 20, (row.top + row.bottom) / 2}, 28, glyph::Delete, 17))
+            m.cals.Remove(i, m.notify, WM_APP_CAL); // gone from this app and halobar alike
+    }
+    float by = list.bottom - 30, bw = (Width(list) - 10) / 2;
+    if (m.calWaiting) {
+        c.Text(L"Copy a calendar link: it connects on its own", Rect(list.left + 4, by, Width(list) - 90, 24), Weight::Medium, 12, t.text);
+        if (TextBtn(ui, t, "cal.ln.stop", Rect(list.right - 80, by, 80, 24), L"Cancel", false)) m.StopCalWait();
+        return;
+    }
+    if (TextBtn(ui, t, "cal.ln.google", Rect(list.left, by, bw, 26), L"Connect Google Calendar", true)) m.StartCalWait(true);
+    if (TextBtn(ui, t, "cal.ln.any", Rect(list.left + bw + 10, by, bw, 26), L"Use a copied link", false)) m.StartCalWait(false);
+}
+
+}
+
 void DrawCalendar(PageCtx& p, float k) {
     Ui& ui = p.ui;
     Canvas& c = ui.C();
@@ -229,6 +343,14 @@ void DrawCalendar(PageCtx& p, float k) {
     if (m.calForecast && m.wx.valid && m.wx.nDays > 0) { // the weather pill swapped the month for the days ahead
         Forecast(p, frame.list);
         if (ui.RClick(s)) m.CloseCal();
+        End(p, frame);
+        return;
+    }
+    int sy = pickD ? pickY : now.wYear, sm = pickD ? pickM : now.wMonth, sd = pickD ? pickD : now.wDay; // the picked day, today until one is tapped
+    if (m.calLinks || m.calAgenda) { // the connected calendars, or the day's events, in the month's place
+        if (m.calLinks) Links(p, frame.list);
+        else Agenda(p, frame.list, sy, sm, sd);
+        if (ui.RClick(s)) (m.calLinks ? m.calLinks : m.calAgenda) = false; // right click steps back
         End(p, frame);
         return;
     }
@@ -312,6 +434,7 @@ void DrawCalendar(PageCtx& p, float k) {
             if (h.hover && !outside) greet = feast, greetAt = {o.x, o.y - rad};
         }
         c.Text(std::to_wstring(d), Rect(o.x - rad, o.y - rad, 2 * rad, 2 * rad), today || feast ? Weight::Semi : past ? Weight::Light : Weight::Medium, today ? 15.0f : 13.5f, ink.Alpha(in), Align::Center);
+        if (m.cals.HasEvents(y, mo, d)) c.Dot({o.x, o.y + rad * 0.68f}, 1.8f, (today ? t.onAccent : t.accentHi).Alpha((outside ? 0.45f : 1.0f) * in)); // something on that day
         if (h.clicked) {
             pickY = y, pickM = mo, pickD = d;
             if (outside) viewYear = y, viewMonth = mo; // a day from the next or last month takes you there
@@ -339,14 +462,27 @@ void DrawCalendar(PageCtx& p, float k) {
         c.Text(hi, Rect(r.left + 26, r.top, gw - 36, gh), Weight::Medium, 12, t.text.Alpha(ga), Align::Center);
     }
 
-    int sy = pickD ? pickY : now.wYear, sm = pickD ? pickM : now.wMonth, sd = pickD ? pickD : now.wDay; // the line under the month
     long diff = DayIndex(sy, sm, sd) - DayIndex(now.wYear, now.wMonth, now.wDay);
     std::wstring when = diff == 0 ? L"Today" : diff == 1 ? L"Tomorrow" : diff == -1 ? L"Yesterday"
                       : diff > 0 ? L"In " + std::to_wstring(diff) + L" days" : std::to_wstring(-diff) + L" days ago";
     const Feast* feast = Holiday(sy, sm, sd);
     std::wstring day = Format(sy, sm, sd, L"dddd, d MMMM");
     c.Text(day, Rect(list.left + 4, list.bottom - 28, Width(list) * 0.6f, 20), Weight::Medium, 13, t.text);
-    c.Text(feast ? std::wstring(feast->name) : when, Rect(list.left + Width(list) * 0.4f, list.bottom - 28, Width(list) * 0.6f - 4, 20), Weight::Semi, 13, t.accentHi, Align::Right); // a holiday names itself
+    D2D1_RECT_F right = Rect(list.left + Width(list) * 0.4f, list.bottom - 30, Width(list) * 0.6f - 4, 24);
+    D2D1_RECT_F connect = Rect(list.right - 150, list.bottom - 30, 150, 24);
+    size_t count = m.cals.Linked() ? m.cals.Day(sy, sm, sd).size() : 0;
+    if (m.calWaiting) { // connecting: what to copy, and a way out
+        c.Text(L"Copy the “Secret address in iCal format”", Rect(list.left + 4, list.bottom - 28, Width(list) - 90, 20), Weight::Medium, 12.5f, t.accentHi);
+        if (TextBtn(ui, t, "cal.wait.x", Rect(list.right - 80, list.bottom - 30, 80, 24), L"Cancel", false)) m.StopCalWait();
+    } else if (!m.cals.Linked()) { // nothing connected: one tap opens google calendar's settings, the copied link does the rest
+        if (TextBtn(ui, t, "cal.connect", connect, L"Connect calendar", true)) m.StartCalWait(true);
+        if (ui.RClick(connect)) m.calLinks = true; // outlook, icloud, any link
+    } else if (count > 0) { // the day has events: they open in the month's place
+        if (TextBtn(ui, t, "cal.events", Rect(right.right - 110, right.top, 110, 24), std::to_wstring(count) + (count == 1 ? L" event" : L" events"), true)) m.calAgenda = true;
+    } else {
+        c.Text(feast ? std::wstring(feast->name) : when, Rect(list.left + Width(list) * 0.4f, list.bottom - 28, Width(list) * 0.6f - 4, 20), Weight::Semi, 13, t.accentHi, Align::Right); // a holiday names itself
+        if (ui.RClick(right)) m.calAgenda = true; // the day's view, with its calendars and +, even when empty
+    }
 
     if (ui.RClick(s)) m.CloseCal(); // right click closes, like the other sheets
     End(p, frame);

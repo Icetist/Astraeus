@@ -689,6 +689,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             }
             return 0;
         }
+        if (wp == Model::kCalWaitTimer) { // the calendar link never came
+            model.StopCalWait();
+            Redraw();
+            return 0;
+        }
         if (wp == kDevTimer) { // try the device again: the frame picks up where it left off
             needsFrame = true;
             return 0;
@@ -763,6 +768,12 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         Place();
         BuildStrips(); // screens may have come or gone
         Log(msg == WM_DPICHANGED ? L"dpi changed" : L"displays changed");
+        return 0;
+    case WM_APP_CAL:
+        if (model.calOpen) Redraw();
+        return 0;
+    case WM_CLIPBOARDUPDATE:
+        if (model.OnClipboard()) Redraw(); // connected: the calendar shows its events as they arrive
         return 0;
     case WM_APP_MEDIA:
         model.OnMedia();

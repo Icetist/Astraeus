@@ -16,6 +16,7 @@
 #include "mixer.h"
 #include "share.h"
 #include "notify.h"
+#include "calendar.h"
 
 enum : UINT { // posted to ui thread by services/worker
     WM_APP_MEDIA = WM_APP + 1,
@@ -32,6 +33,7 @@ enum : UINT { // posted to ui thread by services/worker
     WM_APP_SHARE,
     WM_APP_NOTIFY,
     WM_APP_PICKED, // the color picker finished: wParam rgb, lParam 1 picked / 0 cancelled
+    WM_APP_CAL, // calendar events fetched
 };
 
 class Hist { // fixed-size rolling graph history
@@ -213,6 +215,13 @@ public:
     bool settingsOpen = false;
     bool calOpen = false, calFresh = false; // fresh: just opened, start on this month
     bool calForecast = false; // the calendar sheet shows the forecast instead of the month
+    sys::cal::Calendars cals; // the user's own calendars from their private links, shared with halobar
+    bool calAgenda = false, calLinks = false; // the sheet shows the picked day's events / the connected calendars, in the month's place
+    bool calWaiting = false; // "connect" was pressed: the next calendar link copied anywhere is taken
+    void StartCalWait(bool google);
+    void StopCalWait();
+    bool OnClipboard(); // true when a calendar link was taken
+    static constexpr UINT_PTR kCalWaitTimer = 7; // the drawer's timer that ends the wait
     int reduceMotion = 0; // calmer animation: no bounce, no drifting, no sliding
     sys::NotifyWatch notifyWatch; // only runs while notification pills are on
     bool timerOn = false;

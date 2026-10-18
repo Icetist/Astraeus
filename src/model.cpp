@@ -3,6 +3,7 @@
 #include <iphlpapi.h>
 #include <icmpapi.h>
 #include "picker.h"
+#include <shellapi.h>
 
 #include <algorithm>
 
@@ -56,6 +57,7 @@ void Model::Start(HWND hwnd) {
     if (notifyPills) notifyWatch.Start(hwnd, WM_APP_NOTIFY);
     media.Start(hwnd, WM_APP_MEDIA);
     radios.Start(hwnd, WM_APP_RADIOS);
+    cals.Sync(hwnd, WM_APP_CAL, 0); // the month's dots are ready by the time the calendar first opens
     Sample(0); // seed cpu/net baselines, pushes nothing
     worker = std::thread([this] { Worker(); });
 }
@@ -360,6 +362,8 @@ void Model::OpenCal() {
     CloseSettings();
     CloseMixer();
     calOpen = calFresh = true;
+    calAgenda = calLinks = false;
+    cals.Sync(notify, WM_APP_CAL, sys::cal::Calendars::kOnOpen); // changes made a minute ago show; no timer runs while it's closed
     calForecast = false;
 }
 
@@ -420,6 +424,37 @@ void Model::CloseMixer() {
 }
 
 void Model::CloseCal() { calOpen = false; }
+
+void Model::StartCalWait(bool google) {
+    if (!calWaiting) AddClipboardFormatListener(notify); // the link the user copies next, from any app, is the one
+    calWaiting = true;
+    SetTimer(notify, kCalWaitTimer, 5 * 60 * 1000, nullptr); // five minutes, then stop watching
+    if (google) ShellExecuteW(nullptr, L"open", sys::cal::Calendars::GoogleSettings(), nullptr, nullptr, SW_SHOWNORMAL);
+    OnClipboard(); // it may already be copied
+}
+
+void Model::StopCalWait() {
+    if (!calWaiting) return;
+    RemoveClipboardFormatListener(notify);
+    KillTimer(notify, kCalWaitTimer);
+    calWaiting = false;
+}
+
+bool Model::OnClipboard() {
+    if (!calWaiting || !IsClipboardFormatAvailable(CF_UNICODETEXT) || !OpenClipboard(notify)) return false;
+    std::wstring text;
+    if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
+        if (const wchar_t* p = static_cast<const wchar_t*>(GlobalLock(h))) {
+            text.assign(p, wcsnlen(p, 4096));
+            GlobalUnlock(h);
+        }
+    }
+    CloseClipboard();
+    if (!sys::cal::Calendars::LooksLikeCalendar(text) || !cals.Add(text, notify, WM_APP_CAL)) return false; // anything else copied meanwhile is left alone
+    StopCalWait();
+    calLinks = false;
+    return true;
+}
 
 void Model::CloseSettings() {
     settingsOpen = false;

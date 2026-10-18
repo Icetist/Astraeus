@@ -533,7 +533,7 @@ void Screens(PageCtx& p, const D2D1_RECT_F& r, bool live) { // your monitors as 
         }
     }
     int shown = chosen >= 0 && list[chosen].number ? list[chosen].number : chosen + 1;
-    std::wstring label = list.size() <= 1 ? L"One screen" : m.screens ? L"Every screen" : L"Screen " + std::to_wstring(shown);
+    std::wstring label = list.size() <= 1 ? L"One screen" : m.screens ? L"Every screen · stays put while open" : L"Screen " + std::to_wstring(shown); // open, it never jumps to the screen the mouse moves to
     c.Text(label, Rect(in.left, in.bottom - 16, Width(in) - 48, 14), Weight::Medium, 11, t.textDim);
 }
 
