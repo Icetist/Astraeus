@@ -26,12 +26,12 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "Icetist"
-            VALUE "FileDescription", "Astraeus bezel dashboard"
-            VALUE "InternalName", "Astraeus"
+            VALUE "FileDescription", "Astraeus Island"
+            VALUE "InternalName", "Astraeus Island"
             VALUE "OriginalFilename", "Astraeus.exe"
             VALUE "LegalCopyright", "Copyright (c) 2026 Icetist"
-            VALUE "ProductName", "Astraeus"
-            VALUE "Comments", "A dashboard that drops from the edge of the screen. https://github.com/Icetist/Astraeus"
+            VALUE "ProductName", "Astraeus Island"
+            VALUE "Comments", "A dashboard that drops from the edge of the screen. https://github.com/Icetist/Astraeus-Island"
             VALUE "FileVersion", APP_VER_STR
             VALUE "ProductVersion", APP_VER_STR
         END

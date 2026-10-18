@@ -311,7 +311,7 @@ void DrawTools(PageCtx& p) {
         sx += tw + 10;
         sw = tw;
     }
-    if (w::Tile(ui, t, Ui::Id("tl.settings"), Rect(sx, quick.top + th + 10, sw, th), glyph::Settings, L"Settings", L"Astraeus", false))
+    if (w::Tile(ui, t, Ui::Id("tl.settings"), Rect(sx, quick.top + th + 10, sw, th), glyph::Settings, L"Settings", L"Astraeus Island", false))
         m.OpenSettings(); // windows settings is one tap away inside the sheet
 }
 

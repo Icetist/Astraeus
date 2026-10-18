@@ -100,7 +100,7 @@ bool HttpGet(const wchar_t* url, std::string& body, std::atomic<bool>& stop, std
     const bool secure = uc.nScheme == INTERNET_SCHEME_HTTPS;
 
     static const HINTERNET session = [] {  // one session for the app's life: connections to a host are kept alive and reused, no new handshake per request
-        HINTERNET s = WinHttpOpen(L"Astraeus/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);  // honors system/pac proxy
+        HINTERNET s = WinHttpOpen(L"AstraeusIsland/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);  // honors system/pac proxy
         if (s) WinHttpSetTimeouts(s, kResolveMs, kConnMs, kSendMs, kRecvMs);  // ms; defaults are too long
         return s;
     }();

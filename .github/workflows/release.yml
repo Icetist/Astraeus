@@ -63,19 +63,22 @@ jobs:
 
       - name: Hash
         shell: pwsh
-        run: (Get-FileHash build/Astraeus.exe -Algorithm SHA256).Hash.ToLower() | Set-Content -NoNewline -Encoding ascii build/Astraeus.exe.sha256 # updater refuses exes that don't match
+        run: |
+          (Get-FileHash build/Astraeus.exe -Algorithm SHA256).Hash.ToLower() | Set-Content -NoNewline -Encoding ascii build/Astraeus.exe.sha256 # updater refuses exes that don't match
+          Copy-Item build/Astraeus.exe build/Astraeus-Island.exe # the download people pick; Astraeus.exe stays for the updater in every copy out there
 
       - name: Clear files from an earlier run of this tag
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          foreach ($f in 'Astraeus.exe', 'Astraeus.exe.sha256') { gh release delete-asset "${{ github.ref_name }}" $f --yes --repo "${{ github.repository }}" 2>$null } # republishing a version replaces its files
+          foreach ($f in 'Astraeus-Island.exe', 'Astraeus.exe', 'Astraeus.exe.sha256') { gh release delete-asset "${{ github.ref_name }}" $f --yes --repo "${{ github.repository }}" 2>$null } # republishing a version replaces its files
           exit 0
 
       - uses: softprops/action-gh-release@v2
         with:
           files: |
+            build/Astraeus-Island.exe
             build/Astraeus.exe
             build/Astraeus.exe.sha256
           body_path: .github/release-notes.md # rewrite for each release

@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="./.github/assets/logo.png" width="120" alt="Astraeus logo" />
+<img src="./.github/assets/logo.png" width="120" alt="Astraeus Island logo" />
 
-# Astraeus
+# Astraeus Island
 
 **A native bezel dashboard for Windows that drips open from the edge of your screen.**
 
@@ -20,15 +20,15 @@
 [Building](#%EF%B8%8F-building-from-source) •
 [FAQ](#-faq)
 
-<img src="./.github/assets/screenshots/home.png" width="100%" alt="Astraeus dropdown showing the media player, quick toggles and live system stats" />
+<img src="./.github/assets/screenshots/home.png" width="100%" alt="Astraeus Island dropdown showing the media player, quick toggles and live system stats" />
 
 </div>
 
-Astraeus lives in a thin strip at the edge of your screen, at the top by default or as a sidebar on the left or right. Hover it and a liquid panel springs out with your music, quick toggles, system stats and everyday tools. Move away and it tucks itself back in, hands the GPU back and goes back to using almost nothing.
+Astraeus Island lives in a thin strip at the edge of your screen, at the top by default or as a sidebar on the left or right. Hover it and a liquid panel springs out with your music, quick toggles, system stats and everyday tools. Move away and it tucks itself back in, hands the GPU back and goes back to using almost nothing.
 
 No Electron, no web view, no runtime to install. Just one small native executable written in C++ with Direct2D and DirectComposition.
 
-<p align="center"><sub>If Astraeus makes your desktop a little nicer, consider leaving a ⭐. It genuinely helps.</sub></p>
+<p align="center"><sub>If Astraeus Island makes your desktop a little nicer, consider leaving a ⭐. It genuinely helps.</sub></p>
 
 ## ✨ Features
 
@@ -129,7 +129,7 @@ Glass (above), Dark, Light and Custom, where a color wheel picks any accent and 
 
 ## ⚡ Performance
 
-Astraeus is built to cost nothing while you are not looking at it. Measured on a modest laptop
+Astraeus Island is built to cost nothing while you are not looking at it. Measured on a modest laptop
 (Intel Core i5-4210U, integrated graphics, 8 GB RAM, Windows 11, 1366x768):
 
 | | Closed | Open | After closing |
@@ -164,13 +164,13 @@ How it stays this light:
 
 ## 📦 Installation
 
-1. Download `Astraeus.exe` from the [latest release](https://github.com/Icetist/Astraeus/releases/latest).
+1. Download `Astraeus-Island.exe` from the [latest release](https://github.com/Icetist/Astraeus/releases/latest).
 2. Run it. That's it.
 
-On first launch Astraeus asks whether it should start with Windows. Say yes and it copies itself to
+On first launch Astraeus Island asks whether it should start with Windows. Say yes and it copies itself to
 `%LOCALAPPDATA%\Programs\Astraeus`, so you can delete the downloaded file whenever you like.
 
-Updates are automatic. Astraeus checks GitHub shortly after launch and every few hours, installs new versions in the background and lets you know with a small banner the next time it restarts.
+Updates are automatic. Astraeus Island checks GitHub shortly after launch and every few hours, installs new versions in the background and lets you know with a small banner the next time it restarts.
 
 > [!NOTE]
 > The executable is not code-signed yet, so Windows SmartScreen may show an "unknown publisher" warning the first time. Click **More info → Run anyway**.
@@ -234,14 +234,14 @@ The result is a single self-contained `build\Astraeus.exe`.
 <details>
 <summary><b>How do I uninstall it?</b></summary>
 
-Turn off **Start with Windows** in the tray menu, exit Astraeus, then delete `%LOCALAPPDATA%\Programs\Astraeus`. Optionally remove the `HKCU\Software\Astraeus` registry key, which holds your settings.
+Turn off **Start with Windows** in the tray menu, exit Astraeus Island, then delete `%LOCALAPPDATA%\Programs\Astraeus`. Optionally remove the `HKCU\Software\Astraeus` registry key, which holds your settings.
 
 </details>
 
 <details>
 <summary><b>Does it replace Rainmeter?</b></summary>
 
-For a lot of people, yes. Astraeus covers the usual Rainmeter desktop widgets (media, stats, network, weather, quick toggles) in a single native app with no skins to install, and it is designed to sit at near-zero cost while idle.
+For a lot of people, yes. Astraeus Island covers the usual Rainmeter desktop widgets (media, stats, network, weather, quick toggles) in a single native app with no skins to install, and it is designed to sit at near-zero cost while idle.
 
 </details>
 

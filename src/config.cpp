@@ -9,7 +9,7 @@
 namespace {
 
 const char* kDefault = // written on first run, utf-8 ini
-    "# Astraeus config. Right-click the tray icon > Restart after editing.\n"
+    "# Astraeus Island config. Right-click the tray icon > Restart after editing.\n"
     "# Sizes are in DIPs (pixels at 100% scaling).\n"
     "\n"
     "# --- Dropdown ---------------------------------------------------------\n"
