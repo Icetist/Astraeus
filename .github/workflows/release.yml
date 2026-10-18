@@ -79,3 +79,14 @@ jobs:
             build/Astraeus.exe
             build/Astraeus.exe.sha256
           body_path: .github/release-notes.md # rewrite for each release
+
+      - name: Earlier versions become pre-releases on a new major version
+        if: endsWith(github.ref_name, '.0.0')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releases = gh release list --repo "${{ github.repository }}" --limit 200 --json tagName,isPrerelease | ConvertFrom-Json
+          foreach ($r in $releases) {
+            if ($r.tagName -ne "${{ github.ref_name }}" -and -not $r.isPrerelease) { gh release edit $r.tagName --prerelease --repo "${{ github.repository }}" }
+          }

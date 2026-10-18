@@ -1,15 +1,18 @@
-## What's new in 1.2.10
+## Astraeus 2.0
 
-### Your logo, everywhere
-- **The app icon is now the real Astraeus logo** in the taskbar, tray, Start menu and Explorer. The small sizes are drawn slightly bolder so the orbit stays visible at tray size.
-- **The tray menu wears the logo too,** in white on dark themes and near-black on light ones.
+Astraeus is now version 2. Everything before it is marked as a pre-release.
 
-### Tray menu
-- **Shows the version you're on.** After an update it says **Updated · v1.2.10 ✓**, and checking when you're current says **Up to date · v1.2.10 ✓**.
-- **"Open dashboard" is gone:** clicking the tray icon already does that.
+### Your calendar, inside Astraeus
+- **Connect Google Calendar in one tap.** Open the calendar from the weather card and press **Connect calendar**. Google Calendar's settings open; copy your calendar's **Secret address in iCal format** and Astraeus picks it up by itself. No pasting, no account setup.
+- **Outlook, iCloud or any other calendar** works the same way: right-click **Connect calendar** and copy that calendar's link.
+- **Days with something on get a dot.** Pick a day and the line under the month says how many events it has; tap it to see them, with times and places, where the month was.
+- **Add an event** with the **+**: Google Calendar's own new-event page opens on that day, so it lands straight in your account.
+- **Calendars** lists everything connected, each with a button to remove it.
+- **Private and shared with HaloBar.** Your calendar links are stored encrypted, readable only by your Windows account, and HaloBar uses the same ones: connect in either app and both show your events.
+- **Nothing runs in the background for it.** Events refresh when Astraeus starts and whenever you open the calendar.
 
-### Media
-- **The unplayed part of the seek line takes the album's colour,** a faint wash of it instead of plain white or grey, in the Media tab and fullscreen.
+### Settings
+- **Screens says what "Every screen" does:** the panel follows the mouse to another screen, but stays put while it's open.
 
-### Glass
-- **The blur keeps up with the panel's bounce.** When the panel drops open, the clear glass no longer dips below the blur before settling.
+### Fixes
+- **Startup and the Start menu shortcut are called Astraeus again** if 1.2.11 had renamed them.

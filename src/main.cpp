@@ -81,6 +81,26 @@ bool Install(const std::wstring& dst) { // copy the exe (fonts are inside it) so
     return true;
 }
 
+void UndoRename() { // 1.2.11 called itself astraeus island for a day: its startup entry, its switch and its shortcut go back to plain astraeus
+    constexpr const wchar_t* kRenamed = L"Astraeus Island";
+    wchar_t value[MAX_PATH * 2];
+    DWORD size = sizeof(value);
+    if (RegGetValueW(HKEY_CURRENT_USER, kRunKey, kRenamed, RRF_RT_REG_SZ, nullptr, value, &size) == ERROR_SUCCESS) {
+        RegSetKeyValueW(HKEY_CURRENT_USER, kRunKey, L"Astraeus", REG_SZ, value, size);
+        BYTE flags[12] = {};
+        DWORD fsize = sizeof(flags);
+        if (RegGetValueW(HKEY_CURRENT_USER, kApprovedKey, kRenamed, RRF_RT_REG_BINARY, nullptr, flags, &fsize) == ERROR_SUCCESS)
+            RegSetKeyValueW(HKEY_CURRENT_USER, kApprovedKey, L"Astraeus", REG_BINARY, flags, fsize); // on or off, as the user left it
+        RegDeleteKeyValueW(HKEY_CURRENT_USER, kRunKey, kRenamed);
+        RegDeleteKeyValueW(HKEY_CURRENT_USER, kApprovedKey, kRenamed);
+    }
+    PWSTR programs = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Programs, 0, nullptr, &programs))) {
+        DeleteFileW((std::wstring(programs) + L"\\Astraeus Island.lnk").c_str()); // StartShortcut writes the plain one
+        CoTaskMemFree(programs);
+    }
+}
+
 std::wstring BootExe() { // exe the run key launches at sign-in, unquoted, empty if none
     wchar_t value[MAX_PATH * 2];
     DWORD size = sizeof(value);
@@ -405,6 +425,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         return 1;
     }
     state.model->Start(state.drawer->Hwnd()); // background pollers post to drawer
+    UndoRename(); // before the startup entry is read
     if (!StartupOn()) tray::Ask(app->host, state.drawer->Shell()); // asks every launch while off
     else SyncBoot();
     StartShortcut(); // after the boot copy is settled, so the shortcut points at it
