@@ -51,7 +51,7 @@ Stage::Stage(Model& m, HMONITOR mon) : model(m), mode(m.look) {
     UINT pw = (UINT)(r.right - r.left), ph = (UINT)(r.bottom - r.top);
     W = pw / scale;
     H = ph / scale;
-    hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP, kClass, L"Astraeus Island", WS_POPUP, r.left, r.top, (int)pw, (int)ph,
+    hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP, kClass, L"Astraeus", WS_POPUP, r.left, r.top, (int)pw, (int)ph,
                            nullptr, nullptr, GetModuleHandleW(nullptr), this);
     if (!hwnd || !MakeDev(pw, ph)) return;
     ShowWindow(hwnd, SW_SHOW);

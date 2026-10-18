@@ -154,7 +154,7 @@ void Paint() {
         c.Dot(badge, 16, t.accent.Alpha(0.20f));
         c.Icon(glyph::Sparkle, badge, 18, t.accentHi, true);
     }
-    c.Text(L"Astraeus Island", Rect(kPad + 48, 13, 180, 18), Weight::Medium, 14, t.text);
+    c.Text(L"Astraeus", Rect(kPad + 48, 13, 160, 18), Weight::Medium, 14, t.text);
     c.Text(L"Bezel dashboard", Rect(kPad + 48, 30, 160, 14), Weight::Light, 11, t.textLow);
 
     for (int i = 0; i < kCount; ++i) {
@@ -298,7 +298,7 @@ void Show(HWND owner, const Theme& t, bool startup) {
     g->t = t;
     g->startup = startup;
     g->knob = startup ? 1.0f : 0.0f;
-    g->hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"AstraeusTray", L"Astraeus Island", WS_POPUP, p.x, p.y, 1, 1, owner,
+    g->hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"AstraeusTray", L"Astraeus", WS_POPUP, p.x, p.y, 1, 1, owner,
                               nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!g->hwnd) {
         delete g;
@@ -378,7 +378,7 @@ void AskPaint() {
     c.Ring(badge, 22, t.accentHi.Alpha(0.35f), 1);
     c.Icon(glyph::Rocket, badge, 24, t.accentHi, true);
     c.Text(L"Start with Windows?", Rect(80, 28, kAskW - 100, 24), Weight::Medium, 17, t.text);
-    c.Text(L"Astraeus Island can open when you sign in,", Rect(80, 54, kAskW - 100, 18), Weight::Light, 12.5f, t.textDim);
+    c.Text(L"Astraeus can open when you sign in,", Rect(80, 54, kAskW - 100, 18), Weight::Light, 12.5f, t.textDim);
     c.Text(L"so the bezel is always ready.", Rect(80, 72, kAskW - 100, 18), Weight::Light, 12.5f, t.textDim); // manual wrap
     for (int i = 0; i < 2; ++i) {
         D2D1_RECT_F r = AskBtn(i);
@@ -479,7 +479,7 @@ void Ask(HWND owner, const Theme& t) {
     q = new Prompt();
     q->owner = owner;
     q->t = t;
-    q->hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"AstraeusAsk", L"Astraeus Island", WS_POPUP, mi.rcWork.left,
+    q->hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"AstraeusAsk", L"Astraeus", WS_POPUP, mi.rcWork.left,
                               mi.rcWork.top, 1, 1, owner, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!q->hwnd) {
         delete q;

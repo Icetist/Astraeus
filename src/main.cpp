@@ -24,8 +24,6 @@ constexpr int kHotId = 1; // the open-the-panel shortcut
 constexpr UINT_PTR kSecTimer = 1;
 constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"; // per-user autostart
 constexpr const wchar_t* kApprovedKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
-constexpr const wchar_t* kRunName = L"Astraeus Island"; // the name Task Manager's startup list shows
-constexpr const wchar_t* kOldRunName = L"Astraeus"; // before the rename, moved over once
 using namespace tray; // menu command ids
 
 struct App {
@@ -83,23 +81,10 @@ bool Install(const std::wstring& dst) { // copy the exe (fonts are inside it) so
     return true;
 }
 
-void MoveRunName() { // the startup entry under its old name: carry it and its on/off over to the new one
-    wchar_t value[MAX_PATH * 2];
-    DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER, kRunKey, kOldRunName, RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS) return;
-    RegSetKeyValueW(HKEY_CURRENT_USER, kRunKey, kRunName, REG_SZ, value, size);
-    BYTE flags[12] = {};
-    DWORD fsize = sizeof(flags);
-    if (RegGetValueW(HKEY_CURRENT_USER, kApprovedKey, kOldRunName, RRF_RT_REG_BINARY, nullptr, flags, &fsize) == ERROR_SUCCESS)
-        RegSetKeyValueW(HKEY_CURRENT_USER, kApprovedKey, kRunName, REG_BINARY, flags, fsize);
-    RegDeleteKeyValueW(HKEY_CURRENT_USER, kRunKey, kOldRunName);
-    RegDeleteKeyValueW(HKEY_CURRENT_USER, kApprovedKey, kOldRunName);
-}
-
 std::wstring BootExe() { // exe the run key launches at sign-in, unquoted, empty if none
     wchar_t value[MAX_PATH * 2];
     DWORD size = sizeof(value);
-    if (RegGetValueW(HKEY_CURRENT_USER, kRunKey, kRunName, RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS) return L"";
+    if (RegGetValueW(HKEY_CURRENT_USER, kRunKey, L"Astraeus", RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS) return L"";
     std::wstring v = value;
     if (v.size() >= 2 && v.front() == L'"') v = v.substr(1, v.find(L'"', 1) - 1); // strip quotes
     return v;
@@ -110,27 +95,27 @@ bool StartupOn() { // any existing copy counts, wherever it lives
     if (exe.empty() || GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES) return false; // no entry, or exe deleted
     BYTE flags[12] = {};
     DWORD size = sizeof(flags);
-    if (RegGetValueW(HKEY_CURRENT_USER, kApprovedKey, kRunName, RRF_RT_REG_BINARY, nullptr, flags, &size) == ERROR_SUCCESS)
+    if (RegGetValueW(HKEY_CURRENT_USER, kApprovedKey, L"Astraeus", RRF_RT_REG_BINARY, nullptr, flags, &size) == ERROR_SUCCESS)
         return (flags[0] & 1) == 0; // settings > startup toggle: odd first byte = disabled
     return true;
 }
 
 void SetBoot(const std::wstring& exe) { // point the run key at exe and clear any settings disable
     std::wstring cmd = L"\"" + exe + L"\""; // quoted for paths with spaces
-    RegSetKeyValueW(HKEY_CURRENT_USER, kRunKey, kRunName, REG_SZ, cmd.c_str(), (DWORD)((cmd.size() + 1) * sizeof(wchar_t)));
+    RegSetKeyValueW(HKEY_CURRENT_USER, kRunKey, L"Astraeus", REG_SZ, cmd.c_str(), (DWORD)((cmd.size() + 1) * sizeof(wchar_t)));
     BYTE flags[12] = {2}; // 2 = enabled
-    RegSetKeyValueW(HKEY_CURRENT_USER, kApprovedKey, kRunName, REG_BINARY, flags, sizeof(flags));
+    RegSetKeyValueW(HKEY_CURRENT_USER, kApprovedKey, L"Astraeus", REG_BINARY, flags, sizeof(flags));
 }
 
 void Restart(const std::wstring& exe);
 void SetStartup(bool on) {
     std::wstring dst = InstallDir();
     if (!on) {
-        RegDeleteKeyValueW(HKEY_CURRENT_USER, kRunKey, kRunName);
+        RegDeleteKeyValueW(HKEY_CURRENT_USER, kRunKey, L"Astraeus");
         return;
     }
     if (!Install(dst)) { // nothing safe to point at
-        Log(L"Could not copy Astraeus Island to " + dst);
+        Log(L"Could not copy Astraeus to " + dst);
         return;
     }
     SetBoot(dst + L"\\Astraeus.exe");
@@ -140,8 +125,7 @@ void SetStartup(bool on) {
 void StartShortcut() { // a shortcut in the start menu, so astraeus can be found again after it's closed; rewritten only when it points somewhere else
     PWSTR programs = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_Programs, 0, nullptr, &programs))) return;
-    std::wstring lnk = std::wstring(programs) + L"\\Astraeus Island.lnk";
-    DeleteFileW((std::wstring(programs) + L"\\Astraeus.lnk").c_str()); // the shortcut from before the rename
+    std::wstring lnk = std::wstring(programs) + L"\\Astraeus.lnk";
     CoTaskMemFree(programs);
     std::wstring target = app->exePath, inst = InstallDir() + L"\\Astraeus.exe";
     if (_wcsicmp(BootExe().c_str(), inst.c_str()) == 0 && GetFileAttributesW(inst.c_str()) != INVALID_FILE_ATTRIBUTES) target = inst; // the copy that starts with windows and gets updated
@@ -154,7 +138,7 @@ void StartShortcut() { // a shortcut in the start menu, so astraeus can be found
     std::wstring dir = target.substr(0, target.find_last_of(L'\\'));
     link->SetPath(target.c_str());
     link->SetWorkingDirectory(dir.c_str());
-    link->SetDescription(L"Astraeus Island, a bezel dashboard");
+    link->SetDescription(L"Astraeus, a bezel dashboard");
     link->SetIconLocation(target.c_str(), 0);
     file->Save(lnk.c_str(), TRUE);
 }
@@ -226,7 +210,7 @@ void AddTray() {
     nid.uFlags = NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_APP_TRAY; // clicks come back to HostProc
     SetTrayIcon(nid);
-    wcscpy_s(nid.szTip, L"Astraeus Island");
+    wcscpy_s(nid.szTip, L"Astraeus");
     Shell_NotifyIconW(NIM_ADD, &nid);
 }
 
@@ -346,7 +330,7 @@ bool CreateHost(HINSTANCE instance) {
     wc.hInstance = instance;
     wc.lpszClassName = L"AstraeusHost";
     RegisterClassExW(&wc);
-    app->host = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, L"Astraeus Island", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, instance, nullptr); // invisible, no taskbar button
+    app->host = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, L"Astraeus", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, instance, nullptr); // invisible, no taskbar button
     if (!app->host) return false;
     app->tbMsg = RegisterWindowMessageW(L"TaskbarCreated"); // broadcast when explorer restarts
     AddTray();
@@ -421,12 +405,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         return 1;
     }
     state.model->Start(state.drawer->Hwnd()); // background pollers post to drawer
-    MoveRunName(); // before anything reads the startup entry
     if (!StartupOn()) tray::Ask(app->host, state.drawer->Shell()); // asks every launch while off
     else SyncBoot();
     StartShortcut(); // after the boot copy is settled, so the shortcut points at it
     if (sys::FinishUpdate()) { // first run after a swap
-        state.drawer->Peek(L"Astraeus Island updated", L"Now on version " APP_VER_W, glyph::Sparkle);
+        state.drawer->Peek(L"Astraeus updated", L"Now on version " APP_VER_W, glyph::Sparkle);
         tray::SetUpdate(tray::Upd::Updated); // the tray says so too until the next check
     }
     gfx::GiveBack(); // trim startup memory

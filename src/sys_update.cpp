@@ -13,14 +13,12 @@
 namespace sys {
 namespace {
 
-constexpr const wchar_t* kLatest[] = {L"https://api.github.com/repos/Icetist/Astraeus-Island/releases/latest", // public api, no token needed
-                                      L"https://api.github.com/repos/Icetist/Astraeus/releases/latest"}; // the name before the rename
+constexpr wchar_t kLatest[] = L"https://api.github.com/repos/Icetist/Astraeus/releases/latest"; // public api, no token needed
 constexpr char kAsset[] = "/Astraeus.exe"; // release asset the workflow uploads
 constexpr char kHashAsset[] = "/Astraeus.exe.sha256"; // sha-256 of that exe, uploaded by the same workflow
 constexpr size_t kMaxHashFile = 1024; // 64 hex chars plus maybe a filename
 constexpr size_t kHexLen = 64; // sha-256 as hex
-constexpr const char* kTrusted[] = {"https://github.com/Icetist/Astraeus-Island/releases/download/", // assets must come from this repo's releases
-                                    "https://github.com/Icetist/Astraeus/releases/download/"}; // under either of its names
+constexpr char kTrusted[] = "https://github.com/Icetist/Astraeus/releases/download/"; // assets must come from this repo's releases
 constexpr size_t kMaxExe = 32u << 20; // refuse anything absurdly large
 constexpr size_t kMinExe = 64u << 10; // or suspiciously small
 constexpr wchar_t kKey[] = L"Software\\Astraeus";
@@ -165,7 +163,7 @@ struct Updater::Impl {
 
     Updater::Result Fetch(HWND notify, UINT msg) {
         std::string body;
-        if (!Get(kLatest[0], body, 256 * 1024) && !Get(kLatest[1], body, 256 * 1024)) return Updater::kFailed; // still offline, next scheduled check retries
+        if (!Get(kLatest, body, 256 * 1024)) return Updater::kFailed; // still offline, next scheduled check retries
         size_t k = body.find("\"tag_name\"");
         std::string t = k == std::string::npos ? "" : JsonStr(body, k);
         if (t.empty()) return Updater::kFailed;
@@ -173,8 +171,7 @@ struct Updater::Impl {
         if (!manual.load() && Widen(t) == Done()) return Updater::kFailed; // this tag was already tried on its own; a press tries again
         const std::string url = AssetUrl(body, kAsset), hashUrl = AssetUrl(body, kHashAsset);
         if (url.empty() || hashUrl.empty()) return Updater::kCurrent; // still building, or a release without a published hash: never install unverified
-        auto trusted = [](const std::string& u) { return u.rfind(kTrusted[0], 0) == 0 || u.rfind(kTrusted[1], 0) == 0; };
-        if (!trusted(url) || !trusted(hashUrl)) return Updater::kFailed; // https, this repo only
+        if (url.rfind(kTrusted, 0) != 0 || hashUrl.rfind(kTrusted, 0) != 0) return Updater::kFailed; // https, this repo only
         tag = Widen(t); // the menu can say what it's fetching
         if (manual.load() && IsWindow(notify)) PostMessageW(notify, msg, Updater::kDownloading, 0);
         std::string sum;
