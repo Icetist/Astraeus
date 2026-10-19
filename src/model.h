@@ -92,7 +92,7 @@ public:
     void ToggleMic();
     void SetBright(float v);
     void SetAwake(bool on);
-    void SetLook(int look); // appearance: 0 dark, 1 light, 2 glass, 3 custom; persisted
+    void SetLook(int look); // appearance: 0 dark, 1 light, 2 glass, 3 custom, 4 halobar's; persisted
     void SetPref(int& field, const wchar_t* key, int value); // store a settings value and remember it
     void OpenSettings(); // astraeus settings sheet, one sheet at a time
     void PickScreen(const std::wstring& name); // live on this screen only
@@ -103,6 +103,16 @@ public:
     void CloseMixer();
     void SetAccent(int mode, int hex); // persisted, drawer crossfades to it
     void SetNotifyPills(bool on); // persisted, starts or stops the watcher
+    void SetQuiet(bool on); // do not disturb, shared with halobar
+    bool PollShared(); // once a second: do not disturb, halobar's pills and theme; true when the look changed
+    bool PillsWanted() const { return !quiet && (notifyPills || haloPills); } // windows notifications drop as pills now
+    bool Following() const { return look == kLookHalo; } // the look is halobar's
+    bool HaloRuns() const { return haloRuns; }
+    int Look() const; // what's drawn: halobar's material while following it, else the pick
+    int AccentMode() const; // these four: halobar's while following it and it has its own, else ours
+    int AccentHex() const;
+    int CustomBg() const;
+    int GlassBlur() const;
     bool CommitHex(); // apply the typed hex if it parses, ends typing either way
     static bool ParseHex(const std::wstring& text, int& rgb); // #rgb, #rrggbb, with or without #
     void CyclePower();
@@ -186,7 +196,14 @@ public:
     int brightPct = -1; // -1 hides brightness slider
 
     bool awake = false;
-    int look = 0; // appearance: 0 dark (default), 1 light, 2 glass, 3 custom
+    int look = 0; // appearance picked: 0 dark (default), 1 light, 2 glass, 3 custom, 4 follow halobar; Look() is what's drawn
+    static constexpr int kLookHalo = 4;
+    struct Halo { // halobar's own theme, read only while following it
+        int look = -1; // -1 it follows us back, else 0..3 like ours
+        int accent = -1; // -1 ours, 0 wallpaper, 1 the hex
+        int accentHex = 0x5B8CFF, customBg = 0x121826, glassBlur = 100; // halobar's defaults
+        bool operator==(const Halo&) const = default;
+    } halo;
     int customBg = 0x121826; // custom look: the panel background, 0xRRGGBB
     int lyricOffsetMs = 0; // fullscreen lyrics nudged later (+) or earlier (-), [ and ] change it
     int glassBlur = 100; // glass: 0 clear .. 100 fully frosted
@@ -211,6 +228,8 @@ public:
     int hexTarget = 0; // what the typed hex sets: 0 the accent, 1 the custom background
     std::wstring hexEdit; // what's typed so far, without the #
     int notifyPills = 0; // 1: windows notifications also drop as a pill
+    int quiet = 0; // do not disturb: no notification pills; shared with halobar through the same value
+    bool haloPills = false; // halobar runs with its pills on: it stays quiet while we're up, so we show them
     int fullLyrics = 1; // the fullscreen player shows synced lyrics beside the cover (on by default)
     bool settingsOpen = false;
     bool calOpen = false, calFresh = false; // fresh: just opened, start on this month
@@ -223,7 +242,7 @@ public:
     bool OnClipboard(); // true when a calendar link was taken
     static constexpr UINT_PTR kCalWaitTimer = 7; // the drawer's timer that ends the wait
     int reduceMotion = 0; // calmer animation: no bounce, no drifting, no sliding
-    sys::NotifyWatch notifyWatch; // only runs while notification pills are on
+    sys::NotifyWatch notifyWatch; // only runs while PillsWanted
     bool timerOn = false;
 
 private:
@@ -247,4 +266,7 @@ private:
     bool shown = false; // panel open, ui thread copy of SetLive
     int unsampled = 0; // seconds since the last stats sample
     void Sample(int seconds); // read cpu/ram/net, push one graph point per second covered
+    void SyncNotify(); // watcher on exactly while PillsWanted
+    bool haloRuns = false; // a halobar window exists
+    bool watching = false; // the watcher was last asked to run
 };

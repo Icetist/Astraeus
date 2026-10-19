@@ -6,6 +6,7 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <climits>
 
 namespace {
 
@@ -19,7 +20,17 @@ unsigned long long Ticks(const FILETIME& f) { // filetime -> 100ns count
 
 namespace {
 constexpr wchar_t kLookVal[] = L"Appearance";
-constexpr int kLooks = 4;
+constexpr int kLooks = Model::kLookHalo + 1;
+constexpr wchar_t kQuietVal[] = L"Quiet"; // do not disturb: halobar reads and writes the same value
+constexpr wchar_t kHaloKey[] = L"Software\\HaloBar"; // halobar's own settings, never written from here
+constexpr wchar_t kHaloClass[] = L"HaloBar"; // its window: there means it's running
+
+int HaloNum(HKEY key, const wchar_t* name, int fallback, int lo, int hi) { // out of range is stale or hand-edited: the default
+    DWORD v = 0, size = sizeof(v);
+    if (RegGetValueW(key, nullptr, name, RRF_RT_REG_DWORD, nullptr, &v, &size) != ERROR_SUCCESS) return fallback;
+    int n = (int)v; // 0xFFFFFFFF reads back as -1, halobar's "follow"
+    return n < lo || n > hi ? fallback : n;
+}
 }
 
 Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::ReadNum(kLookVal, 0)) {
@@ -35,6 +46,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     accentMode = (std::clamp)(sys::ReadNum(L"AccentMode", cfg.wallTheme ? 0 : 1), 0, 1); // settings override the ini once used
     accentHex = sys::ReadNum(L"AccentHex", iniHex) & 0xFFFFFF;
     notifyPills = (std::clamp)(sys::ReadNum(L"NotifyPills", 0), 0, 1);
+    quiet = sys::ReadNum(kQuietVal, 0) ? 1 : 0; // missing means off
     fullLyrics = (std::clamp)(sys::ReadNum(L"FullLyrics", 1), 0, 1);
     BOOL anim = TRUE;
     SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &anim, 0); // windows' own "animation effects": off means start calm
@@ -54,7 +66,7 @@ Model::~Model() {
 void Model::Start(HWND hwnd) {
     notify = hwnd;
     share.Notify(hwnd, WM_APP_SHARE);
-    if (notifyPills) notifyWatch.Start(hwnd, WM_APP_NOTIFY);
+    PollShared(); // halobar may already be handing its pills over, and its theme may be ours
     media.Start(hwnd, WM_APP_MEDIA);
     radios.Start(hwnd, WM_APP_RADIOS);
     cals.Sync(hwnd, WM_APP_CAL, 0); // the month's dots are ready by the time the calendar first opens
@@ -347,6 +359,7 @@ void Model::OpenSettings() {
     CloseMixer();
     settingsOpen = true;
     screenList = sys::ListScreens(); // monitors may have changed since last time
+    PollShared(); // the halobar swatch shows what it wears now
 }
 
 void Model::PickScreen(const std::wstring& name) {
@@ -463,9 +476,55 @@ void Model::CloseSettings() {
 
 void Model::SetNotifyPills(bool on) {
     SetPref(notifyPills, L"NotifyPills", on ? 1 : 0);
-    if (on) notifyWatch.Start(notify, WM_APP_NOTIFY);
-    else notifyWatch.Stop();
+    SyncNotify();
 }
+
+void Model::SetQuiet(bool on) {
+    SetPref(quiet, kQuietVal, on ? 1 : 0); // halobar sees it within a moment, it watches our key
+    SyncNotify();
+}
+
+void Model::SyncNotify() {
+    bool want = PillsWanted() && notify;
+    if (want == watching) return; // only on a change: starting asks windows for access, not something to repeat every second
+    watching = want;
+    if (want) notifyWatch.Start(notify, WM_APP_NOTIFY);
+    else notifyWatch.Stop(); // quiet or nobody wants pills: nothing listens
+}
+
+bool Model::PollShared() {
+    quiet = sys::ReadNum(kQuietVal, 0) ? 1 : 0; // halobar may have flipped it
+    haloRuns = FindWindowW(kHaloClass, nullptr) != nullptr;
+    Halo was = halo, now;
+    bool pills = haloRuns; // running without saved settings: its default is pills on
+    HKEY key = nullptr;
+    bool theme = Following() || settingsOpen; // the settings swatch previews it too
+    if ((haloRuns || theme) && RegOpenKeyExW(HKEY_CURRENT_USER, kHaloKey, 0, KEY_QUERY_VALUE, &key) == ERROR_SUCCESS) {
+        pills = haloRuns && HaloNum(key, L"Pills", 1, 0, 1) != 0;
+        if (theme) { // its theme matters only while we wear it or show it
+            now.look = HaloNum(key, L"Look", -1, -1, 3);
+            now.accent = HaloNum(key, L"Accent", -1, -1, 1);
+            now.accentHex = HaloNum(key, L"AccentHex", now.accentHex, INT_MIN, INT_MAX) & 0xFFFFFF;
+            now.customBg = HaloNum(key, L"CustomBg", now.customBg, INT_MIN, INT_MAX) & 0xFFFFFF;
+            now.glassBlur = HaloNum(key, L"GlassBlur", now.glassBlur, 0, 100);
+        }
+        RegCloseKey(key);
+    }
+    haloPills = pills;
+    if (theme) halo = now; // not installed: its defaults, which follow us, so dark
+    SyncNotify();
+    return Following() && halo != was;
+}
+
+int Model::Look() const {
+    if (!Following()) return look;
+    return halo.look >= 0 ? halo.look : 0; // halobar follows us while we follow it: dark ends the loop
+}
+
+int Model::AccentMode() const { return Following() && halo.accent >= 0 ? halo.accent : accentMode; }
+int Model::AccentHex() const { return Following() && halo.accent == 1 ? halo.accentHex : accentHex; }
+int Model::CustomBg() const { return Following() && halo.look == 3 ? halo.customBg : customBg; }
+int Model::GlassBlur() const { return Following() && halo.look == 2 ? halo.glassBlur : glassBlur; }
 
 void Model::SetAccent(int mode, int hex) {
     SetPref(accentMode, L"AccentMode", mode ? 1 : 0);
@@ -495,6 +554,7 @@ bool Model::CommitHex() {
 void Model::SetLook(int v) {
     look = v < 0 || v >= kLooks ? 0 : v;
     sys::SaveNum(kLookVal, look);
+    PollShared(); // following halobar: its theme now, not a second later
 }
 
 namespace {

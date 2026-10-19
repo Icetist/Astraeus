@@ -24,4 +24,5 @@ constexpr int BtConn = 0xE1A8, BtSearch = 0xE1AA, Devices = 0xE1B1; // bluetooth
 constexpr int Keys = 0xE312, Mouse = 0xE323, Phone = 0xE32C, Pc = 0xE30A, Pad = 0xEA28, Watch = 0xE334;
 constexpr int Delete = 0xE872, Add = 0xE145, Close = 0xE5CD, OpenNew = 0xE89E;
 constexpr int Sparkle = 0xE65F, Edit = 0xE3C9, Rocket = 0xEB9B; // tray menu
+constexpr int Dnd = 0xF08F; // do not disturb, the same mark halobar uses
 }

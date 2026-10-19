@@ -1,7 +1,4 @@
-#include <algorithm>
-#include <cmath>
 #include <cwchar>
-#include <iterator>
 #include <d2d1_1helper.h>
 #include <d2d1effects.h>
 
@@ -15,8 +12,6 @@ constexpr float kRailW = 72; // left nav rail width in dips
 constexpr int kPages = 5;
 const int kRailIcons[kPages] = {glyph::Overview, glyph::Music, glyph::System, glyph::Network, glyph::Tools};
 constexpr float kThemeSec = 0.8f; // palette crossfade duration
-constexpr float kIslandBarsW = 22; // the pill's mini visualizer, or the expand chevron on hover
-constexpr float kBarPx = 0.5f; // a bar has to move this far to be worth repainting
 
 }
 
@@ -111,7 +106,7 @@ void Drawer::FitSurfaces() {
     UINT w = (UINT)((Side() ? depth : W) * scale + 0.5f), h = (UINT)((Side() ? Span() : depth) * scale + 0.5f);
     if (!ctx || (w == surfW && h == surfH) || !w || !h) return;
     pillLayer.Reset(); // sized for the old surfaces
-    pillKey = pillShown = 0;
+    pillKey = 0;
     ctx->SetTarget(nullptr);
     backBuf.Reset();
     bool ok = false;
@@ -161,7 +156,6 @@ void Drawer::FreeDev() {
     dcomp.Reset();
     backBuf.Reset();
     pillLayer.Reset(); // belongs to this device
-    pillShown = 0;
     swap.Reset();
     ctx.Reset();
     gfx::Settle(d3d.Get());
@@ -188,7 +182,7 @@ void Drawer::SyncCover() {
 }
 
 void Drawer::SyncWall() {
-    if (model.accentMode != 0) return; // custom accent: the wallpaper doesn't decide
+    if (model.AccentMode() != 0) return; // custom accent: the wallpaper doesn't decide
     std::wstring path = theme::WallPath();
     WIN32_FILE_ATTRIBUTE_DATA info;
     if (path.empty() || !GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &info)) return;
@@ -207,19 +201,20 @@ Theme Drawer::Make(Seed s) const {
 }
 
 void Drawer::SyncLook() {
-    if (model.look == lookNow && model.customBg == bgNow) return;
-    bool rebuild = (model.look == 2) != (lookNow == 2) && ctx; // glass draws through a different pipeline
-    lookNow = model.look;
-    bgNow = model.customBg;
+    int look = model.Look(), bg = model.CustomBg(); // halobar's while following it
+    if (look == lookNow && bg == bgNow) return;
+    bool rebuild = (look == 2) != (lookNow == 2) && ctx; // glass draws through a different pipeline
+    lookNow = look;
+    bgNow = bg;
     if (rebuild) FreeDev(); // the caller rebuilds it right away for the new appearance
     SetShell(Make(shellSeed)); // media follows unless album tinted
     if (coverSrc && cfg.albumCol) SetMedia(Make(mediaSeed));
 }
 
 void Drawer::SyncAccent() {
-    if (model.accentMode == accentModeNow && model.accentHex == accentHexNow) return;
-    accentModeNow = model.accentMode;
-    accentHexNow = model.accentHex;
+    if (model.AccentMode() == accentModeNow && model.AccentHex() == accentHexNow) return;
+    accentModeNow = model.AccentMode();
+    accentHexNow = model.AccentHex();
     if (accentModeNow) {
         SetShell(Make(shellSeed = theme::FromCol(Color::Rgb((uint32_t)accentHexNow)))); // hue and saturation kept, brightness tuned by the theme
     } else {
@@ -474,7 +469,7 @@ bool Drawer::DrawIsland(float h, float dt, double now) {
     }
 
     D2D1_RECT_F art = Rect(x0, cy - 10, 20, 20); // cover thumbnail, rounded like an app icon
-    const float barsW = kIslandBarsW; // mini visualizer on the right, or the expand chevron on hover
+    const float barsW = 22; // mini visualizer on the right, or the expand chevron on hover
     float tx = art.right + 7, tw = inner - (tx - x0) - barsW - 6;
     if (still) {
         if (cover) {
@@ -556,56 +551,6 @@ bool Drawer::PillLayer(float h, float shapeWide) { // before the frame: rebuilt 
     pillKey = ok ? key : 0;
     if (!ok) pillLayer.Reset();
     return ok;
-}
-
-D2D1_RECT_F Drawer::IslandBarsBox(float h) const {
-    float inner = kIslandW - 2 * cfg.fillet - 20, cy = h / 2 - 1; // laid out as DrawIsland does
-    float bx = W / 2 + inner / 2 - kIslandBarsW, dx = shapeXform._31, dy = shapeXform._32; // top edge: the placement is a plain shift
-    return {bx - 1 + dx, cy - 8 + dy, bx + kIslandBarsW + 1 + dx, cy + 8 + dy}; // bars reach 7 dips either side of the middle, plus a dip for antialiasing
-}
-
-bool Drawer::BarsFrame(float h, float dt, double now) {
-    if (!glass || !pillLayer || !pillShown || pillShown != pillKey || islandHot || !model.hasTrack || model.track.title.empty()) return false; // the surface must already hold this exact pill
-    bool moving = StepIslandBars(dt, now);
-    bool seen = false;
-    for (int i = 0; i < 4; ++i) seen = seen || std::fabs(islandBars[i] - barsShown[i]) * 11 > kBarPx; // 11 dips is a bar's full travel
-    input.pressed = input.released = input.rclick = false;
-    input.wheel = 0;
-    if (seen) { // cover, title and shape stay as they are: only the bars' square is redrawn, straight into composition
-        D2D1_RECT_F box = IslandBarsBox(h);
-        D2D1_SIZE_U full = backBuf->GetPixelSize();
-        RECT px = {(std::max)(0L, (LONG)std::floor(box.left * scale)), (std::max)(0L, (LONG)std::floor(box.top * scale)),
-                   (std::min)((LONG)full.width, (LONG)std::ceil(box.right * scale)), (std::min)((LONG)full.height, (LONG)std::ceil(box.bottom * scale))};
-        D2D1_POINT_2F shift{};
-        if (!GlassBeginPart(px, shift)) { // the surface wants a whole frame
-            pillShown = 0;
-            return false;
-        }
-        D2D1_MATRIX_3X2_F at = D2D1::Matrix3x2F::Translation(shift.x, shift.y);
-        ctx->BeginDraw();
-        ctx->SetTransform(at);
-        ctx->PushAxisAlignedClip({px.left / scale, px.top / scale, px.right / scale, px.bottom / scale}, D2D1_ANTIALIAS_MODE_ALIASED); // every pixel of the update: composition keeps none of it
-        ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
-        ctx->DrawImage(pillLayer.Get());
-        ctx->SetTransform(shapeXform * at);
-        pillPass = 2;
-        DrawIsland(h, 0, now); // levels are stepped already, a zero step only draws them
-        pillPass = 0;
-        ctx->SetTransform(at);
-        ctx->PopAxisAlignedClip();
-        HRESULT hr = ctx->EndDraw();
-        GlassEndPart();
-        if (FAILED(hr)) { // device trouble: the whole-frame path knows how to recover
-            pillShown = 0;
-            return false;
-        }
-        std::copy(std::begin(islandBars), std::end(islandBars), barsShown);
-    }
-    needsFrame = moving && !Unseen();
-    LARGE_INTEGER due;
-    due.QuadPart = -(LONGLONG)(pillSync * 1e7 / hz); // the pill's own beat, whether or not anything was drawn
-    SetWaitableTimer(frameWait, &due, 0, nullptr, nullptr, FALSE);
-    return true;
 }
 
 bool Drawer::DrawIslandSide(float h, float a) {

@@ -74,9 +74,6 @@ struct Drawer::Glass {
     WUC::ContainerVisual root{nullptr};
     bool filled = false; // a new surface must be drawn whole once before it accepts partial updates
     float blurShown = -1;
-    ComPtr<ID2D1Geometry> masked; // the outline composition already has, kept alive so its pointer can't be reused
-    D2D1_MATRIX_3X2_F maskedAt{}; // and where it was placed
-    bool maskSet = false;
 };
 
 bool Drawer::OpenGlass(const DXGI_SWAP_CHAIN_DESC1& desc) {
@@ -138,49 +135,17 @@ bool Drawer::GlassResize(UINT w, UINT h) {
 
 void Drawer::GlassMask(ID2D1Geometry* shape) {
     if (!glass) return;
-    D2D1_MATRIX_3X2_F at = shapeXform * D2D1::Matrix3x2F::Scale(scale, scale); // same placement as the panel itself, in pixels like the visual
-    if (glass->maskSet && glass->masked.Get() == shape && !memcmp(&at, &glass->maskedAt, sizeof(at))) return; // a resting shape: composition re-reads a path on every set, skip it
     ComPtr<ID2D1Factory> f;
-    ComPtr<ID2D1TransformedGeometry> placed;
+    ComPtr<ID2D1TransformedGeometry> placed; // same placement as the panel itself, in pixels like the visual
     ctx->GetFactory(&f);
-    bool ok = shape && SUCCEEDED(f->CreateTransformedGeometry(shape, at, &placed));
+    bool ok = shape && SUCCEEDED(f->CreateTransformedGeometry(shape, shapeXform * D2D1::Matrix3x2F::Scale(scale, scale), &placed));
     D2D1_RECT_F box{};
     ok = ok && SUCCEEDED(placed->GetBounds(nullptr, &box)) && box.right - box.left >= 4 && box.bottom - box.top >= 4; // a sliver of an outline makes composition fail fast, hide the blur instead
     try {
         if (ok) glass->outline.Path(WUC::CompositionPath(winrt::make<ShapeSource>(placed.Get())));
         glass->frost.IsVisible(ok);
-        glass->masked = shape;
-        glass->maskedAt = at;
-        glass->maskSet = true;
     } catch (...) {
         glass->frost.IsVisible(false); // no clip, no blur: never frost the whole window
-        glass->maskSet = false; // try again next frame
-    }
-}
-
-bool Drawer::GlassBeginPart(const RECT& px, D2D1_POINT_2F& shift) {
-    if (!glass || !glass->surface || !glass->filled || px.right <= px.left || px.bottom <= px.top) return false;
-    auto interop = glass->surface.as<abi::ICompositionDrawingSurfaceInterop>();
-    ComPtr<IDXGISurface> dst;
-    POINT off = {};
-    if (FAILED(interop->BeginDraw(&px, IID_PPV_ARGS(&dst), &off))) return false;
-    D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-                                                         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96 * scale, 96 * scale);
-    ComPtr<ID2D1Bitmap1> into; // composition's texture is ours only until EndDraw: wrapped fresh each time, never kept
-    if (FAILED(ctx->CreateBitmapFromDxgiSurface(dst.Get(), &bp, &into))) {
-        interop->EndDraw();
-        return false;
-    }
-    ctx->SetTarget(into.Get()); // straight into composition: no draw into the back buffer and copy after
-    shift = {(off.x - px.left) / scale, (off.y - px.top) / scale}; // the update sits at off in the surface's atlas, a whole pixel count
-    return true;
-}
-
-void Drawer::GlassEndPart() {
-    ctx->SetTarget(backBuf.Get());
-    try {
-        glass->surface.as<abi::ICompositionDrawingSurfaceInterop>()->EndDraw();
-    } catch (...) {
     }
 }
 

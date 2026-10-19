@@ -295,7 +295,7 @@ void DrawTools(PageCtx& p) {
 
     D2D1_RECT_F quick = tall ? D2D1_RECT_F{a.left, timer.bottom + 12, a.right, a.bottom} : D2D1_RECT_F{timer.right + 12, timer.top, a.right, a.bottom};
     float tw = (Width(quick) - 10) / 2, th = (Height(quick) - 10) / 2; // 2x2 quick grid, 10px gaps
-    // two by two: screenshot and color on top; awake and settings below on laptops, settings across on desktops (task manager lives on the system page)
+    // screenshot and color on top; do not disturb and settings below, awake first on laptops (task manager lives on the system page)
     if (w::Tile(ui, t, Ui::Id("tl.snip"), Rect(quick.left, quick.top, tw, th), glyph::Snip, L"Screenshot", L"Pick a region", false)) {
         p.wantClose = true; // hide drawer so it's not in the snip
         sys::OpenSnip();
@@ -304,14 +304,17 @@ void DrawTools(PageCtx& p) {
         p.wantClose = true; // out of the way of what you're picking from
         m.pickPending = true; // the picker starts once the panel is all the way up
     }
-    float sx = quick.left, sw = Width(quick);
+    int cells = m.portable ? 3 : 2; // below: awake on laptops, do not disturb, settings
+    float sw = (Width(quick) - 10 * (cells - 1)) / cells, sx = quick.left, by = quick.top + th + 10;
     if (m.portable) {
-        if (w::Tile(ui, t, Ui::Id("tl.awake"), Rect(quick.left, quick.top + th + 10, tw, th), glyph::Coffee, L"Awake", m.awake ? L"Screen stays on" : L"Off", m.awake))
+        if (w::Tile(ui, t, Ui::Id("tl.awake"), Rect(sx, by, sw, th), glyph::Coffee, L"Awake", m.awake ? L"Screen stays on" : L"Off", m.awake))
             m.SetAwake(!m.awake);
-        sx += tw + 10;
-        sw = tw;
+        sx += sw + 10;
     }
-    if (w::Tile(ui, t, Ui::Id("tl.settings"), Rect(sx, quick.top + th + 10, sw, th), glyph::Settings, L"Settings", L"Astraeus", false))
+    if (w::Tile(ui, t, Ui::Id("tl.dnd"), Rect(sx, by, sw, th), glyph::Dnd, L"Do not disturb", m.quiet ? L"On" : L"Off", m.quiet))
+        m.SetQuiet(!m.quiet); // halobar goes quiet with it
+    sx += sw + 10;
+    if (w::Tile(ui, t, Ui::Id("tl.settings"), Rect(sx, by, sw, th), glyph::Settings, L"Settings", L"Astraeus", false))
         m.OpenSettings(); // windows settings is one tap away inside the sheet
 }
 

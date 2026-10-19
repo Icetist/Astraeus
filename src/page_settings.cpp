@@ -20,6 +20,9 @@ int wheelPick = 0; // custom wheel: the handle being edited, 0 accent, 1 backgro
 float settingsScroll = 0; // wanted scroll of the cards, eased by Scroll
 constexpr float kMinRow = 196; // cards never squeeze below this: the page scrolls instead
 constexpr float kLyricsRow = 112; // the lyrics card is a single switch, a shorter row
+constexpr float kDndW = 44; // the do not disturb pill in the notifications card
+constexpr int kSwatchCols = 3; // material swatches per row
+constexpr float kSwatchGap = 10;
 float Rad(float deg) { return deg * kPi / 180; }
 
 int ToHex(Color c) {
@@ -93,7 +96,7 @@ void Orb(PageCtx& p, D2D1_POINT_2F o, float R, bool live) { // hue ring around a
     (void)h;
 
     custom = m.accentMode == 1;
-    Theme tinted = Theme::From(Seed{cur.hue, cur.chroma, m.look, cur.rgb, m.customBg}); // what the theme makes of it
+    Theme tinted = Theme::From(Seed{cur.hue, cur.chroma, m.Look(), cur.rgb, m.CustomBg()}); // what the theme makes of it
     Color accent = custom ? tinted.accent : t.accent;
     float lift = ui.Smooth(id + 1, live && dist < R - ringW ? 1.0f : 0, 14);
     c.Glow(o, R * 1.5f, R * 1.5f, accent.Alpha(0.22f + 0.10f * lift));
@@ -378,7 +381,28 @@ void Motion(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a tiny spring: bou
     if (h.clicked) m.SetPref(m.reduceMotion, L"ReduceMotion", m.reduceMotion ? 0 : 1);
 }
 
-void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // four swatches drawn in the actual materials
+void Swatch(Canvas& c, const Theme& look, D2D1_RECT_F q, bool glassy, float hue, float sw, float sh) { // one material, drawn in itself
+    if (glassy) { // glass: color under frost, a light streak, a bright rim, all inside its rounded corners
+        ComPtr<ID2D1RoundedRectangleGeometry> round;
+        if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(q, 12, 12), &round))) return;
+        c.Target()->PushLayer(D2D1::LayerParameters(q, round.Get()), nullptr);
+        c.Dot({q.left + sw * 0.3f, q.top + sh * 0.7f}, sh * 0.55f, look.accent.Alpha(0.65f));
+        c.Dot({q.right - sw * 0.25f, q.top + sh * 0.25f}, sh * 0.45f, theme::Hsl(hue + 60, 0.7f, 0.6f, 0.55f));
+        c.FillV(q, 12, Color{1, 1, 1, 0.22f}, Color{1, 1, 1, 0.06f});
+        c.Line({q.left + sw * 0.15f, q.bottom + 6}, {q.left + sw * 0.75f, q.top - 6}, Color{1, 1, 1, 0.22f}, 9);
+        c.Target()->PopLayer();
+        c.Stroke(q, 12, Color{1, 1, 1, 0.40f}, 1.2f);
+        return;
+    }
+    c.FillV(q, 12, look.cardHi, look.bg.Alpha(1));
+    float u = (std::min)(1.0f, sh / 60); // the little page inside scales with the swatch
+    c.Fill(Rect(q.left + 10, q.top + 10 * u, sw * 0.5f, 5), 2.5f, look.text.Alpha(0.85f)); // a line of "text"
+    c.Fill(Rect(q.left + 10, q.top + 20 * u, sw * 0.32f, 4), 2, look.textDim.Alpha(0.8f));
+    c.Fill(Rect(q.left + 10, q.bottom - 12 * u - 4, sw - 20, 5), 2.5f, look.accent); // and an accent bar
+    c.StrokeV(q, 12, look.hairTop, look.hairBot, 1);
+}
+
+void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // five swatches drawn in the actual materials, halobar's in whatever it wears
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.shell;
@@ -387,36 +411,28 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // four swatches dr
     bool glass = m.look == 2;
     Seed s = Base(m, t);
     float extra = glass ? 40.0f : 0.0f; // room for the frost bar
-    float sw = (Width(in) - 10) / 2, sh = (std::min)((Height(in) - extra - 2 * 18 - 6) / 2, sw * 0.62f); // two by two, a label under each
-    static const wchar_t* const kNames[] = {L"Dark", L"Light", L"Glass", L"Custom"};
-    for (int i = 0; i < 4; ++i) {
-        D2D1_RECT_F q = Rect(in.left + (i % 2) * (sw + 10), in.top + 2 + (i / 2) * (sh + 24), sw, sh);
+    float sw = (Width(in) - 2 * kSwatchGap) / kSwatchCols, sh = (std::min)((Height(in) - extra - 2 * 18 - 6) / 2, sw * 0.62f); // three, then two, a label under each
+    static const wchar_t* const kNames[] = {L"Dark", L"Light", L"Glass", L"Custom", L"HaloBar"};
+    for (int i = 0; i <= Model::kLookHalo; ++i) {
+        int row = i / kSwatchCols, col = i % kSwatchCols;
+        float x0 = row ? in.left + (sw + kSwatchGap) / 2 : in.left; // the shorter second row sits centered
+        D2D1_RECT_F q = Rect(x0 + col * (sw + kSwatchGap), in.top + 2 + row * (sh + 24), sw, sh);
         uint32_t id = Ui::Id("set.mat", i);
         Ui::Hit h = live ? ui.Button(id, q) : Ui::Hit{};
         float on = ui.Smooth(id + 10, m.look == i ? 1.0f : 0, 14), hov = ui.Smooth(id + 20, h.hover ? 1.0f : 0, 16);
         q = Inset(q, -2 * on, -2 * on); // the chosen one lifts
-        Theme look = Theme::From(Seed{s.hue, s.chroma, i, s.rgb, m.customBg});
-        if (on > 0.01f) c.Glow({(q.left + q.right) / 2, (q.top + q.bottom) / 2}, sw, sh, t.accent.Alpha(0.20f * on));
-        if (i == 2) { // glass: color under frost, a light streak, a bright rim, all inside its rounded corners
-            ComPtr<ID2D1RoundedRectangleGeometry> round;
-            if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(q, 12, 12), &round))) continue;
-            c.Target()->PushLayer(D2D1::LayerParameters(q, round.Get()), nullptr);
-            c.Dot({q.left + sw * 0.3f, q.top + sh * 0.7f}, sh * 0.55f, look.accent.Alpha(0.65f));
-            c.Dot({q.right - sw * 0.25f, q.top + sh * 0.25f}, sh * 0.45f, theme::Hsl(s.hue + 60, 0.7f, 0.6f, 0.55f));
-            c.FillV(q, 12, Color{1, 1, 1, 0.22f}, Color{1, 1, 1, 0.06f});
-            c.Line({q.left + sw * 0.15f, q.bottom + 6}, {q.left + sw * 0.75f, q.top - 6}, Color{1, 1, 1, 0.22f}, 9);
-            c.Target()->PopLayer();
-            c.Stroke(q, 12, Color{1, 1, 1, 0.40f}, 1.2f);
-        } else {
-            c.FillV(q, 12, look.cardHi, look.bg.Alpha(1));
-            float u = (std::min)(1.0f, sh / 60); // the little page inside scales with the swatch
-            c.Fill(Rect(q.left + 10, q.top + 10 * u, sw * 0.5f, 5), 2.5f, look.text.Alpha(0.85f)); // a line of "text"
-            c.Fill(Rect(q.left + 10, q.top + 20 * u, sw * 0.32f, 4), 2, look.textDim.Alpha(0.8f));
-            c.Fill(Rect(q.left + 10, q.bottom - 12 * u - 4, sw - 20, 5), 2.5f, look.accent); // and an accent bar
-            c.StrokeV(q, 12, look.hairTop, look.hairBot, 1);
+        int mat = i, bg = m.customBg;
+        Seed seed = s;
+        if (i == Model::kLookHalo) { // what following halobar would look like right now
+            mat = m.halo.look >= 0 ? m.halo.look : 0; // it follows us back: dark
+            if (m.halo.look == 3) bg = m.halo.customBg;
+            if (m.halo.accent == 1) seed = theme::FromCol(Color::Rgb((uint32_t)m.halo.accentHex));
         }
+        Theme look = Theme::From(Seed{seed.hue, seed.chroma, mat, seed.rgb, bg});
+        if (on > 0.01f) c.Glow({(q.left + q.right) / 2, (q.top + q.bottom) / 2}, sw, sh, t.accent.Alpha(0.20f * on));
+        Swatch(c, look, q, mat == 2, seed.hue, sw, sh);
         if (on > 0.01f || hov > 0.01f) c.Stroke(Inset(q, -3, -3), 14, t.accent.Alpha((std::max)(on, 0.5f * hov)), 2);
-        c.Text(kNames[i], Rect(q.left, q.bottom + 3, Width(q), 14), Weight::Medium, 11, t.textDim.Mix(t.text, on), Align::Center);
+        c.Text(kNames[i], Rect(q.left - 4, q.bottom + 3, Width(q) + 8, 14), Weight::Medium, 11, t.textDim.Mix(t.text, on), Align::Center);
         if (h.clicked && m.look != i) {
             if (i == 3 && m.accentMode == 0) m.SetAccent(1, ToHex(t.accent)); // the wheel starts from the accent you're looking at
             m.SetLook(i); // drawer crossfades, glass swaps its pipeline
@@ -543,8 +559,12 @@ void Notices(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a little screen w
     const Theme& t = p.shell;
     Model& m = p.m;
     D2D1_RECT_F in = Box(c, t, r, L"NOTIFICATIONS");
+    D2D1_RECT_F dnd = {in.right - kDndW, in.bottom - 18, in.right, in.bottom}; // do not disturb, beside the label like the screens card's "all"
+    Ui::Hit dh = live ? ui.Button(Ui::Id("set.dnd"), dnd) : Ui::Hit{}; // first, so a press on it isn't the card's
     Ui::Hit h = live ? ui.Button(Ui::Id("set.notice"), in) : Ui::Hit{};
-    float on = ui.Smooth(Ui::Id("set.notice", 1), m.notifyPills ? 1.0f : 0, 12);
+    h.hover = h.hover && !dh.hover;
+    float on = ui.Smooth(Ui::Id("set.notice", 1), m.PillsWanted() ? 1.0f : 0, 12); // halobar's handed-over pills show here too
+    float quiet = ui.Smooth(Ui::Id("set.dnd", 1), m.quiet ? 1.0f : 0, 14);
     float mw = (std::min)(Width(in) - 40, (Height(in) - 34) / 0.6f), mh = mw * 0.6f;
     D2D1_RECT_F scr = Rect((in.left + in.right - mw) / 2, in.top + 4, mw, mh);
     Monitor(c, t, scr);
@@ -556,8 +576,11 @@ void Notices(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a little screen w
         c.Fill(Rect(pill.left + ph + 2, pill.top + ph * 0.38f, pw * 0.5f, ph * 0.24f), ph * 0.12f, Color{1, 1, 1, 0.75f * on});
     }
     if (h.hover) c.Stroke(Inset(in, -4, -4), 12, t.accent.Alpha(0.35f), 1.5f);
-    c.Text(m.notifyPills ? L"Shown as pills" : L"Off", Rect(in.left, in.bottom - 14, Width(in), 14), Weight::Medium, 11,
-           m.notifyPills ? t.accentHi : t.textDim, Align::Center);
+    const wchar_t* label = m.quiet ? L"Do not disturb" : m.notifyPills ? L"Shown as pills" : m.haloPills ? L"Pills for HaloBar" : L"Off"; // halobar hands its pills over while we run
+    c.Text(label, Rect(in.left, in.bottom - 16, Width(in) - kDndW - 4, 14), Weight::Medium, 11, m.PillsWanted() ? t.accentHi : t.textDim);
+    c.Fill(dnd, 9, t.track.Alpha(0.8f).Mix(t.accent, quiet));
+    c.Icon(glyph::Dnd, {(dnd.left + dnd.right) / 2, (dnd.top + dnd.bottom) / 2}, 14, t.textDim.Mix(t.onAccent, quiet).Mix(t.text, dh.hover ? 0.4f * (1 - quiet) : 0), quiet > 0.5f);
+    if (dh.clicked) m.SetQuiet(!m.quiet); // shared: halobar goes quiet too
     if (h.clicked) m.SetNotifyPills(m.notifyPills == 0);
 }
 

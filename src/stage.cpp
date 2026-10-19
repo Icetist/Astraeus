@@ -30,7 +30,7 @@ double Seconds() {
 
 }
 
-Stage::Stage(Model& m, HMONITOR mon) : model(m), mode(m.look) {
+Stage::Stage(Model& m, HMONITOR mon) : model(m), mode(m.Look()) {
     static bool registered = [] {
         WNDCLASSEXW wc = {sizeof(wc)};
         wc.lpfnWndProc = Proc;
@@ -206,7 +206,7 @@ void Stage::SyncCover() {
 void Stage::SyncTheme(const Theme& media, float dt) {
     Seed s = artSeeded ? artSeed : theme::FromCol(media.accent); // no art: whatever the panel's media palette is
     s.look = mode;
-    s.bg = model.customBg;
+    s.bg = model.CustomBg();
     Theme want = Theme::From(s);
     if (!lookSet) { // first frame: start on the right colors
         look = lookFrom = lookTo = want;

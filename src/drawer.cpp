@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <iterator>
 
 #pragma comment(lib, "shcore.lib")
 #pragma comment(lib, "wtsapi32.lib")
@@ -41,11 +40,11 @@ double Seconds() {
 Drawer::Drawer(const Config& c, Model& m) : cfg(c), model(m) {
     W = cfg.panW + 2 * cfg.fillet; // room for curved shoulders on both sides
     H = cfg.panH;
-    accentModeNow = model.accentMode;
-    accentHexNow = model.accentHex;
+    accentModeNow = model.AccentMode();
+    accentHexNow = model.AccentHex();
     shellSeed = mediaSeed = accentModeNow ? theme::FromCol(Color::Rgb((uint32_t)accentHexNow)) : Seed{}; // wallpaper theme fills in later
-    lookNow = model.look;
-    bgNow = model.customBg;
+    lookNow = model.Look();
+    bgNow = model.CustomBg();
     edgeNow = model.edge;
     screensNow = model.screens;
     screenNow = model.screen;
@@ -156,7 +155,7 @@ bool Drawer::TiledEdge(const RECT& work) const { // samples along the docked edg
 }
 
 void Drawer::ShowIsland() {
-    if (model.look == 2) SampleBehind();
+    if (model.Look() == 2) SampleBehind();
     if (hidden || opened || peeking || !EnsureDev()) return;
     KillTimer(hwnd, kReleaseTimer); // keep gpu alive
     KillTimer(hwnd, kCloseTimer);
@@ -333,7 +332,7 @@ bool Drawer::MouseIn() const {
 
 void Drawer::Open() {
     if (hidden) return;
-    if (model.look == 2 && spring.value < 1) SampleBehind(); // read the background before the panel covers it
+    if (model.Look() == 2 && spring.value < 1) SampleBehind(); // read the background before the panel covers it
     grow = grow || islandLook; // expanding out of the island: width morphs as it drops
     island = islandLook = false;
     if (!EnsureDev()) return; // gpu may have been freed while idle
@@ -453,6 +452,7 @@ void Drawer::OnSecond() {
     if (fullApp && !FullOn(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY))) fullApp = false; // the shell's "it's over" can go missing: never stay hidden on its word alone
     SyncHide(); // a fullscreen app on the panel's screen, or gone from it
     model.IdleSpectrum();
+    if (model.PollShared()) Redraw(); // halobar changed the theme we wear: a showing pill or panel repaints, SyncLook crossfades
     if (!opened) {
         bool always = PillStays(model);
         if (always && !island && !peeking && !dragging && !hidden && !stage && spring.value <= 0.5f) ShowIsland(); // the pill comes back by itself
@@ -835,10 +835,10 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             Peek(std::wstring(L"Copied ") + hex, L"Picked from the screen", glyph::Copy);
         }
         return 0;
-    case WM_APP_NOTIFY: { // a windows notification arrived and pills are on
+    case WM_APP_NOTIFY: { // a windows notification arrived and pills are on, ours or handed over by halobar
         sys::Toast toast;
         if (peeking) return 0; // one is showing: the rest wait their turn
-        if (model.notifyWatch.Pop(toast) && !opened) // open panel: don't interrupt
+        if (model.notifyWatch.Pop(toast) && !opened && !model.quiet) // open panel: don't interrupt; do not disturb: dropped, not queued
             Peek(toast.title.empty() ? toast.app : toast.title, toast.body.empty() ? toast.app : toast.body, glyph::Sparkle);
         return 0;
     }
@@ -1024,14 +1024,6 @@ void Drawer::Frame() {
         shapeXform = EdgeXform();
         pillCached = PillLayer(h, IslandSpan());
     }
-    if (pillCached && BarsFrame(h, dt, now)) { // only the visualizer moved since the last whole frame
-        if (cfg.perfLog) {
-            ++perfWhy[4];
-            Perf(Seconds() - drawT0);
-        }
-        return;
-    }
-    pillShown = 0; // a whole frame from here: the surface holds the plain pill again only once it lands
     ctx->BeginDraw();
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     D2D1_RECT_F vis = Visible();
@@ -1087,7 +1079,7 @@ void Drawer::Frame() {
         return;
     }
     if (glass) {
-        GlassBlur(model.glassBlur / 100.0f);
+        GlassBlur(model.GlassBlur() / 100.0f);
         GlassMask(outline.Get());
     }
     bool fast = moving || dragging || uiBusy || themes || pageT < 1; // anything actively animating
@@ -1104,10 +1096,6 @@ void Drawer::Frame() {
         due.QuadPart = -(LONGLONG)((fast ? fastSync : calm) * 1e7 / hz); // relative, 100 ns units
         SetWaitableTimer(frameWait, &due, 0, nullptr, nullptr, FALSE);
         hr = S_OK;
-        if (pillCached && islandLook) { // the resting pill is up there whole: the next frames can touch its bars alone
-            pillShown = pillKey;
-            std::copy(std::begin(islandBars), std::end(islandBars), barsShown);
-        }
     } else {
         hr = swap->Present(fast ? fastSync : (std::min)(calm, 4u), 0); // ambient-only motion runs at ~30 fps, the pill at ~15; a whole present: with dirty rects, a frame shown while the window is a sliver is never retired and the loop stalls
     }
