@@ -5,18 +5,23 @@
 #include <dwmapi.h>
 #include <shellscalingapi.h>
 #include <windowsx.h>
+#include <wtsapi32.h>
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 
 #pragma comment(lib, "shcore.lib")
+#pragma comment(lib, "wtsapi32.lib")
 
 namespace {
 
 constexpr int kPageCount = 5; // home, media, system, network, tools: the keys walk them
-constexpr UINT_PTR kHoverTimer = 1, kCloseTimer = 2, kReleaseTimer = 3, kPeekTimer = 4, kDevTimer = 5, kFollowTimer = 6;
+constexpr UINT_PTR kHoverTimer = 1, kCloseTimer = 2, kReleaseTimer = 3, kPeekTimer = 4, kDevTimer = 5, kFollowTimer = 6, kTrimTimer = 8; // 7 is the model's
+constexpr UINT kTrimMs = 3000; // a resting pill this long after its last whole frame: hand back what startup and the drop left behind
 constexpr UINT kFollowMs = 120; // every screen mode, open: how often to look which screen the cursor is on
 constexpr int kDevTries = 30; // windows lets go of an old composition target a moment later: ~3 seconds of retries, 100 ms apart
+constexpr GUID kDisplayState = {0x6fe69556, 0x704a, 0x47a0, {0x8f, 0x24, 0xc2, 0x8d, 0x93, 0x6f, 0xda, 0x47}}; // GUID_CONSOLE_DISPLAY_STATE, without pulling in initguid
 
 bool PillStays(const Model& m) { return m.IslandAlways() && m.hasTrack && m.track.playing; } // always means: while something is playing
 constexpr float kStrip = 3; // idle bezel height in dips, just enough to catch the mouse
@@ -50,7 +55,11 @@ Drawer::Drawer(const Config& c, Model& m) : cfg(c), model(m) {
 Drawer::~Drawer() {
     FreeStrips();
     FreeDev();
-    if (hwnd) DestroyWindow(hwnd);
+    if (displayNote) UnregisterPowerSettingNotification(displayNote);
+    if (hwnd) {
+        WTSUnRegisterSessionNotification(hwnd);
+        DestroyWindow(hwnd);
+    }
 }
 
 bool Drawer::Create(HINSTANCE instance) {
@@ -65,6 +74,8 @@ bool Drawer::Create(HINSTANCE instance) {
     if (!hwnd) return false;
     BOOL off = TRUE;
     DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &off, sizeof(off)); // no dwm fade, we animate ourselves
+    WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION); // locked: the pill's bars rest, nobody sees them
+    displayNote = RegisterPowerSettingNotification(hwnd, &kDisplayState, DEVICE_NOTIFY_WINDOW_HANDLE); // and the same while the screen is off
     if (!screensNow) mon = sys::FindScreen(screenNow); // the picked screen, primary if none or unplugged
     Place();
     BuildStrips();
@@ -87,9 +98,10 @@ void Drawer::Place() {
     monitor = mi.rcMonitor; // full rect, not work area, so it sits on the top edge
     DWM_TIMING_INFO ti = {sizeof(ti)};
     if (SUCCEEDED(DwmGetCompositionTimingInfo(nullptr, &ti)) && ti.rateRefresh.uiDenominator > 0) { // 144hz+ screens would otherwise run ambient at 72-120 fps
-        constexpr double kAmbientFps = 30;
+        constexpr double kAmbientFps = 30, kPillFps = 15; // the pill's bars are 14 dips tall: lively at 15, half the cost of 30
         hz = (double)ti.rateRefresh.uiNumerator / ti.rateRefresh.uiDenominator;
         ambientSync = (UINT)(std::clamp)((int)std::lround(hz / kAmbientFps), 1, 4); // dxgi caps sync interval at 4
+        pillSync = (UINT)(std::max)(1L, std::lround(hz / kPillFps)); // glass paces with a timer, no cap; the swapchain clamps it below
     }
     sideH = (std::min)(kSideMaxH, (mi.rcMonitor.bottom - mi.rcMonitor.top) / scale - 2 * cfg.fillet - 60); // sidebar fits the screen
     fastSync = 1; // a new screen, maybe a new refresh rate: judge it afresh
@@ -445,7 +457,7 @@ void Drawer::OnSecond() {
         if (always && !island && !peeking && !dragging && !hidden && !stage && spring.value <= 0.5f) ShowIsland(); // the pill comes back by itself
         else if (!always && stayWasAlways && island && !MouseIn()) Close(); // always was just turned off
         stayWasAlways = always;
-        if (island) Redraw(); // its clock keeps time
+        if (island && !Unseen()) Redraw(); // its clock keeps time
         return;
     }
     model.ReadAudio(); // volume only matters when visible
@@ -705,6 +717,8 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             else Open();
         } else if (wp == kCloseTimer) {
             if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && PillStays(model))) Close();
+        } else if (wp == kTrimTimer) {
+            if (island && !opened && !peeking && !dragging) gfx::GiveBack(); // a resting pill, only its bars move: idle pages go back. d2d's caches stay: cleared under live brushes, the media page's glows came back flat
         } else if (wp == kReleaseTimer) {
             if (!opened && !peeking && spring.value <= 0) FreeDev(); // free gpu after idle
             else if (!opened && !peeking && !dragging) TrimDev(); // the pill keeps it: just drop what the panel left cached
@@ -907,6 +921,19 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_WANIP:
         Redraw();
         return 0;
+    case WM_WTSSESSION_CHANGE:
+        if (wp == WTS_SESSION_LOCK) locked = true;
+        else if (wp == WTS_SESSION_UNLOCK) locked = false, Redraw(); // the bars pick up where the music is
+        return 0;
+    case WM_POWERBROADCAST:
+        if (wp == PBT_POWERSETTINGCHANGE) {
+            const auto* s = reinterpret_cast<const POWERBROADCAST_SETTING*>(lp);
+            if (s && s->PowerSetting == kDisplayState && s->DataLength >= sizeof(DWORD)) {
+                screenOff = *reinterpret_cast<const DWORD*>(s->Data) == 0; // 0 off, 1 on, 2 dimmed: dimmed still shows
+                if (!screenOff) Redraw();
+            }
+        }
+        break; // the rest are windows' own business
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -994,6 +1021,14 @@ void Drawer::Frame() {
         shapeXform = EdgeXform();
         pillCached = PillLayer(h, IslandSpan());
     }
+    if (pillCached && BarsFrame(h, dt, now)) { // only the visualizer moved since the last whole frame
+        if (cfg.perfLog) {
+            ++perfWhy[4];
+            Perf(Seconds() - drawT0);
+        }
+        return;
+    }
+    pillShown = 0; // a whole frame from here: the surface holds the plain pill again only once it lands
     ctx->BeginDraw();
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     D2D1_RECT_F vis = Visible();
@@ -1059,21 +1094,29 @@ void Drawer::Frame() {
         Perf(Seconds() - drawT0);
     }
     Govern(fast, gap);
-    UINT calm = ambientSync; // ambient motion, the pill's bars included, at ~30 fps: any slower and they stop looking alive
+    UINT calm = islandLook && !opened ? pillSync : ambientSync; // ambient motion at ~30 fps, the resting pill's little bars at ~15
     if (glass) { // no swapchain: the frame lands with the blur outline, a timer paces the next one
         GlassPresent();
         LARGE_INTEGER due;
         due.QuadPart = -(LONGLONG)((fast ? fastSync : calm) * 1e7 / hz); // relative, 100 ns units
         SetWaitableTimer(frameWait, &due, 0, nullptr, nullptr, FALSE);
         hr = S_OK;
+        if (pillCached && islandLook) { // the resting pill is up there whole: the next frames can touch its bars alone
+            pillShown = pillKey;
+            std::copy(std::begin(islandBars), std::end(islandBars), barsShown);
+        }
     } else {
-        hr = swap->Present(fast ? fastSync : calm, 0); // ambient-only motion runs at ~30 fps; a whole present: with dirty rects, a frame shown while the window is a sliver is never retired and the loop stalls
+        hr = swap->Present(fast ? fastSync : (std::min)(calm, 4u), 0); // ambient-only motion runs at ~30 fps, the pill at ~15; a whole present: with dirty rects, a frame shown while the window is a sliver is never retired and the loop stalls
     }
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) { // driver reset / gpu switch
         FreeDev();
         needsFrame = true;
         return;
     }
-    needsFrame = fast || (ambient && h > 0.5f); // otherwise go idle until next input
+    needsFrame = fast || (ambient && h > 0.5f && !Unseen()); // otherwise go idle until next input; locked or dark: ambient motion waits too
+    if (pillCached && islandLook && pillKey != trimKey) { // a new resting pill: tidy up once it has settled
+        trimKey = pillKey;
+        SetTimer(hwnd, kTrimTimer, kTrimMs, nullptr);
+    }
     if (PlaceStale() && !opened && !dragging && spring.value <= 0.5f) ApplyPlace();
 }

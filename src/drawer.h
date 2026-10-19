@@ -64,6 +64,7 @@ private:
     void TrimDev(); // keep the device, drop its caches // drop gpu objects when idle
     void ReleaseLater(); // schedule FreeDev if the panel stays shut
     UINT ambientSync = 2; // present interval for ambient-only motion, ~30 fps at any refresh rate
+    UINT pillSync = 4; // vsyncs per frame for the resting pill's bars, ~15 fps
     double hz = 60; // screen refresh, paces glass frames
     void SyncCover(); // reload album art on track change
     ComPtr<ID2D1Bitmap> Blur(ID2D1Bitmap1* source);
@@ -100,6 +101,11 @@ private:
     int pillPass = 0; // 0 the whole pill, 1 only its still parts (into the layer), 2 only the moving bars
     ComPtr<ID2D1Bitmap1> pillLayer; // the resting pill without its bars
     uint64_t pillKey = 0;
+    uint64_t pillShown = 0; // the layer key the glass surface holds whole, 0 = anything else is up there
+    float barsShown[4] = {}; // bar levels last put on screen
+    uint64_t trimKey = 0; // the resting pill the last cache trim was scheduled for
+    D2D1_RECT_F IslandBarsBox(float h) const; // the bars' own square in window dips, top edge only
+    bool BarsFrame(float h, float dt, double now); // glass, resting pill: repaint only the bars' square; false = do a whole frame
     float IslandSpan() const { return Side() ? kIslandSide : kIslandW; } // pill length along its edge
     void ShowIsland(); // small pill instead of the panel, over maximized apps
     bool MaximizedBelow() const; // a maximized app sits under the hot zone
@@ -119,6 +125,8 @@ private:
     bool OpenGlass(const DXGI_SWAP_CHAIN_DESC1& desc); // the frame goes straight into composition, in step with the blur
     bool GlassDev(const DXGI_SWAP_CHAIN_DESC1& desc); // glass device: a plain target bitmap and a frame timer, no swapchain
     void GlassPresent(); // hand this frame to composition, it lands together with the blur outline
+    bool GlassBeginPart(const RECT& px, D2D1_POINT_2F& shift); // draw straight into that pixel rect of the composition surface; shift = dips to move drawing by
+    void GlassEndPart();
     void GlassMask(ID2D1Geometry* shape); // cut the blur to this frame's shape
     void FreeGlass();
     bool GlassResize(UINT w, UINT h); // the composition surface and visuals to a new pixel size, in place
@@ -147,6 +155,9 @@ private:
     bool pillRgn = false; // the island's window region is on: the window is panel-wide, only the pill is live
     RECT pillRect{}; // that region, to skip setting it again unchanged
     bool eco = false; // process in efficiency mode
+    bool locked = false, screenOff = false; // nobody can see the pill: its bars stop until the screen is back
+    HPOWERNOTIFY displayNote = nullptr; // display on/off notices
+    bool Unseen() const { return locked || screenOff; }
 
     static constexpr float kPeekH = 66; // peek banner height in dips
     static constexpr float kPeekSide = 300; // peek reach on a side edge, room for its text

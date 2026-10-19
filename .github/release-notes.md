@@ -1,18 +1,11 @@
-## Astraeus 2.0
+## Astraeus 2.0.1
 
-Astraeus is now version 2. Everything before it is marked as a pre-release.
+A lighter Astraeus. It looks and works the same, it just asks much less of your PC.
 
-### Your calendar, inside Astraeus
-- **Connect Google Calendar in one tap.** Open the calendar from the weather card and press **Connect calendar**. Google Calendar's settings open; copy your calendar's **Secret address in iCal format** and Astraeus picks it up by itself. No pasting, no account setup.
-- **Outlook, iCloud or any other calendar** works the same way: right-click **Connect calendar** and copy that calendar's link.
-- **Days with something on get a dot.** Pick a day and the line under the month says how many events it has; tap it to see them, with times and places, where the month was.
-- **Add an event** with the **+**: Google Calendar's own new-event page opens on that day, so it lands straight in your account.
-- **Calendars** lists everything connected, each with a button to remove it.
-- **Private and shared with HaloBar.** Your calendar links are stored encrypted, readable only by your Windows account, and HaloBar uses the same ones: connect in either app and both show your events.
-- **Nothing runs in the background for it.** Events refresh when Astraeus starts and whenever you open the calendar.
+### Performance
+- **The pill's visualizer costs a fraction of what it did.** While a song plays, each frame now redraws only the little bars, not the whole pill with its cover and title. On the Glass look the blur outline is only re-sent when the pill's shape actually changes.
+- **The bars move at a calm 15 frames a second**, as they do in HaloBar. The rest of Astraeus' motion keeps its full speed.
+- **Nothing is drawn while your PC is locked or the screen is off.** The visualizer picks up again when you're back.
+- **Memory is handed back to Windows** a few seconds after the pill settles.
 
-### Settings
-- **Screens says what "Every screen" does:** the panel follows the mouse to another screen, but stays put while it's open.
-
-### Fixes
-- **Startup and the Start menu shortcut are called Astraeus again** if 1.2.11 had renamed them.
+With music playing on the Glass look, Astraeus now uses noticeably less CPU, about a third of the GPU time, and about a third of the working memory it did in 2.0.0.
