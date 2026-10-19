@@ -450,6 +450,7 @@ void Drawer::SyncHide() {
 }
 
 void Drawer::OnSecond() {
+    if (fullApp && !FullOn(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY))) fullApp = false; // the shell's "it's over" can go missing: never stay hidden on its word alone
     SyncHide(); // a fullscreen app on the panel's screen, or gone from it
     model.IdleSpectrum();
     if (!opened) {
@@ -569,7 +570,9 @@ void Drawer::Log(const wchar_t* what) const {
 bool Drawer::FullOn(HMONITOR m) const { // the window in front fills that whole screen: a game, a video, a presentation
     HWND fg = GetForegroundWindow();
     if (!fg || MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) != m) return false;
-    if ((GetWindowLongW(fg, GWL_STYLE) & WS_CAPTION) == WS_CAPTION) return false; // a window with a title bar is maximized, not fullscreen, even under an auto-hidden taskbar
+    LONG style = GetWindowLongW(fg, GWL_STYLE);
+    if ((style & WS_CAPTION) == WS_CAPTION) return false; // a window with a title bar is maximized, not fullscreen, even under an auto-hidden taskbar
+    if (IsZoomed(fg) && (style & WS_THICKFRAME)) return false; // maximized and drawing its own title bar (a terminal, a browser): fullscreen drops the sizing frame
     DWORD pid = 0;
     GetWindowThreadProcessId(fg, &pid);
     if (pid == GetCurrentProcessId()) return false; // our own fullscreen player
