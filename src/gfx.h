@@ -63,7 +63,7 @@ public:
     void FillGeometry(ID2D1Geometry* g, Color c);
     void FillGeoV(ID2D1Geometry* g, const D2D1_RECT_F& bounds, Color top, Color bottom);
     void StrokeGeo(ID2D1Geometry* g, Color c, float width);
-    void Glow(D2D1_POINT_2F center, float rx, float ry, Color c); // radial falloff, cached per color
+    void Glow(D2D1_POINT_2F center, float rx, float ry, Color c, const D2D1_ROUNDED_RECT* in = nullptr); // radial falloff, cached per color; in: kept inside a card's rounded corners
     void NewFrame(); // advances frame counter, sweeps stale layouts
     void FillV(const D2D1_RECT_F& r, float radius, Color top, Color bottom); // V = vertical gradient, H = horizontal
     void StrokeV(const D2D1_RECT_F& r, float radius, Color top, Color bottom, float width);
@@ -71,6 +71,7 @@ public:
 
     void Text(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c, Align a = Align::Left);
     float TextOnce(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c); // never cached (secrets); returns the drawn width
+    float Measure(const std::wstring& s, Weight w, float size); // a single line's width in dips, from the same cached layouts Text draws
     void TextSp(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c, float spacing, Align a = Align::Left);
     void Icon(int glyph, D2D1_POINT_2F center, float size, Color c, bool filled = false);
 

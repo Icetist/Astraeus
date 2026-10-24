@@ -25,7 +25,7 @@ bool Row(PageCtx& p, const D2D1_RECT_F& r, const D2D1_RECT_F& view, sys::ShareOu
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    bool live = Inside(view, ui.In().mouse); // parts scrolled under the edges stay inert
+    bool live = Inside(view, ui.In().mouse) || ui.Captured(); // parts scrolled under the edges stay inert; a knob being dragged keeps following
     bool hov = live && Inside(r, ui.In().mouse);
     uint32_t id = Ui::Id("share.row", Key(o.id));
     float hover = ui.Smooth(id, hov ? 1.0f : 0, 16);

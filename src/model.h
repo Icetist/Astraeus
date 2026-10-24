@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include <algorithm>
 #include <condition_variable>
 #include <mutex>
 #include <string>
@@ -17,6 +18,9 @@
 #include "share.h"
 #include "notify.h"
 #include "calendar.h"
+#include "shelf.h"
+#include "battery.h"
+#include "accent.h"
 
 enum : UINT { // posted to ui thread by services/worker
     WM_APP_MEDIA = WM_APP + 1,
@@ -34,6 +38,11 @@ enum : UINT { // posted to ui thread by services/worker
     WM_APP_NOTIFY,
     WM_APP_PICKED, // the color picker finished: wParam rgb, lParam 1 picked / 0 cancelled
     WM_APP_CAL, // calendar events fetched
+    WM_APP_SHELF, // a shelf preview is ready
+    WM_APP_ACCENT, // windows' accent color changed
+    WM_APP_HUDVOL, // the speakers' level or mute changed: wparam level 0..1000, lparam muted
+    WM_APP_HUDBRIGHT, // the panel's brightness changed: wparam percent
+    WM_APP_VOLKEY, // a volume key, taken from windows: wparam the key
 };
 
 class Hist { // fixed-size rolling graph history
@@ -101,7 +110,7 @@ public:
     void CloseCal();
     void OpenMixer(); // per-app volume, from the volume slider on Home
     void CloseMixer();
-    void SetAccent(int mode, int hex); // persisted, drawer crossfades to it
+    void SetAccent(int mode, int hex); // persisted, drawer crossfades to it; mode 0 wallpaper, 1 custom, 2 windows
     void SetNotifyPills(bool on); // persisted, starts or stops the watcher
     void SetQuiet(bool on); // do not disturb, shared with halobar
     bool PollShared(); // once a second: do not disturb, halobar's pills and theme; true when the look changed
@@ -113,6 +122,7 @@ public:
     int AccentHex() const;
     int CustomBg() const;
     int GlassBlur() const;
+    int BgOpacity() const; // the solid looks' body: halobar's while following it, the default while it follows us back
     bool CommitHex(); // apply the typed hex if it parses, ends typing either way
     static bool ParseHex(const std::wstring& text, int& rgb); // #rgb, #rrggbb, with or without #
     void CyclePower();
@@ -201,13 +211,17 @@ public:
     struct Halo { // halobar's own theme, read only while following it
         int look = -1; // -1 it follows us back, else 0..3 like ours
         int accent = -1; // -1 ours, 0 wallpaper, 1 the hex
-        int accentHex = 0x5B8CFF, customBg = 0x121826, glassBlur = 100; // halobar's defaults
+        int accentHex = 0x5B8CFF, customBg = 0x121826, glassBlur = 100, opacity = 100; // halobar's defaults
+        bool here = false; // its settings key exists: installed, and run at least once
+        bool FollowsUs() const { return here && look < 0; } // then following it back would only loop to dark: settings hides the choice
         bool operator==(const Halo&) const = default;
     } halo;
     int customBg = 0x121826; // custom look: the panel background, 0xRRGGBB
     int lyricOffsetMs = 0; // fullscreen lyrics nudged later (+) or earlier (-), [ and ] change it
     int glassBlur = 100; // glass: 0 clear .. 100 fully frosted
-    int edge = 0; // 0 top (default), 1 left, 2 right
+    int edge = 0; // 0 top (default), 1 left, 2 right: the user's pick
+    int haloEdge = -1; // the edge halobar's dock holds, in our numbering; -1 none (bottom, or not running)
+    int Edge() const { return edge != haloEdge ? edge : edge == 0 ? 1 : 0; } // where the panel really docks: never on halobar's edge, off a side to the top, off the top to the left
     int screens = 0; // 0 one screen, 1 every screen (the panel follows the mouse)
     int islandSecs = 0; // the pill over maximized windows, after the mouse leaves: 0 brief, up to kIslandMaxSecs, -1 always
     static constexpr int kIslandMaxSecs = 300;
@@ -221,7 +235,7 @@ public:
     bool passFocus = false, passShow = false, passWrong = false; // the wi-fi password field: taking keystrokes, shown in clear, last try failed
     std::string passFor; // raw ssid of the network being joined
     std::wstring passEdit; // what's typed so far, wiped once used
-    bool Typing() const { return hexFocus || passFocus; } // the panel holds the keyboard
+    bool Typing() const { return hexFocus || passFocus || cityFocus; } // the panel holds the keyboard
     void AskPass(const sys::WifiNet& n); // a new secured network: type its password in the panel
     void SubmitPass();
     void CancelPass();
@@ -244,6 +258,53 @@ public:
     int reduceMotion = 0; // calmer animation: no bounce, no drifting, no sliding
     sys::NotifyWatch notifyWatch; // only runs while PillsWanted
     bool timerOn = false;
+    sys::Shelf shelf; // files and notes dropped on the island
+    bool shelfHot = false; // something droppable is over the panel right now
+    uint64_t shelfDrag = 0; // a shelf item the page wants dragged out, started after the frame
+    int powerPills = 1; // a pill when it's plugged in or unplugged
+    int batLow = 20; // the low battery pill shows at this percent, 5..50
+    bool lowShown = false; // shown once per discharge
+    void ReadBattery(); // on power events only, nothing polls it
+    sys::BatteryInfo batInfo; // the battery tile's details, read when its tip opens
+    int activityBubble = 1; // a running timer, stopwatch or focus session sits in a bubble beside the pill
+    enum Act { kActNone, kActTimer, kActWatch, kActFocus };
+    int Activity() const; // which one runs, the timer first
+    std::wstring ActivityText() const; // its time, short enough for the bubble
+    float ActivityFrac() const; // its ring, 0..1
+    int rememberPage = 1, defaultPage = 0, lastPage = 0; // the page the panel opens on, by identity
+    enum PageId { kPgHome, kPgMedia, kPgSystem, kPgNetwork, kPgTools, kPgShelf, kPageIds }; // what a page is, wherever it sits on the rail
+    std::vector<int> pages; // the rail's pages top to bottom, never empty
+    int SlotOf(int id) const; // its place on the rail, -1 hidden
+    bool HasPage(int id) const { return SlotOf(id) >= 0; }
+    int PageAt(int slot) const { return pages[(size_t)(std::clamp)(slot, 0, (int)pages.size() - 1)]; } // past either end: the end
+    int OpenPage() const; // the last or the picked page, or the first shown when that one is hidden
+    void SetPages(const std::vector<int>& order); // persisted by name; an empty list is refused
+    static const wchar_t* PageName(int id);
+    static int PageGlyph(int id);
+    enum ToolTile { kTlSnip, kTlColor, kTlAwake, kTlAlerts, kTlDnd, kTlSaver, kTlAir, kTlSettings, kToolTiles }; // the tools page's quick tiles
+    std::vector<int> tiles; // the ones shown, in order, may be empty
+    bool TileHere(int id) const { return id != kTlAwake || portable; } // keeping the screen awake is for laptops
+    void SetTiles(const std::vector<int>& order);
+    bool tilesEdit = false; // the tools page shows its tiles with x and + marks; ends when the panel closes
+    static const wchar_t* TileName(int id);
+    static int TileGlyph(int id);
+    int stageHide = 1; // the fullscreen player's controls fade while the mouse rests (on by default)
+    int uiScale = 100; // percent, 80..130, folded into the dpi scale
+    int bgOpacity = 100; // percent, the panel and pill body on the solid looks; BgOpacity() is what's drawn
+    static constexpr int kMinOpacity = 40, kMaxOpacity = 100; // below 40 the cards float on nothing; halobar keeps the same range
+    static constexpr int kAccentWindows = 2; // accent source: windows' own accent color
+    sys::WinAccent winAccent; // listened to only while that source is picked
+    int winAccentHex = -1;
+    bool cityFocus = false; // the weather city field is taking keystrokes
+    std::wstring cityEdit; // what's typed so far
+    void CommitCity(); // empty goes back to finding you by ip
+    int pillAlways = 0; // the resting pill stays up with the clock
+    int pillDesk = 0; // the pill stays up while the desktop is what's under it, always or not
+    enum Widget { kWNone, kWWeather, kWBattery, kWCpu, kWRam, kWNet, kWidgets };
+    int pillLeft = kWWeather, pillRight = kWCpu; // its two status widgets
+    std::wstring PillWidget(int which, int& icon) const; // what a widget shows now, empty when it has nothing
+    int mediaCompact = 0, pillMusic = 1, showArt = 1, vizOn = 1; // media modules
+    int hud = 0; // astraeus' own volume and brightness pill, experimental, off by default
 
 private:
     void Worker();

@@ -158,6 +158,10 @@ public:
     WxSvc& operator=(const WxSvc&) = delete;
     void Refresh(HWND notify, UINT msg);  // no-op while cached or busy
     Wx Get() const;  // thread-safe snapshot
+    void SetCity(const std::wstring& name, HWND notify, UINT msg);  // a place typed in settings, looked up with open-meteo; empty goes back to ip lookup
+    std::wstring City() const;  // what was typed, empty when found by ip
+    enum CityState { kCityNone, kCitySearching, kCityFound, kCityMissing };
+    int State() const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;

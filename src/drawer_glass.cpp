@@ -74,6 +74,8 @@ struct Drawer::Glass {
     WUC::ContainerVisual root{nullptr};
     bool filled = false; // a new surface must be drawn whole once before it accepts partial updates
     float blurShown = -1;
+    ComPtr<ID2D1Geometry> masked; // the outline the blur is cut to now, held so its address can't be reused by another
+    D2D1_MATRIX_3X2_F maskXf{};
 };
 
 bool Drawer::OpenGlass(const DXGI_SWAP_CHAIN_DESC1& desc) {
@@ -119,7 +121,7 @@ bool Drawer::OpenGlass(const DXGI_SWAP_CHAIN_DESC1& desc) {
 }
 
 bool Drawer::GlassResize(UINT w, UINT h) {
-    if (!glass) return false;
+    if (!glass || !glass->surface) return false;
     try {
         glass->surface.Resize({(int32_t)w, (int32_t)h}); // keeps its place; only how far it reaches changes
         winrt::Windows::Foundation::Numerics::float2 size{(float)w, (float)h};
@@ -133,20 +135,50 @@ bool Drawer::GlassResize(UINT w, UINT h) {
     }
 }
 
+bool Drawer::GlassRenew(ID2D1Device* dev) {
+    if (!glass) return false;
+    if (!dev) { // let go of the old device: its surface leaves the content visual, the blur stays
+        try {
+            glass->content.Brush(nullptr);
+            if (glass->surface) glass->surface.Close();
+            if (glass->gfx) glass->gfx.Close();
+        } catch (...) {
+        }
+        glass->surface = nullptr;
+        glass->gfx = nullptr;
+        return true;
+    }
+    try {
+        winrt::check_hresult(glass->comp.as<abi::ICompositorInterop>()->CreateGraphicsDevice(dev, reinterpret_cast<abi::ICompositionGraphicsDevice**>(winrt::put_abi(glass->gfx))));
+        glass->surface = glass->gfx.CreateDrawingSurface({(float)surfW, (float)surfH}, winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                                                         winrt::Windows::Graphics::DirectX::DirectXAlphaMode::Premultiplied);
+        glass->content.Brush(Pinned(glass->comp, glass->surface)); // lands in the same batch as the frame drawn into it next
+        glass->filled = false; // a new surface is drawn whole first
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 void Drawer::GlassMask(ID2D1Geometry* shape) {
     if (!glass) return;
+    D2D1_MATRIX_3X2_F xf = shapeXform * D2D1::Matrix3x2F::Scale(scale, scale);
+    if (shape && shape == glass->masked.Get() && !memcmp(&xf, &glass->maskXf, sizeof(xf))) return; // a resting pill or panel: composition keeps the clip it has, no new path every frame
     ComPtr<ID2D1Factory> f;
     ComPtr<ID2D1TransformedGeometry> placed; // same placement as the panel itself, in pixels like the visual
     ctx->GetFactory(&f);
-    bool ok = shape && SUCCEEDED(f->CreateTransformedGeometry(shape, shapeXform * D2D1::Matrix3x2F::Scale(scale, scale), &placed));
+    bool ok = shape && SUCCEEDED(f->CreateTransformedGeometry(shape, xf, &placed));
     D2D1_RECT_F box{};
     ok = ok && SUCCEEDED(placed->GetBounds(nullptr, &box)) && box.right - box.left >= 4 && box.bottom - box.top >= 4; // a sliver of an outline makes composition fail fast, hide the blur instead
     try {
         if (ok) glass->outline.Path(WUC::CompositionPath(winrt::make<ShapeSource>(placed.Get())));
         glass->frost.IsVisible(ok);
     } catch (...) {
+        ok = false;
         glass->frost.IsVisible(false); // no clip, no blur: never frost the whole window
     }
+    glass->masked = ok ? shape : nullptr; // a failed cut is tried again next frame
+    glass->maskXf = xf;
 }
 
 void Drawer::GlassPresent() {
@@ -156,8 +188,9 @@ void Drawer::GlassPresent() {
     POINT off = {};
     D2D1_RECT_F vis = Visible();
     D2D1_SIZE_U full = backBuf->GetPixelSize();
-    RECT update = {0, 0, (LONG)(std::min)((UINT32)std::ceil(vis.right * scale), full.width), (LONG)(std::min)((UINT32)std::ceil(vis.bottom * scale), full.height)};
-    bool part = glass->filled && update.right > 0 && update.bottom > 0; // only what the window shows, once the surface has been filled whole
+    RECT update = {(LONG)(std::max)(0.0f, std::floor(vis.left * scale)), (LONG)(std::max)(0.0f, std::floor(vis.top * scale)), // the pill's slice, not the whole strip left of it
+                   (LONG)(std::min)((UINT32)std::ceil(vis.right * scale), full.width), (LONG)(std::min)((UINT32)std::ceil(vis.bottom * scale), full.height)};
+    bool part = glass->filled && update.right > update.left && update.bottom > update.top; // only what the window shows, once the surface has been filled whole
     if (!part || FAILED(interop->BeginDraw(&update, IID_PPV_ARGS(&dst), &off))) {
         part = false;
         if (FAILED(interop->BeginDraw(nullptr, IID_PPV_ARGS(&dst), &off))) return; // surface lost: the next frame tries again
@@ -167,7 +200,7 @@ void Drawer::GlassPresent() {
     ComPtr<ID2D1Bitmap1> into;
     if (SUCCEEDED(ctx->CreateBitmapFromDxgiSurface(dst.Get(), &bp, &into))) {
         D2D1_POINT_2U at = {(UINT32)off.x, (UINT32)off.y}; // the surface may live inside a shared atlas
-        D2D1_RECT_U src = {0, 0, part ? (UINT32)update.right : full.width, part ? (UINT32)update.bottom : full.height};
+        D2D1_RECT_U src = part ? D2D1_RECT_U{(UINT32)update.left, (UINT32)update.top, (UINT32)update.right, (UINT32)update.bottom} : D2D1_RECT_U{0, 0, full.width, full.height};
         into->CopyFromBitmap(&at, backBuf.Get(), &src); // one gpu copy, no drawing
         glass->filled = true;
     }
@@ -187,8 +220,8 @@ void Drawer::FreeGlass() {
     try { // closed outright: only dropping them leaves windows to clean up later, and meanwhile the empty glass layer covers what's drawn next
         glass->target.Root(nullptr);
         glass->target.Close();
-        glass->surface.Close();
-        glass->gfx.Close();
+        if (glass->surface) glass->surface.Close(); // a renewal that failed half way left these empty
+        if (glass->gfx) glass->gfx.Close();
         glass->comp.Close();
     } catch (...) {
     }

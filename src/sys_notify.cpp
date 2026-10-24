@@ -42,8 +42,14 @@ void Read(State* s) { // on a pool thread: anything newer than the last one seen
     if (!s->live || s->busy.exchange(true)) return; // one read at a time, the next change catches up
     int64_t stamp = NotifStamp();
     bool first = s->lastId < 0; // the first read only learns where history ends
-    if (stamp != s->stamp.exchange(stamp) || first) {
-        std::vector<Notif> fresh = ReadNotifs(kReadMax); // newest first; names come from the shell, never on the ui thread
+    if (stamp != s->stamp.load() || first) {
+        bool ok = false;
+        std::vector<Notif> fresh = ReadNotifs(kReadMax, &ok); // newest first; names come from the shell, never on the ui thread
+        if (!ok) { // locked mid-write or not there yet: neither history nor "seen", the next change or poll reads again
+            s->busy = false;
+            return;
+        }
+        s->stamp = stamp; // only a read that worked counts the change as seen
         int64_t seen = first ? INT64_MAX : s->lastId; // first: nothing counts as new
         if (first) {
             s->lastId = 0;

@@ -1,9 +1,81 @@
 #include <cmath>
+#include <cwchar>
+#include <vector>
 
+#include "battery.h"
 #include "glyphs.h"
 #include "pages.h"
 
 namespace {
+
+constexpr double kTipDelay = 0.45; // hover this long on the battery tile and its details come up
+constexpr ULONGLONG kTipReadMs = 5000; // re-read while it stays up: the rate moves
+constexpr float kTipW = 236, kTipRow = 19;
+D2D1_RECT_F batTile{}; // the battery tile this frame, empty on a desktop
+bool batHover = false;
+
+std::wstring Wh(int mwh) {
+    wchar_t buf[16];
+    swprintf_s(buf, L"%.1f", mwh / 1000.0);
+    return buf;
+}
+
+std::wstring Span(double hours) { // 3 h 12 min, or 45 min
+    int mins = (int)std::lround(hours * 60);
+    if (mins <= 0) return L"";
+    return (mins >= 60 ? std::to_wstring(mins / 60) + L" h " : L"") + std::to_wstring(mins % 60) + L" min";
+}
+
+void BatteryTip(PageCtx& p) { // capacity, wear, rate and time, beside the battery tile while the mouse rests on it
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    static double since = -1;
+    static ULONGLONG readAt = 0;
+    if (!batHover) since = -1;
+    else if (since < 0) since = ui.Now();
+    bool show = batHover && ui.Now() - since > kTipDelay;
+    if (batHover && !show) ui.KeepAlive(); // a few calm frames until the delay is up
+    float a = ui.Smooth(Ui::Id("bat.tip"), show ? 1.0f : 0, 16);
+    if (a < 0.01f) return;
+    if (show && GetTickCount64() - readAt > kTipReadMs) { // the battery's own report, read only while this shows
+        m.batInfo = sys::ReadBattery(true);
+        readAt = GetTickCount64();
+    }
+    const sys::BatteryInfo& b = m.batInfo;
+    std::vector<std::pair<std::wstring, std::wstring>> rows;
+    if (b.report) {
+        rows.push_back({L"Capacity", b.remainMwh >= 0 ? Wh(b.remainMwh) + L" of " + Wh(b.fullMwh) + L" Wh" : Wh(b.fullMwh) + L" Wh when full"}); // some batteries don't say what's left
+        if (b.designMwh > 0) rows.push_back({L"Health", std::to_wstring((int)std::lround(100.0 * b.fullMwh / b.designMwh)) + L"% of " + Wh(b.designMwh) + L" Wh"});
+        if (b.rateMw != 0) {
+            wchar_t rate[24];
+            swprintf_s(rate, L"%+.1f W", b.rateMw / 1000.0);
+            rows.push_back({L"Rate", rate});
+        }
+    }
+    std::wstring left;
+    if (b.charging && b.report && b.rateMw > 0 && b.remainMwh >= 0) left = Span((b.fullMwh - b.remainMwh) / (double)b.rateMw); // until full
+    else if (!b.ac && b.secsLeft > 0) left = Span(b.secsLeft / 3600.0);
+    else if (!b.ac && b.report && b.rateMw < 0 && b.remainMwh >= 0) left = Span(b.remainMwh / (double)-b.rateMw);
+    if (!left.empty()) rows.push_back({b.charging ? L"Full in" : L"Time left", left});
+    float h = 40 + rows.size() * kTipRow;
+    float y = (std::max)(p.area.top, (batTile.top + batTile.bottom) / 2 - h / 2), x = batTile.left - 10 - kTipW + (1 - a) * 6;
+    D2D1_RECT_F r = Rect(x, y, kTipW, h);
+    c.Fill(Inset(r, -1, -2), 14, Color{0, 0, 0, 0.22f * a}); // the rail tip's look: soft shadow, solid body, hairline
+    c.Fill(r, 12, t.veil.Alpha(0.94f * a));
+    c.Fill(r, 12, t.cardHi.Alpha(a));
+    c.StrokeV(r, 12, t.hairTop.Alpha(a), t.hairBot.Alpha(a), 1);
+    std::wstring head = (b.pct >= 0 ? std::to_wstring(b.pct) + L"%" : std::wstring(L"Battery")) + L"  ·  " +
+                        (b.charging ? L"Charging" : b.ac ? L"Plugged in" : L"On battery") + (b.saver ? L", energy saver" : L"");
+    c.Icon(b.charging ? glyph::BatteryCharging : glyph::Battery, {r.left + 20, r.top + 20}, 18, t.accentHi.Alpha(a), true);
+    c.Text(head, Rect(r.left + 36, r.top + 10, kTipW - 46, 20), Weight::Medium, 12.5f, t.text.Alpha(a));
+    for (size_t i = 0; i < rows.size(); ++i) {
+        float ry = r.top + 34 + i * kTipRow;
+        c.Text(rows[i].first, Rect(r.left + 14, ry, 80, 18), Weight::Regular, 11, t.textDim.Alpha(a));
+        c.Text(rows[i].second, Rect(r.left + 90, ry, kTipW - 104, 18), Weight::Medium, 11, t.text.Alpha(a), Align::Right);
+    }
+}
 
 void Player(PageCtx& p, const D2D1_RECT_F& r) {
     Ui& ui = p.ui;
@@ -25,9 +97,7 @@ void Player(PageCtx& p, const D2D1_RECT_F& r) {
     float side = Height(r) - 2 * pad; // square art fills card height
     float k = (std::min)(1.0f, (Height(r) - 2 * pad) / 126); // text and transport rows squeeze with the card
     D2D1_RECT_F art = Rect(r.left + pad, r.top + pad, side, side);
-    c.Fill(art, 16, t.cardHi);
-    if (p.cover) c.Art(p.cover, p.coverBlur, art, 16, p.artFade);
-    else c.Icon(glyph::Music, {(art.left + art.right) / 2, (art.top + art.bottom) / 2}, 40, t.textLow); // placeholder note, centered
+    FlipArt(p, art, 16, 40); // turns over when the song changes
 
     float tx = art.right + 20, tw = r.right - pad - tx; // text column right of art
     float ty = r.top + pad + 4 * k;
@@ -141,6 +211,8 @@ void Toggles(PageCtx& p, const D2D1_RECT_F& r) {
         std::wstring sub = m.charging ? L"Charging" : mode >= 0 ? kModes[mode] : L"Unavailable"; // the icon still shows the mode
         if (w::Tile(ui, t, Ui::Id("tg.power"), cells[2], mode >= 0 ? kModeIcons[mode] : glyph::Bolt, bat.c_str(), sub, mode == 2, mode >= 0)) // lit only in perf
             m.CyclePower();
+        batTile = cells[2];
+        batHover = m.batPct >= 0 && Inside(cells[2], ui.In().mouse); // its details come up beside it
     } else { // desktop: output device tile
         const sys::OutDev* current = nullptr;
         for (const auto& d : m.outs)
@@ -200,7 +272,7 @@ void Stat(PageCtx& p, const D2D1_RECT_F& r, const wchar_t* label, const std::wst
     c.TextSp(label, Rect(r.left + 14, r.top + 14, Width(r) - 28, 14), Weight::Medium, 10, t.textLow, 1.4f);
     c.Text(value, Rect(r.left + 13, r.top + 30, Width(r) - 26, 30), Weight::Light, 22, t.text);
     D2D1_RECT_F chart = {r.left + 1, (std::max)(r.bottom - 58, r.top + 62), r.right - 1, r.bottom - 10}; // sparkline in the bottom 48px, never over the value
-    ComPtr<ID2D1RoundedRectangleGeometry> card; // inside the card's rounded corners, not its square bounds
+    ComPtr<ID2D1RoundedRectangleGeometry> card; // inside the card's rounded corners, not its square bounds: the graph runs edge to edge
     if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(Inset(r, 1, 1), 19, 19), &card))) return;
     c.Target()->PushLayer(D2D1::LayerParameters(chart, card.Get()), nullptr); // bounded to the chart, so only its pixels pay for the mask
     w::Spark(c, chart, h.Values(), h.Version(), maxV, t.accent);
@@ -211,6 +283,11 @@ void Stat(PageCtx& p, const D2D1_RECT_F& r, const wchar_t* label, const std::wst
 
 void DrawHome(PageCtx& p) {
     const D2D1_RECT_F& a = p.area;
+    batHover = false; // the tile sets it again while the mouse is on it
+    struct Tip {
+        PageCtx& p;
+        ~Tip() { BatteryTip(p); } // last, over every card
+    } tip{p};
     float x = a.left, y = a.top;
     if (Height(a) > Width(a)) { // sidebar: one column, most-used first
         const float g = 12, wd = Width(a), half = (wd - g) / 2;

@@ -16,7 +16,7 @@ void Wave(PageCtx& p, const D2D1_RECT_F& r, float fraction, bool playing, bool c
     const Theme& t = p.media;
     uint32_t id = Ui::Id("md.seek");
     float v = !known ? 1.0f : preview >= 0 ? preview : fraction; // unknown length: whole line waves, no playhead
-    if (canSeek && ui.Slider(id, r, v, false)) preview = v; // preview seek while dragging
+    if (canSeek && known && ui.Slider(id, r, v, false)) preview = v; // preview seek while dragging; no length, no place to seek to
     if (ui.IsActive(id) && ui.In().released) { // commit seek on release only
         p.m.media.Seek(v);
         preview = -1;
@@ -40,17 +40,12 @@ constexpr int kBlobs = 5; // a few big soft blobs across the media card
 Swell vizSwell;
 
 void DrawViz(PageCtx& p, const D2D1_RECT_F& r) { // soft light swelling up from the bottom of the card: bass on the left, treble on the right
-    if (!p.m.cfg.viz || !p.m.hasTrack) return;
+    if (!p.m.vizOn || !p.m.hasTrack) return;
     Ui& ui = p.ui;
-    if (!StepSwell(vizSwell, p.m, ui.Dt(), p.m.track.playing, kBlobs)) return; // nothing glowing: no layer, no work
+    if (!StepSwell(vizSwell, p.m, ui.Dt(), p.m.track.playing, kBlobs)) return; // nothing glowing: no work
     ui.KeepAlive(); // animate until fully faded
-    Canvas& c = ui.C();
-    ComPtr<ID2D1RoundedRectangleGeometry> card; // the light stays inside the card's rounded corners
-    if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(r, 24, 24), &card))) return;
-    ID2D1RenderTarget* rt = c.Target();
-    rt->PushLayer(D2D1::LayerParameters(r, card.Get()), nullptr); // bounded to the card, so only its pixels pay for the mask
-    DrawSwell(c, vizSwell, kBlobs, r, p.media, ui.Now());
-    rt->PopLayer();
+    D2D1_ROUNDED_RECT card = D2D1::RoundedRect(r, 24, 24); // the light stays inside the card's rounded corners
+    DrawSwell(ui.C(), vizSwell, kBlobs, r, p.media, ui.Now(), &card);
 }
 
 }
@@ -101,22 +96,22 @@ bool StepSwell(Swell& s, Model& m, float dt, bool playing, int blobs) {
     return alive || s.heat > 0.003f;
 }
 
-void DrawSwell(Canvas& c, const Swell& s, int blobs, const D2D1_RECT_F& r, const Theme& t, double now) {
+void DrawSwell(Canvas& c, const Swell& s, int blobs, const D2D1_RECT_F& r, const Theme& t, double now, const D2D1_ROUNDED_RECT* in) {
     float w = Width(r), h = Height(r), slot = w / blobs, tm = (float)now; // two glow colors, alpha varies: the brush cache stays tiny
-    if (s.heat > 0.003f) c.Glow({(r.left + r.right) / 2, r.bottom}, w * 0.70f, h * (0.25f + 0.45f * s.heat), t.accent.Alpha(0.12f + 0.33f * s.heat)); // warm wash along the floor
+    if (s.heat > 0.003f) c.Glow({(r.left + r.right) / 2, r.bottom}, w * 0.70f, h * (0.25f + 0.45f * s.heat), t.accent.Alpha(0.12f + 0.33f * s.heat), in); // warm wash along the floor
     for (int i = 0; i < blobs; ++i) {
         float v = s.level[i];
         if (v < 0.01f) continue;
         float drift = std::sin(tm * 0.22f + i * 2.3f) * slot * 0.35f; // each blob wanders slowly along the floor
         float x = r.left + slot * (i + 0.5f) + drift, base = r.bottom + h * 0.06f; // sits just below the edge, so only its top shows
         float rise = h * (0.35f + 1.05f * v);
-        c.Glow({x, base}, slot * 1.6f * (0.85f + 0.35f * v), rise, t.accent.Alpha(0.13f + 0.52f * v)); // big and soft, melting into its neighbours
-        c.Glow({x, base}, slot * 0.85f, rise * 0.70f, t.accentHi.Alpha(0.36f * v)); // a brighter heart
+        c.Glow({x, base}, slot * 1.6f * (0.85f + 0.35f * v), rise, t.accent.Alpha(0.13f + 0.52f * v), in); // big and soft, melting into its neighbours
+        c.Glow({x, base}, slot * 0.85f, rise * 0.70f, t.accentHi.Alpha(0.36f * v), in); // a brighter heart
     }
 }
 
 void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale, const Theme& t) {
-    if (!p.m.cfg.viz || !p.m.hasTrack) return;
+    if (!p.m.vizOn || !p.m.hasTrack) return;
     Ui& ui = p.ui;
     bool playing = p.m.track.playing;
     float left = 0, right = 0;
@@ -128,15 +123,11 @@ void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale, const Theme& t) {
 
     Canvas& c = ui.C();
     float w = Width(r), h = Height(r);
-    ComPtr<ID2D1RoundedRectangleGeometry> card; // inside the card's rounded corners, not its square bounds
-    if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(r, 22, 22), &card))) return;
-    ID2D1RenderTarget* rt = c.Target();
-    rt->PushLayer(D2D1::LayerParameters(r, card.Get()), nullptr);
+    D2D1_ROUNDED_RECT card = D2D1::RoundedRect(r, 22, 22); // inside the card's rounded corners, not its square bounds
     c.Glow({r.left + w * 0.22f, r.bottom - h * 0.05f}, w * (0.30f + 0.28f * l) * scale, h * (0.55f + 0.55f * l) * scale, // fixed corners: bottom-left / top-right
-           t.accent.Alpha(0.08f + 0.42f * l));
+           t.accent.Alpha(0.08f + 0.42f * l), &card);
     c.Glow({r.right - w * 0.18f, r.top + h * 0.10f}, w * (0.26f + 0.24f * rr) * scale, h * (0.50f + 0.50f * rr) * scale,
-           t.accentHi.Alpha(0.05f + 0.32f * rr));
-    rt->PopLayer();
+           t.accentHi.Alpha(0.05f + 0.32f * rr), &card);
 }
 
 D2D1_RECT_F ArtHover(PageCtx& p, const D2D1_RECT_F& art) { // hover: the cover lifts and a tip offers fullscreen, a click goes there
@@ -159,6 +150,57 @@ void OnDot(PageCtx& p, const char* id, D2D1_POINT_2F btn, bool on) { // a small 
     if (k > 0.01f) p.ui.C().Dot({btn.x, btn.y + 17}, 2.2f * k, theme::Lift(p.media).accent.Alpha(k)); // same lifted color as the button above it
 }
 
+void Controls(PageCtx& p, float cx, float cy, float k) { // shuffle, previous, play, next, repeat; k scales the row
+    Ui& ui = p.ui;
+    const sys::Track& tr = p.m.track;
+    bool has = p.m.hasTrack;
+    const Theme ct = theme::Lift(p.media); // the play button leans toward the ink, so it stands clear of the glow behind it
+    float s1 = 132 * k, s2 = 72 * k;
+    if (w::IconBtn(ui, ct, Ui::Id("md.shuffle"), {cx - s1, cy}, 40 * k, glyph::Shuffle, 22 * k, has && tr.canShuf, has && tr.shuffle)) p.m.media.ToggleShuffle();
+    if (w::IconBtn(ui, ct, Ui::Id("md.prev"), {cx - s2, cy}, 46 * k, glyph::Prev, 30 * k, has && tr.canPrev)) p.m.media.Previous();
+    if (w::PlayBtn(ui, ct, Ui::Id("md.play"), {cx, cy}, 60 * k, has && tr.playing, has)) p.m.media.TogglePlay();
+    if (w::IconBtn(ui, ct, Ui::Id("md.next"), {cx + s2, cy}, 46 * k, glyph::Next, 30 * k, has && tr.canNext)) p.m.media.Next();
+    if (w::IconBtn(ui, ct, Ui::Id("md.repeat"), {cx + s1, cy}, 40 * k, has && tr.repeat == 1 ? glyph::RepeatOne : glyph::Repeat, 22 * k, has && tr.canRep,
+                   has && tr.repeat != 0))
+        p.m.media.CycleRepeat();
+    OnDot(p, "md.shuffle", {cx - s1, cy}, has && tr.shuffle);
+    OnDot(p, "md.repeat", {cx + s1, cy}, has && tr.repeat != 0);
+}
+
+void MediaCompact(PageCtx& p) { // a smaller cover beside the song, the wave and the controls across the whole card
+    Canvas& c = p.ui.C();
+    const Theme& t = p.media;
+    const D2D1_RECT_F& r = p.area;
+    const sys::Track& tr = p.m.track;
+    bool has = p.m.hasTrack;
+    constexpr float kRadius = 24, kArt = 104, kPad = 26;
+    c.Fill(r, kRadius, t.card);
+    if (p.coverBlur) {
+        c.Image(p.coverBlur, r, kRadius, 0.7f * p.artFade);
+        c.FillH(r, kRadius, t.veil.Alpha(0.30f), t.veil.Alpha(0.72f));
+    }
+    DrawViz(p, r);
+    c.StrokeV(r, kRadius, t.hairTop, t.hairBot, 1);
+    D2D1_RECT_F place = Rect(r.left + kPad, r.top + kPad, kArt, kArt), art = ArtHover(p, place); // the rest lays out from where it sits, not from its hover lift
+    FlipArt(p, art, 16, 40);
+    art = place;
+    float x = r.left + kPad + kArt + 22, wdt = r.right - kPad - x, y0 = r.top + kPad + 6;
+    c.TextSp(fmt::Upper(has ? tr.app : L"Idle"), Rect(x, y0, wdt, 16), Weight::Medium, 10.5f, t.accent, 1.6f);
+    c.Text(has && !tr.title.empty() ? tr.title : L"Nothing playing", Rect(x, y0 + 22, wdt, 36), Weight::Medium, 25, t.text);
+    std::wstring sub = !has ? L"Start music or a video in any app" : tr.album.empty() || tr.album == tr.artist ? tr.artist : tr.artist + L"  ·  " + tr.album;
+    c.Text(sub, Rect(x, y0 + 60, wdt, 22), Weight::Light, 15, t.textDim);
+    D2D1_RECT_F seek = Rect(r.left + kPad, art.bottom + 20, Width(r) - 2 * kPad, 28);
+    bool known = !has || tr.duration > 0;
+    Wave(p, seek, has ? (float)tr.Progress() : 0, has && tr.playing, has && tr.canSeek, known);
+    double elapsed = has ? tr.Elapsed() / 1e7 : 0, total = has ? tr.duration / 1e7 : 0;
+    if (preview >= 0) elapsed = total * preview;
+    if (known) {
+        c.Text(fmt::Clock(elapsed), Rect(seek.left, seek.bottom, 80, 18), Weight::Regular, 11.5f, t.textDim);
+        c.Text(total > 0 ? fmt::Clock(total) : L"--:--", Rect(seek.right - 80, seek.bottom, 80, 18), Weight::Regular, 11.5f, t.textDim, Align::Right);
+    }
+    Controls(p, (r.left + r.right) / 2, (std::min)(seek.bottom + 44, r.bottom - 34), 0.9f);
+}
+
 void MediaTall(PageCtx& p) { // sidebar: big centered art, everything else stacked under it
     Ui& ui = p.ui;
     Canvas& c = ui.C();
@@ -175,11 +217,10 @@ void MediaTall(PageCtx& p) { // sidebar: big centered art, everything else stack
     DrawViz(p, r);
     c.StrokeV(r, radius, t.hairTop, t.hairBot, 1);
     float side = (std::min)(Width(r) - 64, Height(r) * 0.46f);
-    D2D1_RECT_F art = ArtHover(p, Rect((r.left + r.right - side) / 2, r.top + 32, side, side));
+    D2D1_RECT_F place = Rect((r.left + r.right - side) / 2, r.top + 32, side, side), art = ArtHover(p, place);
     c.Glow({(art.left + art.right) / 2, (art.top + art.bottom) / 2 + Height(art) * 0.06f}, Width(art) * 0.62f, Height(art) * 0.62f, Color{0, 0, 0, 0.30f}); // a soft shadow under the art, no ring
-    c.Fill(art, 18, t.cardHi);
-    if (p.cover) c.Art(p.cover, p.coverBlur, art, 18, p.artFade);
-    else c.Icon(glyph::Music, {(art.left + art.right) / 2, (art.top + art.bottom) / 2}, 64, t.textLow);
+    FlipArt(p, art, 18, 64);
+    art = place; // the text below stays put while the cover lifts
     float x = r.left + 28, wdt = Width(r) - 56, y = art.bottom + 26;
     c.TextSp(fmt::Upper(has ? tr.app : L"Idle"), Rect(x, y, wdt, 16), Weight::Medium, 10.5f, t.accent, 1.6f, Align::Center);
     c.Text(has && !tr.title.empty() ? tr.title : L"Nothing playing", Rect(x, y + 22, wdt, 36), Weight::Medium, 25, t.text, Align::Center);
@@ -212,6 +253,10 @@ void DrawMedia(PageCtx& p) {
         MediaTall(p);
         return;
     }
+    if (p.m.mediaCompact) {
+        MediaCompact(p);
+        return;
+    }
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.media;
@@ -232,9 +277,7 @@ void DrawMedia(PageCtx& p) {
 
     D2D1_RECT_F art = ArtHover(p, Rect(r.left + 26, r.top + 26, side, side));
     c.Glow({(art.left + art.right) / 2, (art.top + art.bottom) / 2 + Height(art) * 0.06f}, Width(art) * 0.62f, Height(art) * 0.62f, Color{0, 0, 0, 0.30f}); // a soft shadow under the art, no ring
-    c.Fill(art, 18, t.cardHi);
-    if (p.cover) c.Art(p.cover, p.coverBlur, art, 18, p.artFade);
-    else c.Icon(glyph::Music, {(art.left + art.right) / 2, (art.top + art.bottom) / 2}, 64, t.textLow);
+    FlipArt(p, art, 18, 64);
     const float block = 210; // label, title, artist, wave, controls: one tight stack, centered beside the art
     float y0 = (std::max)(r.top + 26, (r.top + r.bottom - block) / 2);
     c.TextSp(fmt::Upper(has ? tr.app : L"Idle"), Rect(x, y0, wdt, 16), Weight::Medium, 10.5f, t.accent, 1.6f);
@@ -267,4 +310,23 @@ void DrawMedia(PageCtx& p) {
         p.m.media.CycleRepeat();
     OnDot(p, "md.shuffle", {cx - 132, cy}, has && tr.shuffle);
     OnDot(p, "md.repeat", {cx + 132, cy}, has && tr.repeat != 0);
+}
+
+void FlipArt(PageCtx& p, const D2D1_RECT_F& art, float radius, float iconPx) {
+    Canvas& c = p.ui.C();
+    const Theme& t = p.media;
+    bool turning = p.flip < 0.999f, old = turning && p.coverPrev; // the first half still shows the old cover, edge-on at the middle
+    float sx = turning ? std::fabs(std::cos(p.flip * kPi)) : 1;
+    if (turning) p.ui.Wake(); // frames until it's flat again
+    if (sx < 0.02f) return;
+    D2D1_POINT_2F o = {(art.left + art.right) / 2, (art.top + art.bottom) / 2};
+    D2D1_MATRIX_3X2_F was;
+    c.Target()->GetTransform(&was);
+    if (turning) c.Target()->SetTransform(D2D1::Matrix3x2F::Scale(sx, 1, o) * *D2D1::Matrix3x2F::ReinterpretBaseType(&was)); // squeezed toward its middle: a card turning over
+    c.Fill(art, radius, t.cardHi);
+    ID2D1Bitmap* bmp = old ? p.coverPrev : p.cover;
+    if (bmp) c.Art(bmp, old ? nullptr : p.coverBlur, art, radius, turning ? 1.0f : p.artFade);
+    else c.Icon(glyph::Music, o, iconPx, t.textLow);
+    if (turning) c.Fill(art, radius, Color{0, 0, 0, 0.35f * (1 - sx)}); // its far side in shade
+    c.Target()->SetTransform(was);
 }

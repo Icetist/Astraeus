@@ -23,8 +23,13 @@ constexpr size_t kMaxBody = 4u << 20; // search results carry every candidate's 
 constexpr size_t kKeep = 12; // songs remembered, so going back and forth costs nothing
 constexpr DWORD kBusyWaitMs = 1500; // the service answers 503 when busy: one more try after a breath
 constexpr ULONGLONG kFailWaitMs = 15000; // a song no source answered for is asked again after this
+constexpr int kFailSteps = 4; // each miss in a row waits four times longer, up to this many times
 constexpr size_t kMaxRow = 2000, kMaxLines = 5000; // a lyric line and a song, generously; anything bigger is hostile
-constexpr double kMaxOff = 6; // seconds a candidate's length may differ before its timing is someone else's cut
+constexpr double kMaxOff = 4; // seconds a candidate's length may differ before its timing is someone else's cut
+constexpr double kExactOff = 2; // seconds: found by the title alone, or calling the song instrumental, it must be this recording
+constexpr double kKugouOff = 2.5; // kugou rounds its lengths to the second
+constexpr double kForeign = 0.1; // a latin title's lyrics with less latin than this share of their letters are another song's
+constexpr auto kVerdictWait = std::chrono::seconds(4); // lyrics found elsewhere wait this long for lrclib to say the song is instrumental
 
 std::string Utf8(const std::wstring& w) {
     int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
@@ -115,6 +120,7 @@ std::string ToUtf8(const std::wstring& w) {
 // thread (a timing nudge writes from the ui, rarely). A song with no lyrics is believed for 3 days, then asked again.
 constexpr size_t kDiskKeep = 300;
 constexpr long long kNoneDays = 3;
+constexpr char kDiskMagic[] = "ALYR3"; // 3: machine hums filtered; what the looser lookups saved is looked up again
 
 std::wstring DiskDir() {
     wchar_t base[MAX_PATH];
@@ -146,7 +152,7 @@ long long NowDays() { return (long long)(time(nullptr) / 86400); }
 void DiskSave(const Lyrics& d) {
     std::wstring path = DiskPath(d.key);
     if (path.empty()) return;
-    std::string out = "ALYR1\n" + ToUtf8(d.key) + "\n" + std::to_string(d.offsetMs) + " " + std::to_string(NowDays()) + " " + std::to_string(d.lines.size()) + "\n";
+    std::string out = std::string(kDiskMagic) + "\n" +ToUtf8(d.key) + "\n" + std::to_string(d.offsetMs) + " " + std::to_string(NowDays()) + " " + std::to_string(d.lines.size()) + "\n";
     for (const LyricLine& l : d.lines) {
         char head[64];
         snprintf(head, sizeof(head), "%.3f %.3f %zu", l.start, l.end, l.words.size());
@@ -201,7 +207,7 @@ std::shared_ptr<Lyrics> DiskLoad(const std::wstring& key) { // null when not the
     SetFileTime(f, nullptr, nullptr, &now); // played = recent: it outlives the songs not heard in a while
     CloseHandle(f);
     size_t a = in.find('\n'), b = a == std::string::npos ? a : in.find('\n', a + 1), c = b == std::string::npos ? b : in.find('\n', b + 1);
-    if (c == std::string::npos || in.compare(0, a, "ALYR1") != 0 || Wide(in.substr(a + 1, b - a - 1)) != key) return nullptr;
+    if (c == std::string::npos || in.compare(0, a, kDiskMagic) != 0 || Wide(in.substr(a + 1, b - a - 1)) != key) return nullptr;
     long long offset = 0, day = 0, count = 0;
     if (sscanf_s(in.c_str() + b + 1, "%lld %lld %lld", &offset, &day, &count) != 3 || count < 0 || count > (long long)kMaxLines) return nullptr;
     if (count == 0 && NowDays() - day > kNoneDays) return nullptr; // "none" is only believed for a few days
@@ -244,6 +250,108 @@ std::wstring MainArtist(const std::wstring& raw) { // first of "A, B & C feat. D
     return s;
 }
 
+// ---- telling the playing song from a search's near misses ----
+std::wstring Narrow(std::wstring s) { // full-width forms and cjk brackets to plain ascii, so "Song（Live）" cleans like "Song (Live)"
+    for (auto& c : s) {
+        if (c >= 0xFF01 && c <= 0xFF5E) c = (wchar_t)(c - 0xFEE0);
+        else if (c == 0x3000) c = L' ';
+        else if (c == 0x3010 || c == 0x300C || c == 0x300E) c = L'['; // 【 「 『
+        else if (c == 0x3011 || c == 0x300D || c == 0x300F) c = L']';
+        else if (c == 0x2018 || c == 0x2019) c = L'\'';
+    }
+    return s;
+}
+
+std::wstring Fold(const std::wstring& s) { // what a name says: letters and digits, lowercase, "&" read as "and"
+    std::wstring out;
+    for (wchar_t c : s) {
+        if (c == L'&') out += L"and";
+        else if (std::iswalnum(c) || c >= 0x3040) out += (wchar_t)std::towlower(c);
+    }
+    return out.empty() ? Lower(Trim(s)) : out; // all symbols: compared as written
+}
+
+std::wstring TitleKey(const std::wstring& raw) { return Fold(CleanTitle(Narrow(raw))); }
+std::wstring BareKey(const std::wstring& raw) { return Fold(BareTitle(Narrow(raw))); }
+
+bool Backing(const std::wstring& title) { // a karaoke or instrumental cut, never the sung song's lyrics
+    std::wstring low = Lower(title);
+    for (const wchar_t* k : {L"instrumental", L"karaoke", L"off vocal", L"inst.", L"伴奏"}) // 伴奏: backing track
+        if (low.find(k) != std::wstring::npos) return true;
+    return false;
+}
+
+int Tongue(const std::wstring& title) { // a version sung in another language: the same tune, other words; 0 none, else which
+    std::wstring low = Lower(title);
+    int n = 0;
+    for (const wchar_t* k : {L"japanese", L"korean", L"chinese", L"english", L"spanish", L"mandarin", L"cantonese", L"日本語", L"日语", L"韩语",
+                             L"中文", L"国语", L"粤语"}) { // 日本語 日语 韩语 中文 国语 粤语
+        ++n;
+        if (low.find(k) != std::wstring::npos) return n;
+    }
+    return 0;
+}
+
+std::vector<std::wstring> Names(const std::wstring& raw) { // "A, B & C feat. D", "A、B", "A / B": each credited name, folded
+    std::wstring s = Lower(Narrow(raw));
+    for (const wchar_t* sep : {L" feat.", L" feat ", L" ft.", L" ft ", L" featuring ", L" with ", L" vs.", L" vs ", L" x ", L",", L"&", L"/", L";", L"、"})
+        for (size_t p = s.find(sep); p != std::wstring::npos; p = s.find(sep, p + 1)) s.replace(p, wcslen(sep), L"\x1f");
+    std::vector<std::wstring> out;
+    for (size_t a = 0; a <= s.size();) {
+        size_t b = s.find(L'\x1f', a);
+        if (b == std::wstring::npos) b = s.size();
+        if (std::wstring f = Fold(s.substr(a, b - a)); !f.empty()) out.push_back(f);
+        a = b + 1;
+    }
+    return out;
+}
+
+struct Match { // the song that's playing, folded once for every candidate it meets
+    std::wstring title, bare, artist; // folded; artist is the main one
+    std::vector<std::wstring> artists; // every name credited, folded
+    double seconds = 0;
+    bool backing = false, latin = false, latinBy = false; // a karaoke cut itself; a title written only in latin letters; the artist too
+    int tongue = 0; // the language version it names, if any
+
+    static bool Latin(const std::wstring& s) { // latin letters and no other script
+        bool latin = false, other = false;
+        for (wchar_t c : s) {
+            if (c < 0x250 && std::iswalpha(c)) latin = true;
+            else if (c >= 0x370 && (std::iswalpha(c) || c >= 0x2E80)) other = true;
+        }
+        return latin && !other;
+    }
+    Match(const std::wstring& t, const std::wstring& a, double sec)
+        : title(TitleKey(t)), bare(BareKey(t)), artist(Fold(MainArtist(a))), artists(Names(a)), seconds(sec), backing(Backing(t)), latin(Latin(t)), latinBy(Latin(a)),
+          tongue(Tongue(t)) {}
+    bool Title(const std::wstring& got, const std::vector<std::wstring>& aliases = {}) const { // the same name, or a translation the source itself gives
+        if (Backing(got) != backing || Tongue(got) != tongue) return false; // "(Japanese Version)" cleans away like "(Album Version)", but it's other words
+        auto same = [&](const std::wstring& name) { std::wstring k = TitleKey(name); return k == title || k == bare; }; // ours may carry an aside theirs lacks, never the reverse
+        if (same(got)) return true;
+        for (const auto& a : aliases)
+            if (!a.empty() && same(a)) return true;
+        return false;
+    }
+    bool Artist(const std::vector<std::wstring>& got) const { // one name in common, or one inside the other ("Kanye West", "Kanye")
+        for (const auto& g : got)
+            for (const auto& w : artists) {
+                const std::wstring& shorter = g.size() < w.size() ? g : w;
+                const std::wstring& longer = g.size() < w.size() ? w : g;
+                bool longEnough = shorter.size() >= 3 || (shorter.size() >= 2 && shorter[0] >= 0x2E80); // two cjk characters make a name, two letters don't
+                if (g == w || (longEnough && longer.find(shorter) != std::wstring::npos)) return true;
+            }
+        return false;
+    }
+    bool Exact(const std::wstring& got, const std::vector<std::wstring>& names) const { // word for word, no alias, no overlap
+        return TitleKey(got) == title && std::find(names.begin(), names.end(), artist) != names.end();
+    }
+    bool Length(double len, double tol) const { return seconds <= 0 || len <= 0 || std::fabs(len - seconds) <= tol; } // only when both sides know it
+};
+
+bool Machine(const std::wstring& text) { // "本字幕由 TME AI 技术生成": a machine's guess at an instrumental's hums, not lyrics
+    return text.find(L"字幕") != std::wstring::npos && (text.find(L"AI") != std::wstring::npos || text.find(L"生成") != std::wstring::npos);
+}
+
 // ---- a small json reader for the services' answers ----
 void PutUtf8(std::string& out, unsigned cp) {
     if (cp < 0x80) out += (char)cp;
@@ -282,6 +390,11 @@ struct Val {
         const Val* v = (*this)[key];
         return v && v->kind == kStr ? v->str : std::string();
     }
+    bool Flag(const char* key) const {
+        const Val* v = (*this)[key];
+        return v && v->kind == kBool && v->num != 0;
+    }
+    std::vector<std::wstring> Strings(const char* key) const; // an array of names, as wide strings
 };
 
 struct Json {
@@ -389,7 +502,26 @@ struct Json {
     }
 };
 
+std::vector<std::wstring> Val::Strings(const char* key) const {
+    std::vector<std::wstring> out;
+    if (const Val* v = (*this)[key]; v && v->kind == kArr)
+        for (const Val& s : v->items)
+            if (s.kind == kStr && out.size() < 16) out.push_back(Wide(s.str));
+    return out;
+}
+
+bool Hum(const std::wstring& text) { // "嗯嗯", "啦啦啦": a transcriber's hums and la-las, nothing to sing along to
+    bool any = false;
+    for (wchar_t c : text) {
+        if (std::iswspace(c) || std::iswpunct(c) || (c >= 0x3000 && c < 0x3040) || (c >= 0xFF00 && c < 0xFF20)) continue;
+        if (!std::wcschr(L"嗯啦啊哦喔呜哈嘿噢呀", c)) return false; // 嗯啦啊哦喔呜哈嘿噢呀
+        any = true;
+    }
+    return any;
+}
+
 bool Noise(const std::wstring& text) { // section headers like "[Chorus]", credit lines, "instrumental, enjoy"
+    if (Hum(text)) return true;
     if (text.size() >= 2 && ((text.front() == L'[' && text.back() == L']') || (text.front() == L'(' && text.back() == L')' && text.find(L':') != std::wstring::npos)))
         return true;
     if (text.find(L'\uFF1A') != std::wstring::npos) return true; // a full-width colon only ever appears in credit lines
@@ -509,6 +641,10 @@ bool Worded(const std::vector<LyricLine>& lines) { // real word timing on most l
 
 // Line-timed lyrics still light word by word: each word gets a beat from its syllables, a breath after commas, the last word held a little.
 void Placeholder(LyricLine& l) {
+    size_t latin = 0, cjk = 0;
+    for (wchar_t c : l.text) latin += c < 0x250 && std::iswalpha(c), cjk += c >= 0x2E80 && c < 0xFF00;
+    if (latin > cjk) // netease writes a latin line's asides in full-width brackets: "empty （Oh）" reads as "empty (Oh)"; one for one, word offsets stay
+        for (wchar_t& c : l.text) c = c == L'（' ? L'(' : c == L'）' ? L')' : c;
     if (!l.words.empty() || l.text.empty()) return;
     struct Beat {
         int at;
@@ -606,7 +742,12 @@ struct LyricSrc::Impl {
         std::atomic<void*> req{nullptr};
     };
     Lane lanes[3]; // lrclib, netease, kugou
-    std::deque<std::pair<std::wstring, ULONGLONG>> failed; // songs no source could be reached for, not asked again for a while
+    struct Failed {
+        std::wstring key;
+        ULONGLONG at;
+        int tries; // misses in a row: one source down for good mustn't mean a lookup every few seconds
+    };
+    std::deque<Failed> failed; // songs no source could be reached for, not asked again for a while
 
     bool Get(Lane& ln, const std::wstring& url, std::string& body, int tries = 2) {
         for (int i = 0; i < tries && !ln.halt.load(); ++i) {
@@ -620,42 +761,65 @@ struct LyricSrc::Impl {
         return lines.size() >= 3 && lines.back().start - lines.front().start > 10;
     }
 
-    static std::vector<LyricLine> Best(const std::string& body, double seconds, double maxOff = kMaxOff) { // lrclib: the synced candidate closest in length
+    static bool Fits(const std::vector<LyricLine>& lines, const Match& m, bool exact) { // timed, written by people, and in the song's own script
+        if (!Synced(lines)) return false;
+        size_t latin = 0, other = 0;
+        for (const LyricLine& l : lines) {
+            if (Machine(l.text)) return false;
+            for (wchar_t c : l.text) {
+                if (c < 0x250 && std::iswalpha(c)) ++latin;
+                else if (c >= 0x370 && (std::iswalpha(c) || c >= 0x2E80)) ++other;
+            }
+        }
+        if (!m.latin || exact || latin + other == 0) return true; // a song named in its own script, or matched word for word: trusted as it is
+        return latin >= (latin + other) * kForeign; // a latin title with cjk-only lyrics is someone else's song
+    }
+
+    // lrclib: of the candidates that are this song, the synced one closest in length; inst: the closest is instrumental, so none is right
+    static std::vector<LyricLine> Best(const std::string& body, const Match& m, bool& inst, double maxOff = kMaxOff) {
         Val root;
         if (!Json{body}.Parse(root)) return {};
         std::vector<const Val*> all;
         if (root.kind == Val::kArr)
             for (const Val& v : root.items) all.push_back(&v);
         else if (root.kind == Val::kObj) all.push_back(&root);
-        const Val* pick = nullptr;
-        double off = 1e9;
+        std::vector<std::pair<double, const Val*>> synced;
+        size_t bare = 0;
+        double bareOff = 1e9;
         for (const Val* o : all) {
-            if (o->Text("syncedLyrics").empty()) continue;
-            double len = o->Number("duration"), d = seconds > 0 && len > 0 ? std::fabs(len - seconds) : 0;
-            if (d < off) {
-                off = d;
-                pick = o;
-            }
+            std::wstring name = Wide(o->Text("trackName"));
+            double len = o->Number("duration");
+            if (!m.Title(name) || !m.Artist(Names(Wide(o->Text("artistName")))) || !m.Length(len, maxOff)) continue; // another song that shares a word or two
+            double d = m.seconds > 0 && len > 0 ? std::fabs(len - m.seconds) : 0;
+            if (o->Flag("instrumental")) ++bare, bareOff = (std::min)(bareOff, d);
+            else if (!o->Text("syncedLyrics").empty()) synced.push_back({d, o});
         }
-        if (!pick || off > maxOff) return {};
-        auto lines = ParseLrc(Wide(pick->Text("syncedLyrics")));
-        return Synced(lines) ? lines : std::vector<LyricLine>{};
-    }
-
-    std::vector<LyricLine> Netease(Lane& ln, const std::wstring& title, const std::wstring& artist, double seconds, bool& reached) { // strong on hip-hop and pop
-        const std::wstring bare = BareTitle(title);
-        const std::wstring queries[3] = {artist + L" " + title, artist + L" " + bare, bare}; // with the artist, the bare title, then the title alone
-        for (int q = 0; q < 3; ++q) {
-            if (q == 1 && bare == title) continue; // nothing was bare-able
-            if (q == 2 && seconds <= 0) break; // the title alone needs the exact length to be trusted
-            auto lines = NeteaseTry(ln, queries[q], title, bare, artist, seconds, q == 2, reached);
-            if (!lines.empty() || ln.halt.load()) return lines;
+        std::stable_sort(synced.begin(), synced.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        if (bare && bare >= synced.size() && (synced.empty() || bareOff <= synced[0].first + kExactOff)) { // most copies, the nearest among them, say no words
+            inst = true;
+            return {};
+        }
+        for (const auto& [d, o] : synced) {
+            auto lines = ParseLrc(Wide(o->Text("syncedLyrics")));
+            if (Fits(lines, m, m.Exact(Wide(o->Text("trackName")), Names(Wide(o->Text("artistName")))))) return lines;
         }
         return {};
     }
 
-    std::vector<LyricLine> NeteaseTry(Lane& ln, const std::wstring& query, const std::wstring& title, const std::wstring& bare, const std::wstring& artist, double seconds,
-                                      bool strict, bool& reached) { // one search; strict: the title alone, so the bare name and the length must match exactly
+    std::vector<LyricLine> Netease(Lane& ln, const std::wstring& title, const std::wstring& artist, const Match& m, bool& reached, bool& inst) { // strong on hip-hop and pop
+        const std::wstring bare = BareTitle(title);
+        const std::wstring queries[3] = {artist + L" " + title, artist + L" " + bare, bare}; // with the artist, the bare title, then the title alone
+        for (int q = 0; q < 3; ++q) {
+            if (q == 1 && bare == title) continue; // nothing was bare-able
+            if (q == 2 && m.seconds <= 0) break; // the title alone needs the exact length to be trusted
+            auto lines = NeteaseTry(ln, queries[q], m, q == 2, reached, inst);
+            if (!lines.empty() || inst || ln.halt.load()) return lines;
+        }
+        return {};
+    }
+
+    // one search; strict: found by the title alone, so the length must match exactly
+    std::vector<LyricLine> NeteaseTry(Lane& ln, const std::wstring& query, const Match& m, bool strict, bool& reached, bool& inst) {
         std::string body;
         if (!Get(ln, L"https://music.163.com/api/search/get?s=" + Esc(query) + L"&type=1&limit=8", body)) return {};
         reached = true;
@@ -664,52 +828,75 @@ struct LyricSrc::Impl {
         const Val* result = root["result"];
         const Val* songs = result ? (*result)["songs"] : nullptr;
         if (!songs || songs->kind != Val::kArr) return {};
-        const std::wstring t = Lower(title), tb = Lower(bare), a = Lower(artist);
         for (const Val& song : songs->items) {
             if (ln.halt.load()) return {};
-            std::wstring raw = Wide(song.Text("name")), name = Lower(CleanTitle(raw)), nameBare = Lower(BareTitle(raw));
-            bool titleOk = name == t || nameBare == tb || (!name.empty() && (name.find(t) != std::wstring::npos || t.find(name) != std::wstring::npos));
-            bool artistOk = false;
+            std::wstring name = Wide(song.Text("name"));
+            std::vector<std::wstring> aliases = song.Strings("alias"), trans = song.Strings("transNames"), names;
+            aliases.insert(aliases.end(), trans.begin(), trans.end()); // a translated title counts only when netease itself gives it
             if (const Val* artists = song["artists"]; artists && artists->kind == Val::kArr)
                 for (const Val& who : artists->items) {
-                    std::wstring n = Lower(Wide(who.Text("name")));
-                    artistOk |= !n.empty() && (n.find(a) != std::wstring::npos || a.find(n) != std::wstring::npos);
+                    for (const auto& n : Names(Wide(who.Text("name")))) names.push_back(n);
+                    for (const auto& a : who.Strings("alias")) // the name they go by elsewhere ("Ye")
+                        for (const auto& n : Names(a)) names.push_back(n);
                 }
             double len = song.Number("duration") / 1000;
-            bool exactLen = seconds > 0 && len > 0 && std::fabs(len - seconds) <= 2;
-            bool ok = strict ? nameBare == tb && exactLen
-                             : titleOk && (artistOk || (exactLen && nameBare == tb)) && !(seconds > 0 && len > 0 && std::fabs(len - seconds) > kMaxOff); // an artist named another way ("Ye") counts when name and length match
-            if (!ok) continue;
+            if (!m.Title(name, aliases) || !m.Artist(names) || !m.Length(len, strict ? kExactOff : kMaxOff)) continue; // a remix by someone else, a cover, a different cut
             std::string lyric;
             if (!Get(ln, L"https://music.163.com/api/song/lyric/v1?id=" + std::to_wstring((long long)song.Number("id")) + L"&cp=false&lv=0&kv=0&tv=0&rv=0&yv=0&ytv=0&yrv=0", lyric)) continue;
             Val doc;
             if (!Json{lyric}.Parse(doc)) continue;
+            bool exact = m.Exact(name, names);
+            if (doc.Flag("pureMusic")) { // this very song, marked as having no words
+                inst = exact && m.Length(len, kExactOff);
+                return {};
+            }
             if (const Val* yrc = doc["yrc"]) { // word-timed, when they have it
                 auto words = ParseTimed(Wide(yrc->Text("lyric")), L'(', false);
-                if (Synced(words)) return words;
+                if (Fits(words, m, exact)) return words;
             }
             const Val* lrc = doc["lrc"];
             auto lines = lrc ? ParseLrc(Wide(lrc->Text("lyric"))) : std::vector<LyricLine>{};
-            if (Synced(lines)) return lines;
+            if (Fits(lines, m, exact)) return lines;
         }
         return {};
     }
 
-    std::vector<LyricLine> Kugou(Lane& ln, const std::wstring& title, const std::wstring& artist, double seconds, bool& reached) { // word-timed across much of the western catalogue
-        if (seconds <= 0) { // matched on title and exact length: without the length there's nothing to match, a definite no
+    std::vector<LyricLine> Kugou(Lane& ln, const std::wstring& title, const std::wstring& artist, const Match& m, bool& reached) { // word-timed across much of the western catalogue
+        if (m.seconds <= 0) { // matched on title and exact length: without the length there's nothing to match, a definite no
             reached = true;
             return {};
         }
-        const std::wstring bare = BareTitle(title);
-        const std::wstring queries[2] = {artist + L" " + title, bare}; // with the artist, then the bare title on its own
+        const std::wstring queries[2] = {artist + L" " + title, BareTitle(title)}; // with the artist, then the bare title on its own
         for (int q = 0; q < 2; ++q) {
-            auto lines = KugouTry(ln, queries[q], title, bare, seconds, reached);
+            auto lines = KugouTry(ln, queries[q], m, reached);
             if (!lines.empty() || ln.halt.load()) return lines;
         }
         return {};
     }
 
-    std::vector<LyricLine> KugouTry(Lane& ln, const std::wstring& query, const std::wstring& title, const std::wstring& bare, double seconds, bool& reached) {
+    std::vector<LyricLine> KugouKrc(Lane& ln, const Val& c) { // one lyric candidate, downloaded and unpacked
+        std::wstring id = Wide(c.Text("id"));
+        if (id.empty()) id = std::to_wstring((long long)c.Number("id"));
+        std::string got;
+        if (!Get(ln, L"https://lyrics.kugou.com/download?ver=1&client=pc&fmt=krc&charset=utf8&id=" + Esc(id) + L"&accesskey=" + Esc(Wide(c.Text("accesskey"))), got))
+            return {};
+        Val doc;
+        std::string packed, krc;
+        if (!Json{got}.Parse(doc) || !detail::Unbase64(doc.Text("content"), packed) || packed.size() < 8 || packed.compare(0, 4, "krc1") != 0) return {};
+        static const uint8_t kKey[16] = {64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, 206, 210, 110, 105}; // krc's fixed xor mask
+        std::string raw(packed.begin() + 4, packed.end());
+        for (size_t i = 0; i < raw.size(); ++i) raw[i] = (char)(raw[i] ^ kKey[i % 16]);
+        if (!detail::Unzlib(reinterpret_cast<const uint8_t*>(raw.data()), raw.size(), krc, 1u << 20)) return {};
+        std::wstring text = Wide(krc);
+        if (text.find(L"[by:AI") != std::wstring::npos) return {}; // tagged as machine-made: hums guessed over an instrumental
+        auto lines = ParseTimed(text, L'<', true);
+        size_t head = 0;
+        while (head < lines.size() && head < 3 && lines[head].start < 10 && lines[head].text.find(L" - ") != std::wstring::npos) ++head;
+        lines.erase(lines.begin(), lines.begin() + head); // "Artist - Title" up top
+        return lines;
+    }
+
+    std::vector<LyricLine> KugouTry(Lane& ln, const std::wstring& query, const Match& m, bool& reached) {
         std::string body;
         if (!Get(ln, L"https://mobileservice.kugou.com/api/v3/search/song?format=json&page=1&pagesize=8&showtype=1&keyword=" + Esc(query), body)) return {};
         reached = true;
@@ -718,12 +905,13 @@ struct LyricSrc::Impl {
         const Val* data = root["data"];
         const Val* info = data ? (*data)["info"] : nullptr;
         if (!info || info->kind != Val::kArr) return {};
-        const std::wstring t = Lower(title), tb = Lower(bare);
+        constexpr size_t kCands = 3; // kugou's guesses for a recording, best first: further down they're other songs entirely
         for (const Val& song : info->items) {
             if (ln.halt.load()) return {};
-            std::wstring listed = Wide(song.Text("songname")), name = Lower(CleanTitle(listed));
+            std::wstring listed = Wide(song.Text("songname"));
+            std::vector<std::wstring> singers = Names(Wide(song.Text("singername")));
             double len = song.Number("duration");
-            if ((name != t && Lower(BareTitle(listed)) != tb) || len <= 0 || std::fabs(len - seconds) > 2.5) continue; // kugou names artists its own way ("Ye" for Kanye): the exact title and length carry it
+            if (len <= 0 || !m.Title(listed) || !m.Artist(singers) || !m.Length(len, kKugouOff)) continue; // the title, a shared name and the length, all three
             std::string got;
             if (!Get(ln, L"https://lyrics.kugou.com/search?ver=1&man=yes&client=mobi&keyword=&hash=" + Esc(Wide(song.Text("hash"))) + L"&duration=" +
                              std::to_wstring((long long)std::lround(len * 1000)), got))
@@ -731,47 +919,46 @@ struct LyricSrc::Impl {
             Val found;
             if (!Json{got}.Parse(found)) continue;
             const Val* cands = found["candidates"];
-            if (!cands || cands->kind != Val::kArr || cands->items.empty()) continue;
-            const Val& c = cands->items[0];
-            std::wstring id = Wide(c.Text("id"));
-            if (id.empty()) id = std::to_wstring((long long)c.Number("id"));
-            if (!Get(ln, L"https://lyrics.kugou.com/download?ver=1&client=pc&fmt=krc&charset=utf8&id=" + Esc(id) + L"&accesskey=" + Esc(Wide(c.Text("accesskey"))), got))
-                continue;
-            Val doc;
-            std::string packed, krc;
-            if (!Json{got}.Parse(doc) || !detail::Unbase64(doc.Text("content"), packed) || packed.size() < 8 || packed.compare(0, 4, "krc1") != 0) continue;
-            static const uint8_t kKey[16] = {64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, 206, 210, 110, 105}; // krc's fixed xor mask
-            std::string raw(packed.begin() + 4, packed.end());
-            for (size_t i = 0; i < raw.size(); ++i) raw[i] = (char)(raw[i] ^ kKey[i % 16]);
-            if (!detail::Unzlib(reinterpret_cast<const uint8_t*>(raw.data()), raw.size(), krc, 1u << 20)) continue;
-            auto lines = ParseTimed(Wide(krc), L'<', true);
-            size_t head = 0;
-            while (head < lines.size() && head < 3 && lines[head].start < 10 && lines[head].text.find(L" - ") != std::wstring::npos) ++head;
-            lines.erase(lines.begin(), lines.begin() + head); // "Artist - Title" up top
-            if (Synced(lines)) return lines;
+            if (!cands || cands->kind != Val::kArr) continue;
+            for (size_t k = 0; k < cands->items.size() && k < kCands && !ln.halt.load(); ++k) {
+                const Val& c = cands->items[k];
+                std::wstring cs = Wide(c.Text("song")), who = Wide(c.Text("singer"));
+                std::vector<std::wstring> cn = Names(who);
+                if ((!cs.empty() && !m.Title(cs)) || (!who.empty() && !m.Artist(cn)) || !m.Length(c.Number("duration") / 1000, kKugouOff)) continue; // its guess for this hash may be another song
+                bool exact = !(m.latin && m.latinBy) && m.Exact(listed, singers) && (cs.empty() || m.Exact(cs, cn.empty() ? singers : cn)); // a latin song by a latin name never takes cjk lines on trust: kugou's machine hums for instrumentals ("Moog City") list exactly so
+                auto lines = KugouKrc(ln, c);
+                if (Fits(lines, m, exact)) return lines;
+            }
         }
         return {};
     }
 
-    std::vector<LyricLine> Lrclib(Lane& ln, const std::wstring& title, const std::wstring& artist, const std::wstring& album, double seconds, bool& reached) {
+    std::vector<LyricLine> Lrclib(Lane& ln, const std::wstring& title, const std::wstring& artist, const std::wstring& album, const Match& m, bool& reached, bool& inst) {
         std::string body;
-        if (!album.empty() && seconds > 0) { // exact match first: one small answer
+        std::vector<LyricLine> lines;
+        auto ask = [&](const std::wstring& url, double off) { // one search; an instrumental verdict ends the lookup too
+            if (!Get(ln, url, body)) return false;
+            reached = true;
+            lines = Best(body, m, inst, off);
+            return !lines.empty() || inst;
+        };
+        if (!album.empty() && m.seconds > 0) { // exact match first: one small answer
             std::wstring url = std::wstring(kApi) + L"get?track_name=" + Esc(title) + L"&artist_name=" + Esc(artist) + L"&album_name=" + Esc(album) +
-                               L"&duration=" + std::to_wstring((int)std::lround(seconds));
+                               L"&duration=" + std::to_wstring((int)std::lround(m.seconds));
             if (Get(ln, url, body, 1)) {
-                auto lines = Best(body, seconds);
-                if (!lines.empty()) return lines;
+                lines = Best(body, m, inst);
+                if (!lines.empty() || inst) {
+                    reached = true;
+                    return lines;
+                }
             }
         }
-        if (!Get(ln, std::wstring(kApi) + L"search?track_name=" + Esc(title) + L"&artist_name=" + Esc(artist), body)) return {};
-        reached = true;
-        auto lines = Best(body, seconds);
-        if (!lines.empty()) return lines;
-        if (Get(ln, std::wstring(kApi) + L"search?q=" + Esc(artist + L" " + title), body) && !(lines = Best(body, seconds)).empty()) return lines; // loose words
+        if (ask(std::wstring(kApi) + L"search?track_name=" + Esc(title) + L"&artist_name=" + Esc(artist), kMaxOff)) return lines;
+        if (!reached) return {}; // not answering: the other sources decide
+        if (ask(std::wstring(kApi) + L"search?q=" + Esc(artist + L" " + title), kMaxOff)) return lines; // loose words, strict matching
         const std::wstring bare = BareTitle(title);
-        if (bare != title && Get(ln, std::wstring(kApi) + L"search?track_name=" + Esc(bare) + L"&artist_name=" + Esc(artist), body) && !(lines = Best(body, seconds)).empty())
-            return lines;
-        if (seconds > 0 && Get(ln, std::wstring(kApi) + L"search?track_name=" + Esc(bare), body)) return Best(body, seconds, 2.0); // the title alone: only the exact length is trusted
+        if (bare != title && ask(std::wstring(kApi) + L"search?track_name=" + Esc(bare) + L"&artist_name=" + Esc(artist), kMaxOff)) return lines;
+        if (m.seconds > 0 && ask(std::wstring(kApi) + L"search?track_name=" + Esc(bare), kExactOff)) return lines; // the title alone: only the exact length is trusted
         return {};
     }
 
@@ -782,9 +969,10 @@ struct LyricSrc::Impl {
 
     std::vector<LyricLine> Look(const Ask& a, bool& reached) { // both sources at once, the first with lyrics wins; reached: one answered, so empty means none
         const std::wstring title = CleanTitle(a.title), artist = MainArtist(a.artist);
+        const Match song(a.title, a.artist, a.seconds);
         struct Out {
             std::vector<LyricLine> lines;
-            bool reached = false, done = false;
+            bool reached = false, done = false, inst = false; // inst: this song has no words, whatever the others found
         } out[3];
         std::mutex m;
         std::condition_variable cv2;
@@ -794,17 +982,18 @@ struct LyricSrc::Impl {
         }
         auto run = [&](int k) {
             std::vector<LyricLine> got;
-            bool hit = false;
+            bool hit = false, inst = false;
             try {
-                got = k == 0 ? Lrclib(lanes[0], title, artist, a.album, a.seconds, hit)
-                    : k == 1 ? Netease(lanes[1], title, artist, a.seconds, hit)
-                             : Kugou(lanes[2], title, artist, a.seconds, hit);
+                got = k == 0 ? Lrclib(lanes[0], title, artist, a.album, song, hit, inst)
+                    : k == 1 ? Netease(lanes[1], title, artist, song, hit, inst)
+                             : Kugou(lanes[2], title, artist, song, hit);
             } catch (...) {
                 OutputDebugStringW(L"[sys] lyrics source failed\n");
             }
             std::lock_guard g(m);
             out[k].lines = std::move(got);
             out[k].reached = hit;
+            out[k].inst = inst;
             out[k].done = true;
             cv2.notify_all();
         };
@@ -814,8 +1003,12 @@ struct LyricSrc::Impl {
             auto found = [&](int k) { return out[k].done && !out[k].lines.empty(); };
             auto worded = [&] { return (found(1) && Worded(out[1].lines)) || (found(2) && Worded(out[2].lines)); };
             auto all = [&] { return out[0].done && out[1].done && out[2].done; };
-            cv2.wait(g, [&] { return found(0) || found(1) || found(2) || all(); });
-            if (!worded() && !all()) { // show what came first now; word timing from the slower sources replaces it if it arrives
+            auto bare = [&] { return out[0].inst || out[1].inst; }; // lrclib or netease say instrumental: nothing shows, not even early
+            cv2.wait(g, [&] { return found(0) || found(1) || found(2) || bare() || all(); });
+            auto judged = [&] { return out[0].done && out[1].done; }; // the two sources that can call a song instrumental
+            if (!bare() && !judged()) // found elsewhere first: lrclib and netease get a moment to call it instrumental before anything shows
+                cv2.wait_for(g, kVerdictWait, [&] { return judged() || bare() || stop.load(); });
+            if (!bare() && !worded() && !all()) { // show what came first now; word timing from the slower sources replaces it if it arrives
                 for (int k : {0, 1, 2})
                     if (found(k)) {
                         auto early = std::make_shared<Lyrics>();
@@ -828,7 +1021,7 @@ struct LyricSrc::Impl {
                         break;
                     }
                 auto until = std::chrono::steady_clock::now() + std::chrono::seconds(25); // the early lines show meanwhile, so waiting costs nothing you can see
-                while (!worded() && !all() && !stop.load() && !queued.load() && std::chrono::steady_clock::now() < until)
+                while (!worded() && !bare() && !all() && !stop.load() && !queued.load() && std::chrono::steady_clock::now() < until)
                     cv2.wait_for(g, std::chrono::milliseconds(250));
             }
         }
@@ -838,6 +1031,10 @@ struct LyricSrc::Impl {
         t1.join();
         t2.join();
         reached = out[0].reached && out[1].reached && out[2].reached; // "no lyrics" only counts when every source answered; a timeout means ask again
+        if (out[0].inst || out[1].inst) { // an instrumental: no words beat a machine's hums or another song's lyrics
+            reached = true;
+            return {};
+        }
         int pick = -1;
         for (int k : {1, 2, 0}) // word-timed first: netease's yrc, then kugou, then lrclib's rare enhanced lrc
             if (pick < 0 && Worded(out[k].lines)) pick = k;
@@ -879,8 +1076,15 @@ struct LyricSrc::Impl {
                 std::lock_guard lock(mu);
                 busyKey.clear();
                 if (stop.load()) return;
-                if (doc->lines.empty() && !reached) { // offline, or a source didn't answer: not remembered, asked again in a while
-                    failed.push_back({doc->key, GetTickCount64()});
+                if (doc->lines.empty() && !reached) { // offline, or a source didn't answer: not remembered, asked again in a while, a longer while each time
+                    int tries = 1;
+                    for (auto it = failed.begin(); it != failed.end(); ++it)
+                        if (it->key == doc->key) {
+                            tries = it->tries + 1;
+                            failed.erase(it);
+                            break;
+                        }
+                    failed.push_back({doc->key, GetTickCount64(), tries});
                     if (failed.size() > 16) failed.pop_front();
                     continue;
                 }
@@ -924,7 +1128,7 @@ void LyricSrc::Want(const std::wstring& title, const std::wstring& artist, const
             for (const auto& d : impl->kept)
                 if (d->key == key) return;
             for (const auto& f : impl->failed)
-                if (f.first == key && GetTickCount64() - f.second < kFailWaitMs) return;
+                if (f.key == key && GetTickCount64() - f.at < kFailWaitMs << (2 * (std::min)(f.tries - 1, kFailSteps))) return; // 15 s, 1 min, 4 min, 16 min, about an hour
             impl->next = {key, title, artist, album, seconds}; // a newer song replaces one still waiting
             impl->queued = true;
         }

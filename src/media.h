@@ -53,6 +53,7 @@ public:
     Radios(const Radios&) = delete;
     Radios& operator=(const Radios&) = delete;
     void Start(HWND notify, UINT msg);
+    void Recheck(); // a radio missing so far (a usb adapter late at sign-in or after resume) is looked for again, at most every few seconds
     bool HasWifi() const;
     bool HasBt() const;
     bool WifiOn() const;

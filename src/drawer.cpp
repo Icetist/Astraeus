@@ -15,18 +15,28 @@
 
 namespace {
 
-constexpr int kPageCount = 5; // home, media, system, network, tools: the keys walk them
-constexpr UINT_PTR kHoverTimer = 1, kCloseTimer = 2, kReleaseTimer = 3, kPeekTimer = 4, kDevTimer = 5, kFollowTimer = 6, kTrimTimer = 8; // 7 is the model's
+constexpr UINT kGreetDelayMs = 1500, kGreetPollMs = 100; // the desktop settles before the greeting drops; then a cheap look at the cursor while it's up
+constexpr int kGreetTries = 20; // the gpu or the shell not ready yet: a few more seconds of tries
+constexpr LONG kGreetSlack = 2; // pixels the cursor may drift (a touchpad's jitter) before it counts as moving
+constexpr WPARAM kHaloPlayer = 120; // halobar opens its player panel on this command: the fullscreen player it asked for has closed
 constexpr UINT kTrimMs = 3000; // a resting pill this long after its last whole frame: hand back what startup and the drop left behind
 constexpr UINT kFollowMs = 120; // every screen mode, open: how often to look which screen the cursor is on
 constexpr int kDevTries = 30; // windows lets go of an old composition target a moment later: ~3 seconds of retries, 100 ms apart
 constexpr GUID kDisplayState = {0x6fe69556, 0x704a, 0x47a0, {0x8f, 0x24, 0xc2, 0x8d, 0x93, 0x6f, 0xda, 0x47}}; // GUID_CONSOLE_DISPLAY_STATE, without pulling in initguid
 
-bool PillStays(const Model& m) { return m.IslandAlways() && m.hasTrack && m.track.playing; } // always means: while something is playing
-constexpr float kStrip = 3; // idle bezel height in dips, just enough to catch the mouse
+bool PillStays(const Model& m) { // the pill holds still by itself
+    if (m.pillAlways) return true; // always shown, with the clock
+    if (m.activityBubble && m.Activity() != Model::kActNone) return true; // a running timer lives beside it
+    return m.IslandAlways() && m.pillMusic && m.hasTrack && m.track.playing; // always means: while something is playing
+}
+constexpr int kCityMax = 60; // the weather city field
 constexpr float kFling = 800; // dips/s, fast flick decides open/close
 constexpr float kOpenAt = 0.4f; // slow drag past 40% height opens
 constexpr float kTap = 4; // moved less than this = click, not drag
+constexpr int kShadeSecs = 30; // glass: how often what's behind it is looked at again, as halobar does
+constexpr float kShadeBand = 8, kShadeGap = 4; // the band read just past the open panel, dips
+constexpr float kShadeStep = 0.04f; // smaller changes keep the tint as it is
+constexpr float kShadeRate = 5; // the tint eases over in about a second
 
 double Seconds() {
     static LARGE_INTEGER freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
@@ -38,6 +48,8 @@ double Seconds() {
 }
 
 Drawer::Drawer(const Config& c, Model& m) : cfg(c), model(m) {
+    page = prevPage = model.OpenPage(); // where it left off, or the page picked in settings
+    zoomNow = model.uiScale;
     W = cfg.panW + 2 * cfg.fillet; // room for curved shoulders on both sides
     H = cfg.panH;
     accentModeNow = model.AccentMode();
@@ -45,13 +57,18 @@ Drawer::Drawer(const Config& c, Model& m) : cfg(c), model(m) {
     shellSeed = mediaSeed = accentModeNow ? theme::FromCol(Color::Rgb((uint32_t)accentHexNow)) : Seed{}; // wallpaper theme fills in later
     lookNow = model.Look();
     bgNow = model.CustomBg();
-    edgeNow = model.edge;
+    edgeNow = model.Edge();
     screensNow = model.screens;
     screenNow = model.screen;
     shellFrom = shellTo = shellNow = mediaFrom = mediaTo = mediaNow = Make(shellSeed);
 }
 
 Drawer::~Drawer() {
+    UnwatchDesk();
+    StopShelf();
+    volKeys.Stop(); // the volume keys go back to windows at once
+    if (acNote) UnregisterPowerSettingNotification(acNote);
+    if (batNote) UnregisterPowerSettingNotification(batNote);
     FreeStrips();
     FreeDev();
     if (displayNote) UnregisterPowerSettingNotification(displayNote);
@@ -75,6 +92,9 @@ bool Drawer::Create(HINSTANCE instance) {
     DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &off, sizeof(off)); // no dwm fade, we animate ourselves
     WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION); // locked: the pill's bars rest, nobody sees them
     displayNote = RegisterPowerSettingNotification(hwnd, &kDisplayState, DEVICE_NOTIFY_WINDOW_HANDLE); // and the same while the screen is off
+    StartShelf(); // files and text dropped on the island land on the shelf
+    WatchPower(); // plugged in, unplugged, running low: windows says so, nothing polls
+    SyncHud();
     if (!screensNow) mon = sys::FindScreen(screenNow); // the picked screen, primary if none or unplugged
     Place();
     BuildStrips();
@@ -83,74 +103,6 @@ bool Drawer::Create(HINSTANCE instance) {
     mediaNow = mediaTo;
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     Log(L"started");
-    return true;
-}
-
-void Drawer::Place() {
-    MONITORINFO mi = {sizeof(mi)};
-    if (!mon || !GetMonitorInfoW(mon, &mi)) { // primary, or the screen we were sent to is gone
-        mon = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
-        GetMonitorInfoW(mon, &mi);
-    }
-    UINT dpiX = 96, dpiY = 96;
-    scale = SUCCEEDED(GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &dpiX, &dpiY)) ? dpiX / 96.0f : GetDpiForWindow(hwnd) / 96.0f; // the target screen's dpi
-    monitor = mi.rcMonitor; // full rect, not work area, so it sits on the top edge
-    DWM_TIMING_INFO ti = {sizeof(ti)};
-    if (SUCCEEDED(DwmGetCompositionTimingInfo(nullptr, &ti)) && ti.rateRefresh.uiDenominator > 0) { // 144hz+ screens would otherwise run ambient at 72-120 fps
-        constexpr double kAmbientFps = 30, kPillFps = 15; // the pill's bars are 14 dips tall: lively at 15, half the cost of 30
-        hz = (double)ti.rateRefresh.uiNumerator / ti.rateRefresh.uiDenominator;
-        ambientSync = (UINT)(std::clamp)((int)std::lround(hz / kAmbientFps), 1, 4); // dxgi caps sync interval at 4
-        pillSync = (UINT)(std::max)(1L, std::lround(hz / kPillFps)); // glass paces with a timer, no cap; the swapchain clamps it below
-    }
-    sideH = (std::min)(kSideMaxH, (mi.rcMonitor.bottom - mi.rcMonitor.top) / scale - 2 * cfg.fillet - 60); // sidebar fits the screen
-    fastSync = 1; // a new screen, maybe a new refresh rate: judge it afresh
-    framesSeen = framesLate = 0;
-    Resize(winH > 0 ? winH : kStrip, false);
-}
-
-bool Drawer::MaximizedBelow() const {
-    POINT p;
-    GetCursorPos(&p);
-    RECT self = {};
-    GetWindowRect(hwnd, &self);
-    LONG in = (LONG)(24 * scale); // sample just inside the screen past our own window, never ourselves
-    POINT probe = edgeNow == 0 ? POINT{p.x, (std::max)(monitor.top + in, self.bottom + 2)}
-                : edgeNow == 1 ? POINT{(std::max)(monitor.left + in, self.right + 2), p.y}
-                               : POINT{(std::min)(monitor.right - in, self.left - 2), p.y};
-    HWND w = WindowFromPoint(probe); // what is just under the hot zone
-    HWND root = w ? GetAncestor(w, GA_ROOT) : nullptr;
-    if (!root || root == hwnd) return false;
-    wchar_t cls[32] = {};
-    GetClassNameW(root, cls, 32);
-    if (!wcscmp(cls, L"Progman") || !wcscmp(cls, L"WorkerW")) return false; // the desktop
-    if (IsZoomed(root)) return true;
-    RECT r;
-    MONITORINFO mi = {sizeof(mi)};
-    if (!GetWindowRect(root, &r) || !GetMonitorInfoW(MonitorFromWindow(root, MONITOR_DEFAULTTONULL), &mi)) return false;
-    bool spans = r.left <= mi.rcWork.left && r.right >= mi.rcWork.right && r.top <= mi.rcWork.top; // fills the screen from the top: maximized in all but name
-    if (edgeNow == 0 ? spans : spans && r.bottom >= mi.rcWork.bottom) return true;
-    return TiledEdge(mi.rcWork); // snapped or tiled windows that together cover the edge: the same as one maximized app
-}
-
-bool Drawer::TiledEdge(const RECT& work) const { // samples along the docked edge: every point an app window that reaches the edge
-    LONG in = (LONG)(6 * scale), slack = (LONG)(10 * scale);
-    constexpr int kSamples = 9;
-    for (int i = 0; i < kSamples; ++i) {
-        float f = (i + 0.5f) / kSamples;
-        POINT q = edgeNow == 0 ? POINT{work.left + (LONG)((work.right - work.left) * f), work.top + in}
-                : edgeNow == 1 ? POINT{work.left + in, work.top + (LONG)((work.bottom - work.top) * f)}
-                               : POINT{work.right - in, work.top + (LONG)((work.bottom - work.top) * f)};
-        HWND w = WindowFromPoint(q);
-        HWND root = w ? GetAncestor(w, GA_ROOT) : nullptr;
-        if (!root || root == hwnd || IsIconic(root)) return false;
-        wchar_t cls[32] = {};
-        GetClassNameW(root, cls, 32);
-        if (!wcscmp(cls, L"Progman") || !wcscmp(cls, L"WorkerW") || !wcscmp(cls, L"Shell_TrayWnd")) return false; // desktop or taskbar shows through
-        RECT r;
-        if (!GetWindowRect(root, &r)) return false;
-        bool touches = edgeNow == 0 ? r.top <= work.top + slack : edgeNow == 1 ? r.left <= work.left + slack : r.right >= work.right - slack;
-        if (!touches) return false; // a floating window with a gap above it: the bezel still has room
-    }
     return true;
 }
 
@@ -168,16 +120,22 @@ void Drawer::ShowIsland() {
 }
 
 void Drawer::SampleBehind() {
-    int a = (int)(Span() * scale + 0.5f), d = (int)(Depth() * scale + 0.5f); // the panel's full open footprint
-    RECT r;
-    if (edgeNow == 0) {
-        LONG x = monitor.left + (monitor.right - monitor.left - a) / 2;
-        r = {x, monitor.top, x + a, monitor.top + d};
-    } else {
-        LONG y = monitor.top + (monitor.bottom - monitor.top - a) / 2;
-        r = edgeNow == 1 ? RECT{monitor.left, y, monitor.left + d, y + a} : RECT{monitor.right - d, y, monitor.right, y + a};
-    }
+    RECT r = Footprint(); // the panel's full open footprint
     glassShade = anim::Clamp01((sys::Brightness(r) - 0.42f) / 0.38f); // dark and colorful stay clear, bright pages get a deeper tint
+    if (spring.value < 0.5f) glassShadeNow = glassShade; // nothing showing yet: it opens on the right tint, no fade
+    shadeTick = 0;
+}
+
+void Drawer::SampleShade() { // a page can scroll from dark to white without anything moving; a screen read is costly, so only every half minute
+    if (model.Look() != 2 || hidden || fullApp || stage || Unseen() || (!opened && !island)) return; // never while nothing of it shows
+    RECT f = Footprint();
+    LONG band = (LONG)(kShadeBand * scale + 0.5f), gap = (LONG)(kShadeGap * scale + 0.5f);
+    RECT r = f; // open: a thin band just past the panel, in its middle half, never under it
+    if (opened && edgeNow == 0) r = {f.left + (f.right - f.left) / 4, f.bottom + gap, f.right - (f.right - f.left) / 4, f.bottom + gap + band};
+    else if (opened && edgeNow == 1) r = {f.right + gap, f.top + (f.bottom - f.top) / 4, f.right + gap + band, f.bottom - (f.bottom - f.top) / 4};
+    else if (opened) r = {f.left - gap - band, f.top + (f.bottom - f.top) / 4, f.left - gap, f.bottom - (f.bottom - f.top) / 4};
+    float to = anim::Clamp01((sys::Brightness(r) - 0.42f) / 0.38f); // the pill alone covers little of the footprint: that's read whole
+    if (std::fabs(to - glassShade) > kShadeStep) glassShade = to, Redraw(); // the tint eases over in the frames that follow
 }
 
 float Drawer::DepthOf(D2D1_POINT_2F p) const {
@@ -185,9 +143,9 @@ float Drawer::DepthOf(D2D1_POINT_2F p) const {
 }
 
 D2D1_RECT_F Drawer::Visible() const { // the window's part of the surface, in dips: the top left corner, as big as the window
-    if (pillRgn) { // the island: only the pill's slice of the full-width window
-        float a = IslandSpan(), o = (winW - a) / 2;
-        return Side() ? D2D1_RECT_F{0, o, winH, o + a} : D2D1_RECT_F{o, 0, o + a, winH};
+    if (pillRgn) { // the island: only the pill's slice of the full-width window, and its bubble
+        float a = IslandSpan(), o = (winW - a) / 2, b = bubbleNow ? kBubbleGap + kBubble + 2 : 0;
+        return Side() ? D2D1_RECT_F{0, o, winH, o + a + b} : D2D1_RECT_F{o, 0, o + a + b, winH};
     }
     return Side() ? D2D1_RECT_F{0, 0, winH, winW} : D2D1_RECT_F{0, 0, winW, winH};
 }
@@ -197,72 +155,6 @@ D2D1_MATRIX_3X2_F Drawer::EdgeXform() const {
     if (edgeNow == 1) return D2D1::Matrix3x2F(0, 1, 1, 0, 0, off); // left: depth runs along x
     if (edgeNow == 2) return D2D1::Matrix3x2F(0, 1, -1, 0, winH, off); // right: depth runs leftwards from the window's right side
     return D2D1::Matrix3x2F::Translation(off, 0);
-}
-
-void Drawer::ApplyPlace() {
-    edgeNow = model.edge;
-    screensNow = model.screens;
-    screenNow = model.screen;
-    if (!screensNow) mon = sys::FindScreen(screenNow); // one screen: the picked one, primary if none
-    FreeDev(); // swapchain is sized for the old edge
-    Place();
-    BuildStrips();
-    needsFrame = false;
-    SyncHide(); // the new screen may or may not have a game on it
-    Log(L"placed from settings");
-}
-
-constexpr UINT kAdoptMsg = WM_APP + 60; // a hover strip on another screen asks the panel to come over
-
-LRESULT CALLBACK Drawer::StripProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == WM_MOUSEMOVE) { // hand the hover to the panel: it moves to this screen and takes it from there
-        HWND owner = (HWND)GetWindowLongPtrW(h, GWLP_USERDATA);
-        if (owner) PostMessageW(owner, kAdoptMsg, (WPARAM)MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), 0);
-        return 0;
-    }
-    if (msg == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
-    return DefWindowProcW(h, msg, wp, lp);
-}
-
-void Drawer::FreeStrips() {
-    for (HWND s : strips) DestroyWindow(s);
-    strips.clear();
-}
-
-void Drawer::BuildStrips() {
-    FreeStrips();
-    if (screensNow != 1) return; // primary only: nothing to add
-    static bool registered = false;
-    HINSTANCE inst = (HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE);
-    if (!registered) {
-        WNDCLASSEXW wc = {sizeof(wc)};
-        wc.lpfnWndProc = StripProc;
-        wc.hInstance = inst;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        wc.lpszClassName = L"AstraeusStrip";
-        registered = RegisterClassExW(&wc) != 0;
-    }
-    struct Ctx { Drawer* self; HINSTANCE inst; };
-    Ctx c{this, inst};
-    EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR m, HDC, LPRECT r, LPARAM lp) -> BOOL {
-        auto* c = reinterpret_cast<Ctx*>(lp);
-        Drawer* d = c->self;
-        if (m == d->mon) return TRUE; // the panel itself lives here
-        UINT dx = 96, dy = 96;
-        float s = SUCCEEDED(GetDpiForMonitor(m, MDT_EFFECTIVE_DPI, &dx, &dy)) ? dx / 96.0f : 1.0f;
-        int along = (int)(d->cfg.hoverW * s + 0.5f), deep = (std::max)(2, (int)(kStrip * s + 0.5f));
-        int x, y, w, h;
-        if (d->edgeNow == 0) { w = along, h = deep; x = r->left + (r->right - r->left - w) / 2; y = r->top; }
-        else { w = deep, h = along; x = d->edgeNow == 1 ? r->left : r->right - w; y = r->top + (r->bottom - r->top - h) / 2; }
-        HWND sw = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP, L"AstraeusStrip", L"",
-                                  WS_POPUP, x, y, w, h, nullptr, nullptr, c->inst, nullptr); // no surface, nothing drawn, just catches the mouse
-        if (sw) {
-            SetWindowLongPtrW(sw, GWLP_USERDATA, (LONG_PTR)d->hwnd);
-            ShowWindow(sw, SW_SHOWNOACTIVATE);
-            d->strips.push_back(sw);
-        }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&c));
 }
 
 void Drawer::ReleaseLater() {
@@ -295,7 +187,9 @@ void Drawer::Resize(float hDip, bool topmost) {
     bool pill = islandLook && !opened && !idle;
     if (pill) {
         int pa = (int)(IslandSpan() * scale + 0.5f);
-        RECT want = edgeNow == 0 ? RECT{(w - pa) / 2, 0, (w + pa) / 2, h} : RECT{0, (h - pa) / 2, w, (h + pa) / 2};
+        bubbleNow = Bubble();
+        int extra = bubbleNow ? (int)((kBubbleGap + kBubble + 2) * scale + 0.5f) : 0; // the bubble beside it is live too
+        RECT want = edgeNow == 0 ? RECT{(w - pa) / 2, 0, (w + pa) / 2 + extra, h} : RECT{0, (h - pa) / 2, w, (h + pa) / 2 + extra};
         if (!pillRgn || !EqualRect(&want, &pillRect)) { // only when it changed: resizes come often
             HRGN rg = CreateRectRgnIndirect(&want);
             if (rg && SetWindowRgn(hwnd, rg, FALSE)) pillRgn = true, pillRect = want; // the system owns rg now
@@ -332,6 +226,8 @@ bool Drawer::MouseIn() const {
 
 void Drawer::Open() {
     if (hidden) return;
+    if (!opened && !pageSet && (!model.rememberPage || !model.HasPage(page)) && page != model.OpenPage()) prevPage = page, page = model.OpenPage(), pageT = 1; // the page picked in settings, or one still shown, without a slide
+    pageSet = false;
     if (model.Look() == 2 && spring.value < 1) SampleBehind(); // read the background before the panel covers it
     grow = grow || islandLook; // expanding out of the island: width morphs as it drops
     island = islandLook = false;
@@ -340,17 +236,47 @@ void Drawer::Open() {
     KillTimer(hwnd, kCloseTimer);
     KillTimer(hwnd, kPeekTimer);
     peeking = false; // peek upgrades to full open
+    for (sys::Toast t; model.notifyWatch.Pop(t);) {} // the rest of a notification queue would only show stale once it closes
     if (!opened) {
         opened = true;
         SyncWall(); // wallpaper may have changed while closed
         model.OnOpen();
-        model.SetLive(true, page == 2, page == 3); // fast polling only while visible, the process list only on the system page (2), latency only on the network page (3)
+        model.SetLive(true, page == Model::kPgSystem, page == Model::kPgNetwork); // fast polling only while visible, the process list only on the system page, latency only on the network page
     }
     Resize(Depth() + overshoot, true); // grow first so bounce isn't clipped
     spring.target = Depth();
     spring.damp = model.reduceMotion ? 1.0f : 0.62f; // underdamped, drips open with a bounce; calm: it just arrives
     if (screensNow == 1 && !strips.empty()) SetTimer(hwnd, kFollowTimer, kFollowMs, nullptr); // every screen: follow the cursor to another one
     Redraw();
+}
+
+void Drawer::Greet() {
+    greetTries = 0;
+    SetTimer(hwnd, kGreetTimer, kGreetDelayMs, nullptr);
+}
+
+void Drawer::OnGreetTimer() {
+    if (!greeting) { // first: drop the home page down
+        if (opened || stage || fullApp) return; // the user got there first, or a game has the screen
+        if (hidden || !EnsureDev()) {
+            if (++greetTries < kGreetTries) SetTimer(hwnd, kGreetTimer, kGreetDelayMs / 3, nullptr);
+            return;
+        }
+        if (model.HasPage(Model::kPgHome) && page != Model::kPgHome) SetPage(Model::kPgHome);
+        pageSet = true; // home, even with another opening page picked in settings
+        Open();
+        if (!opened) return;
+        greeting = true;
+        GetCursorPos(&greetAt);
+        SetTimer(hwnd, kGreetTimer, kGreetPollMs, nullptr);
+        return;
+    }
+    POINT pt;
+    GetCursorPos(&pt);
+    bool moved = std::abs(pt.x - greetAt.x) > kGreetSlack || std::abs(pt.y - greetAt.y) > kGreetSlack;
+    if (!opened) greeting = false; // closed some other way
+    else if (moved) greeting = false, Close(); // the mouse woke up: back up it goes
+    else SetTimer(hwnd, kGreetTimer, kGreetPollMs, nullptr);
 }
 
 void Drawer::KeyOpen() {
@@ -390,9 +316,10 @@ void Drawer::Close() {
     peeking = false;
     opened = false;
     island = false; // the island retracts with the same spring, its shape stays until it's gone
-    model.hexFocus = false;
+    model.hexFocus = model.cityFocus = model.tilesEdit = false;
     model.CancelPass();
     SyncTyping(); // hand the keyboard back right away
+    if (model.rememberPage && page != model.lastPage) model.SetPref(model.lastPage, L"LastPage", page); // the next launch opens here too
     model.CloseBt(); // menus die with the panel
     model.CloseWifi();
     model.CloseSettings();
@@ -403,62 +330,46 @@ void Drawer::Close() {
     Redraw();
 }
 
+void Drawer::ShowSettings() {
+    Open();
+    model.OpenSettings();
+    Redraw();
+}
+
 void Drawer::Toggle() {
     if (opened) Close();
     else Open();
 }
 
-void Drawer::SetFull(bool on) {
-    if (on && stage) return; // that's our own fullscreen player, not a game: the panel comes back when it leaves
-    fullApp = on;
-    SyncHide();
-}
+bool Drawer::Stays() const { return PillStays(model) || (model.pillDesk && deskView); }
 
-void Drawer::SyncHide() {
-    // windows sends its fullscreen notice for the main screen only: it hides the panel there, any other screen is checked directly
-    bool onMain = mon == MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
-    bool hide = cfg.hideFull && ((fullApp && onMain) || FullOn(mon));
-    if (hide == hidden) return;
-    hidden = hide;
-    Log(hide ? L"hide, fullscreen app" : L"show again");
-    if (hide) {
-        model.CancelPass(); // a password being typed never outlives the panel
-        KillTimer(hwnd, kHoverTimer);
-        KillTimer(hwnd, kCloseTimer);
-        KillTimer(hwnd, kPeekTimer);
-        armed = peeking = dragging = island = islandLook = grow = false;
-        if (GetCapture() == hwnd) ReleaseCapture(); // mid-drag when the game took over
-        if (opened) { // same teardown as Close, minus the animation
-            opened = false;
-            model.CloseBt();
-            model.CloseWifi();
-            model.CloseSettings();
-            model.CloseCal();
-            model.CloseMixer();
-            model.SetLive(false, false);
-        }
-        spring = anim::Spring{}; // reset instantly, no close anim
-        Resize(kStrip, false);
-        ui.Forget();
-        ShowWindow(hwnd, SW_HIDE);
-        needsFrame = false;
-        FreeDev(); // a game is fullscreen, give the gpu back now
-    } else {
-        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-    }
+void Drawer::SyncStay() {
+    bool always = Stays();
+    if (always && !island && !peeking && !dragging && !hidden && !stage && spring.value <= 0.5f) ShowIsland(); // the pill comes back by itself
+    else if (!always && stayWasAlways && island && !MouseIn()) Close(); // always was just turned off, or an app came under it
+    stayWasAlways = always;
 }
 
 void Drawer::OnSecond() {
     if (fullApp && !FullOn(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY))) fullApp = false; // the shell's "it's over" can go missing: never stay hidden on its word alone
     SyncHide(); // a fullscreen app on the panel's screen, or gone from it
+    if (++shadeTick >= kShadeSecs) shadeTick = 0, SampleShade();
     model.IdleSpectrum();
     if (model.PollShared()) Redraw(); // halobar changed the theme we wear: a showing pill or panel repaints, SyncLook crossfades
+    SyncHud();
+    RetryHud();
+    if (deskOn != (model.pillDesk != 0)) WatchDesk(); // the switch in settings was flipped
     if (!opened) {
-        bool always = PillStays(model);
-        if (always && !island && !peeking && !dragging && !hidden && !stage && spring.value <= 0.5f) ShowIsland(); // the pill comes back by itself
-        else if (!always && stayWasAlways && island && !MouseIn()) Close(); // always was just turned off
-        stayWasAlways = always;
-        if (island && !Unseen()) Redraw(); // its clock keeps time
+        SyncStay();
+        if (island && Bubble() != bubbleNow) Resize(winH, false); // the bubble came or went: the live region follows
+        if (island && !Unseen()) { // a still pill redraws only when what it shows changed: the minute, a widget, the bubble's time
+            std::wstring sig = PillSig();
+            if (sig != pillSig) {
+                pillSig = std::move(sig);
+                Redraw();
+            }
+        }
+        if (island && model.pillAlways && (model.pillLeft == Model::kWWeather || model.pillRight == Model::kWWeather)) model.Prefetch(); // a no-op while the forecast is fresh
         return;
     }
     model.ReadAudio(); // volume only matters when visible
@@ -466,7 +377,7 @@ void Drawer::OnSecond() {
 }
 
 void Drawer::SetPage(int p) {
-    if (p == page) return;
+    if (p == page || !model.HasPage(p)) return; // a page taken off the rail can't be gone to
     model.CloseBt();
     model.CloseWifi();
     model.CloseSettings();
@@ -474,16 +385,17 @@ void Drawer::SetPage(int p) {
     prevPage = page;
     page = p;
     pageT = 0;
-    model.SetLive(opened, page == 2, page == 3);
+    model.SetLive(opened, page == Model::kPgSystem, page == Model::kPgNetwork);
     Redraw();
 }
 
 void Drawer::Peek(const std::wstring& title, const std::wstring& detail, int icon) {
+    peekLevel = -1; // a notice, not the hud's bar
     peekIcon = icon;
     peekTitle = title;
     peekDetail = detail;
     if (opened) {
-        SetPage(4); // already open, jump to notice page
+        SetPage(Model::kPgTools); // already open, jump to notice page
         return;
     }
     if (hidden || !EnsureDev()) return;
@@ -567,26 +479,6 @@ void Drawer::Log(const wchar_t* what) const {
     PerfWrite(line);
 }
 
-bool Drawer::FullOn(HMONITOR m) const { // the window in front fills that whole screen: a game, a video, a presentation
-    HWND fg = GetForegroundWindow();
-    if (!fg || MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) != m) return false;
-    LONG style = GetWindowLongW(fg, GWL_STYLE);
-    if ((style & WS_CAPTION) == WS_CAPTION) return false; // a window with a title bar is maximized, not fullscreen, even under an auto-hidden taskbar
-    if (IsZoomed(fg) && (style & WS_THICKFRAME)) return false; // maximized and drawing its own title bar (a terminal, a browser): fullscreen drops the sizing frame
-    DWORD pid = 0;
-    GetWindowThreadProcessId(fg, &pid);
-    if (pid == GetCurrentProcessId()) return false; // our own fullscreen player
-    wchar_t cls[40] = {};
-    GetClassNameW(fg, cls, 40);
-    for (const wchar_t* shell : {L"Progman", L"WorkerW", L"Shell_TrayWnd", L"Shell_SecondaryTrayWnd", L"XamlExplorerHostIslandWindow", L"MultitaskingViewFrame",
-                                 L"ForegroundStaging", L"Windows.UI.Core.CoreWindow"})
-        if (!wcscmp(cls, shell)) return false; // the desktop, taskbars, alt-tab, task view and the start menu cover screens too
-    RECT r;
-    MONITORINFO mi = {sizeof(mi)};
-    if (!GetWindowRect(fg, &r) || !GetMonitorInfoW(m, &mi)) return false;
-    return r.left <= mi.rcMonitor.left && r.top <= mi.rcMonitor.top && r.right >= mi.rcMonitor.right && r.bottom >= mi.rcMonitor.bottom;
-}
-
 void Drawer::Govern(bool fast, double gap) {
     bool steady = fast && lastFast && gap > 0 && gap < 3.5 * fastSync / hz; // unbroken animation only; one long stall (a disk hiccup, a drag) isn't the machine's pace
     lastFast = fast;
@@ -659,7 +551,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         if (!opened && !islandLook && spring.value < 1) { // on the closed strip; the island handles its own hover
             if (cfg.hoverOpen && !armed) {
                 EnsureDev(); // warm up gpu during hover delay
-                islandNext = MaximizedBelow(); // one check per hover, nothing polls
+                islandNext = AppBelow(); // one check per hover, nothing polls
                 SetTimer(hwnd, kHoverTimer, islandNext ? kIslandMs : (UINT)cfg.hoverMs, nullptr); // open only if mouse lingers
                 armed = true;
             }
@@ -684,7 +576,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         input.mouse = {-1e6f, -1e6f}; // park offscreen to clear hover
         if ((opened || island) && !dragging && GetCapture() != hwnd) {
             bool pill = island && !opened;
-            if (!(pill && PillStays(model))) // always: the pill stays put
+            if (!(pill && Stays())) // always: the pill stays put
                 SetTimer(hwnd, kCloseTimer, pill ? model.IslandLingerMs((UINT)cfg.closeMs) : (UINT)cfg.closeMs, nullptr); // close after grace period, the pill can linger
         }
         ReleaseLater(); // brushed the strip without opening: the hover warm-up made a device
@@ -709,6 +601,18 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             Redraw();
             return 0;
         }
+        if (wp == kDeskTimer) {
+            OnDeskTimer();
+            return 0;
+        }
+        if (wp == kGreetTimer) {
+            OnGreetTimer();
+            return 0;
+        }
+        if (wp == kFullTimer) { // the shell said fullscreen: is there really one in front?
+            OnFullTimer();
+            return 0;
+        }
         if (wp == kDevTimer) { // try the device again: the frame picks up where it left off
             needsFrame = true;
             return 0;
@@ -716,15 +620,15 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == kHoverTimer) {
             armed = false;
             if (!MouseIn()) ReleaseLater();
-            else if (islandNext) ShowIsland(); // a maximized app below: the pill first, a tap opens the panel
+            else if (islandNext) ShowIsland(); // an app below: the pill first, a tap opens the panel
             else Open();
         } else if (wp == kCloseTimer) {
-            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && PillStays(model))) Close();
+            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && Stays())) Close();
         } else if (wp == kTrimTimer) {
-            if (island && !opened && !peeking && !dragging) gfx::GiveBack(); // a resting pill, only its bars move: idle pages go back. d2d's caches stay: cleared under live brushes, the media page's glows came back flat
+            if (island && !opened && !peeking && !dragging && !(devWide && RenewDev())) gfx::GiveBack(); // a resting pill, only its bars move: idle pages go back; after the panel, a fresh device too. d2d's caches stay: cleared under live brushes, the media page's glows came back flat
         } else if (wp == kReleaseTimer) {
             if (!opened && !peeking && spring.value <= 0) FreeDev(); // free gpu after idle
-            else if (!opened && !peeking && !dragging) TrimDev(); // the pill keeps it: just drop what the panel left cached
+            else if (!opened && !peeking && !dragging && !(devWide && RenewDev())) TrimDev(); // the pill keeps drawing on a fresh device; if one can't be made, the old one just drops its caches
         } else if (wp == kPeekTimer) {
             if (peeking) Close();
             if (model.notifyWatch.More()) PostMessageW(hwnd, WM_APP_NOTIFY, 0, 0); // next in line
@@ -732,6 +636,12 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_LBUTTONDOWN: {
         if ((island || peeking) && !opened) { // tap a pill: the full panel grows out of it
+            if (island && Bubble() && Inside(BubbleBox(), ToDip(lp))) { // the bubble: straight to the tool that runs
+                int act = model.Activity();
+                model.toolTab = act == Model::kActWatch ? 1 : act == Model::kActFocus ? 2 : 0;
+                if (page != Model::kPgTools && model.HasPage(Model::kPgTools)) prevPage = page, page = Model::kPgTools, pageT = 1;
+                pageSet = true;
+            }
             Open();
             return 0;
         }
@@ -771,9 +681,21 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_MOUSEWHEEL:
-        input.wheel += GET_WHEEL_DELTA_WPARAM(wp) / (float)WHEEL_DELTA; // in notches, accumulates till next frame
+    case WM_MOUSEHWHEEL: {
+        float notches = GET_WHEEL_DELTA_WPARAM(wp) / (float)WHEEL_DELTA; // in notches
+        POINT sp = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}; // wheel messages carry screen coordinates
+        ScreenToClient(hwnd, &sp);
+        D2D1_POINT_2F p = {sp.x / scale, sp.y / scale};
+        bool rail = opened && (Side() ? p.y - cfg.fillet < kTopRail && DepthOf(p) <= spring.value : p.x - cfg.fillet < kRailW && p.y < spring.value);
+        if (msg == WM_MOUSEHWHEEL && opened && !rail) return 0; // a sideways swipe means pages only over the rail
+        if (rail || (island && !opened)) {
+            WheelPages(msg == WM_MOUSEHWHEEL ? notches : -notches); // wheel down or swipe right: the next page
+            return 0;
+        }
+        input.wheel += notches; // accumulates till next frame
         Redraw();
         return 0;
+    }
     case WM_SETCURSOR:
         SetCursor(LoadCursorW(nullptr, hand ? IDC_HAND : IDC_ARROW)); // hand set by ui over clickables
         return TRUE;
@@ -787,6 +709,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         Log(msg == WM_DPICHANGED ? L"dpi changed" : L"displays changed");
         return 0;
     case WM_APP_CAL:
+        if (wp == 1) model.cals.Sync(hwnd, WM_APP_CAL, 0); // a link came in while the last fetch ran: fetched now
         if (model.calOpen) Redraw();
         return 0;
     case WM_CLIPBOARDUPDATE:
@@ -838,13 +761,36 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_NOTIFY: { // a windows notification arrived and pills are on, ours or handed over by halobar
         sys::Toast toast;
         if (peeking) return 0; // one is showing: the rest wait their turn
-        if (model.notifyWatch.Pop(toast) && !opened && !model.quiet) // open panel: don't interrupt; do not disturb: dropped, not queued
-            Peek(toast.title.empty() ? toast.app : toast.title, toast.body.empty() ? toast.app : toast.body, glyph::Sparkle);
+        if (opened || model.quiet || hidden) { // open panel: don't interrupt; do not disturb or a game: dropped, all of them, never shown stale later
+            while (model.notifyWatch.Pop(toast)) {}
+            return 0;
+        }
+        if (model.notifyWatch.Pop(toast)) Peek(toast.title.empty() ? toast.app : toast.title, toast.body.empty() ? toast.app : toast.body, glyph::Sparkle);
         return 0;
     }
     case WM_APP_SHARE:
         model.OnShare();
         Redraw();
+        return 0;
+    case WM_APP_ACCENT: // windows' accent changed: the next frame crossfades to it
+        model.winAccentHex = model.winAccent.Read();
+        Redraw();
+        return 0;
+    case WM_APP_HUDVOL:
+        if (model.hud && !opened) ShowHud(lp || wp == 0 ? glyph::VolumeOff : wp < 500 ? glyph::VolumeDown : glyph::VolumeUp, lp ? 0.0f : wp / 1000.0f, lp ? L"Muted" : L"Volume");
+        return 0;
+    case WM_APP_HUDBRIGHT:
+        if (model.hud && !opened) ShowHud(glyph::Bright, (float)wp / 100, L"Brightness");
+        return 0;
+    case WM_APP_VOLKEY:
+        OnVolumeKey((UINT)wp);
+        return 0;
+    case WM_APP_SHELF: // a preview came in
+        model.shelf.OnPreview();
+        Redraw();
+        return 0;
+    case kShelfMsg:
+        ShelfOut();
         return 0;
     case WM_CHAR: // only reaches us while a field holds the keyboard
         if (model.passFocus) {
@@ -862,6 +808,21 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 model.passEdit += ch;
             }
             model.passWrong = false;
+            Redraw();
+            return 0;
+        }
+        if (model.cityFocus) {
+            wchar_t ch = (wchar_t)wp;
+            if (ch == 22) { // ctrl+v, the first line
+                for (wchar_t c : sys::ClipText()) {
+                    if (c == L'\r' || c == L'\n') break;
+                    if (c >= 32 && model.cityEdit.size() < kCityMax) model.cityEdit += c;
+                }
+            } else if (ch == 8) {
+                if (!model.cityEdit.empty()) model.cityEdit.pop_back();
+            } else if (ch >= 32 && ch != 127 && model.cityEdit.size() < kCityMax) {
+                model.cityEdit += ch;
+            }
             Redraw();
             return 0;
         }
@@ -892,15 +853,21 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_KEYDOWN:
         if (keys && !model.Typing()) { // a panel opened from the shortcut: move with the keys
             if (wp == VK_ESCAPE) Close();
-            else if (wp == VK_RIGHT || wp == VK_DOWN) SetPage((std::min)(page + 1, kPageCount - 1));
-            else if (wp == VK_LEFT || wp == VK_UP) SetPage((std::max)(page - 1, 0));
-            else if (wp >= '1' && wp < '1' + (WPARAM)kPageCount) SetPage((int)(wp - '1'));
+            else if (wp == VK_RIGHT || wp == VK_DOWN) SetPage(model.PageAt(model.SlotOf(page) + 1)); // the rail's order, not the pages' numbers
+            else if (wp == VK_LEFT || wp == VK_UP) SetPage(model.PageAt(model.SlotOf(page) - 1));
+            else if (wp >= '1' && wp < '1' + (WPARAM)model.pages.size()) SetPage(model.PageAt((int)(wp - '1')));
             Redraw();
             return 0;
         }
         if (model.passFocus) {
             if (wp == VK_RETURN) model.SubmitPass();
             else if (wp == VK_ESCAPE) model.CancelPass();
+            Redraw();
+            return 0;
+        }
+        if (model.cityFocus) {
+            if (wp == VK_RETURN) model.CommitCity();
+            else if (wp == VK_ESCAPE) model.cityFocus = false;
             Redraw();
             return 0;
         }
@@ -931,6 +898,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_POWERBROADCAST:
         if (wp == PBT_POWERSETTINGCHANGE) {
             const auto* s = reinterpret_cast<const POWERBROADCAST_SETTING*>(lp);
+            if (s) OnPower(*s); // plugged in or out, battery percent; it ignores the rest
             if (s && s->PowerSetting == kDisplayState && s->DataLength >= sizeof(DWORD)) {
                 screenOff = *reinterpret_cast<const DWORD*>(s->Data) == 0; // 0 off, 1 on, 2 dimmed: dimmed still shows
                 if (!screenOff) Redraw();
@@ -943,9 +911,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
 
 void Drawer::PaintShape(ID2D1Geometry* shape, float h) {
     if (!shape) return;
-    canvas->FillGeometry(shape, shellNow.bg); // dark mode: black, blends with screen bezel
-    if (shellNow.glass && glassShade > 0.01f) // over a white page: neutral smoked glass under the highlights, the blur still shows through
-        canvas->FillGeometry(shape, Color{0, 0, 0, 0.42f * glassShade});
+    Color body = shellNow.bg;
+    if (!shellNow.glass) body.a *= model.BgOpacity() / 100.0f; // the solid looks can let the desktop through a little
+    canvas->FillGeometry(shape, body); // dark mode: black, blends with screen bezel
+    if (shellNow.glass && glassShadeNow > 0.01f) // over a white page: neutral smoked glass under the highlights, the blur still shows through
+        canvas->FillGeometry(shape, Color{0, 0, 0, 0.42f * glassShadeNow});
     if (shellNow.glass) { // liquid glass: glossy light from above and a bright specular rim
         canvas->FillGeoV(shape, {0, 0, W, (std::min)(h, 90.0f)}, shellNow.sheen, shellNow.sheen.Alpha(0));
         canvas->FillGeoV(shape, {0, h - (std::min)(h * 0.5f, 34.0f), W, h}, Color{1, 1, 1, 0}, Color{1, 1, 1, 0.09f}); // light caught in the lower lip, like a drop of glass
@@ -958,12 +928,17 @@ void Drawer::Frame() {
         stage->Frame(mediaNow);
         if (stage->Leaving() && !stageBack) { // fullscreen fades out over the panel dropping open on the media page, where it came from
             stageBack = true;
-            if (page != 1) SetPage(1); // the media page
-            Open();
+            if (stageHalo) {
+                if (HWND halo = FindWindowW(L"HaloBar", nullptr)) PostMessageW(halo, WM_COMMAND, kHaloPlayer, 0); // where it came from: halobar's player panel
+            } else if (!stageAway) {
+                if (page != Model::kPgMedia) SetPage(Model::kPgMedia); // the media page
+                pageSet = true; // even with a fixed opening page picked in settings
+                Open();
+            }
         }
         if (stage->Done()) { // its window, device and audio capture all go with it
             stage.reset();
-            stageBack = false;
+            stageBack = stageAway = stageHalo = false;
         }
         if (!needsFrame) return;
     }
@@ -1002,6 +977,13 @@ void Drawer::Frame() {
         }
     }
     if (PlaceStale() && opened) Close(); // re-dock once it has retracted
+    if (model.uiScale != zoomNow) { // a new size: every dip is bigger or smaller, the window and surfaces are rebuilt for it
+        zoomNow = model.uiScale;
+        FreeDev();
+        Place();
+        BuildStrips();
+    }
+    SyncHud();
     SyncLook(); // before the device: switching to or from glass rebuilds it
     SyncAccent();
     SyncTyping();
@@ -1012,6 +994,7 @@ void Drawer::Frame() {
     }
     devTries = 0;
     bool themes = StepTheme(dt);
+    themes = anim::Approach(glassShadeNow, glassShade, kShadeRate, dt, 0.004f) || themes; // the glass tint fading to what's behind it now
     SyncCover();
 
     float h = (std::max)(0.0f, (std::min)(spring.value, Depth() + overshoot)); // clamp to window room
@@ -1109,5 +1092,7 @@ void Drawer::Frame() {
         trimKey = pillKey;
         SetTimer(hwnd, kTrimTimer, kTrimMs, nullptr);
     }
-    if (PlaceStale() && !opened && !dragging && spring.value <= 0.5f) ApplyPlace();
+    if (PlaceStale() && !opened && !dragging && !peeking && (spring.value <= 0.5f || island)) ApplyPlace(); // a pill that always stays would otherwise keep the old edge forever
+    if (model.shelfDrag) PostMessageW(hwnd, kShelfMsg, 0, 0); // the drag runs its own loop: never inside a frame
 }
+

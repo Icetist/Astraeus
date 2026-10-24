@@ -20,7 +20,9 @@ int wheelPick = 0; // custom wheel: the handle being edited, 0 accent, 1 backgro
 float settingsScroll = 0; // wanted scroll of the cards, eased by Scroll
 constexpr float kMinRow = 196; // cards never squeeze below this: the page scrolls instead
 constexpr float kLyricsRow = 112; // the lyrics card is a single switch, a shorter row
+constexpr float kNoteLines = 44; // three short lines of a note beside a small picture
 constexpr float kDndW = 44; // the do not disturb pill in the notifications card
+constexpr float kDeskRowH = 30, kDeskLift = 24; // the island card's desktop switch, and how far the slider rises to make room for it
 constexpr int kSwatchCols = 3; // material swatches per row
 constexpr float kSwatchGap = 10;
 float Rad(float deg) { return deg * kPi / 180; }
@@ -37,23 +39,7 @@ std::wstring HexText(int rgb) {
 }
 
 Seed Base(const Model& m, const Theme& t) { // the hue/chroma everything is previewed in
-    return theme::FromCol(m.accentMode ? Color::Rgb((uint32_t)m.accentHex) : t.accent);
-}
-
-int Segmented(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, const wchar_t* const* labels, int n, int cur, bool live) {
-    Canvas& c = ui.C();
-    float seg = Width(r) / n, rad = Height(r) / 2;
-    c.Fill(r, rad, t.track.Alpha(0.7f));
-    float x = ui.Smooth(Ui::Id(id, 99), r.left + seg * cur, 18); // thumb slides between options
-    c.FillV({x + 3, r.top + 3, x + seg - 3, r.bottom - 3}, rad - 3, t.accentHi, t.accent);
-    int picked = -1;
-    for (int i = 0; i < n; ++i) {
-        D2D1_RECT_F cell = {r.left + seg * i, r.top, r.left + seg * (i + 1), r.bottom};
-        Ui::Hit h = live ? ui.Button(Ui::Id(id, i), cell) : Ui::Hit{};
-        if (h.clicked && i != cur) picked = i;
-        c.Text(labels[i], cell, Weight::Medium, 11.5f, i == cur ? t.onAccent : t.textDim.Mix(t.text, h.hover ? 0.6f : 0), Align::Center);
-    }
-    return picked;
+    return theme::FromCol(m.accentMode == 1 ? Color::Rgb((uint32_t)m.accentHex) : t.accent);
 }
 
 void Orb(PageCtx& p, D2D1_POINT_2F o, float R, bool live) { // hue ring around a glowing orb of the accent; tap the center to type hex
@@ -117,7 +103,7 @@ void Orb(PageCtx& p, D2D1_POINT_2F o, float R, bool live) { // hue ring around a
         }
         ui.KeepAlive();
     } else {
-        c.Text(custom ? L"#" + HexText(m.accentHex) : std::wstring(L"Wallpaper"), label, Weight::Medium, custom ? 13.0f : 11.5f, ink, Align::Center);
+        c.Text(custom ? L"#" + HexText(m.accentHex) : std::wstring(m.accentMode == Model::kAccentWindows ? L"Windows" : L"Wallpaper"), label, Weight::Medium, custom ? 13.0f : 11.5f, ink, Align::Center);
     }
 }
 
@@ -132,13 +118,6 @@ void Presets(PageCtx& p, float x, float y, float step, bool live) { // one-tap a
         c.Dot(o, 7, Color::Rgb((uint32_t)kPresets[i]));
         if (h.clicked) p.m.SetAccent(1, kPresets[i]);
     }
-}
-
-D2D1_RECT_F Box(Canvas& c, const Theme& t, const D2D1_RECT_F& r, const wchar_t* title) { // card shell, returns its inner area
-    c.Fill(r, 16, t.cardHi.Alpha(0.55f));
-    c.StrokeV(r, 16, t.hairTop, t.hairBot, 1);
-    c.TextSp(title, Rect(r.left + 14, r.top + 11, Width(r) - 28, 12), Weight::Medium, 9.5f, t.textLow, 1.4f);
-    return {r.left + 12, r.top + 30, r.right - 12, r.bottom - 10};
 }
 
 // ---- custom look: a color wheel with two handles, accent and background, any color at all ----
@@ -349,8 +328,8 @@ void Lyrics(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a tiny fullscreen 
     if (h.hover) c.Stroke(Inset(in, -4, -4), 12, t.accent.Alpha(0.35f), 1.5f);
     float x0 = scr.right + 16;
     c.Text(m.fullLyrics ? L"On" : L"Off", Rect(x0, in.top + 6, in.right - x0, 20), Weight::Medium, 14, m.fullLyrics ? t.accentHi : t.textDim);
-    c.Text(m.fullLyrics ? L"Synced lyrics beside the cover, for songs from music apps" : L"The fullscreen player shows just the song",
-           Rect(x0, in.top + 28, in.right - x0, 16), Weight::Light, 10.5f, t.textLow);
+    c.Text(m.fullLyrics ? L"Synced lyrics beside\nthe cover, for songs\nfrom music apps" : L"The fullscreen player\nshows just the song", // a narrow column: whole lines, nothing cut
+           Rect(x0, in.top + 26, in.right - x0, kNoteLines), Weight::Light, 10.5f, t.textLow);
     if (h.clicked) m.SetPref(m.fullLyrics, L"FullLyrics", m.fullLyrics ? 0 : 1);
 }
 
@@ -376,8 +355,8 @@ void Motion(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a tiny spring: bou
     if (h.hover) c.Stroke(Inset(in, -4, -4), 12, t.accent.Alpha(0.35f), 1.5f);
     float x0 = scr.right + 16;
     c.Text(m.reduceMotion ? L"Reduced" : L"Full", Rect(x0, in.top + 6, in.right - x0, 20), Weight::Medium, 14, m.reduceMotion ? t.accentHi : t.textDim);
-    c.Text(m.reduceMotion ? L"No bounce or drifting, pages fade instead of sliding" : L"Springy drops, sliding pages, drifting orbits",
-           Rect(x0, in.top + 28, in.right - x0, 16), Weight::Light, 10.5f, t.textLow);
+    c.Text(m.reduceMotion ? L"No bounce or drifting,\npages fade in place\nof sliding" : L"Springy drops,\nsliding pages,\ndrifting orbits",
+           Rect(x0, in.top + 26, in.right - x0, kNoteLines), Weight::Light, 10.5f, t.textLow);
     if (h.clicked) m.SetPref(m.reduceMotion, L"ReduceMotion", m.reduceMotion ? 0 : 1);
 }
 
@@ -410,12 +389,13 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // five swatches dr
     D2D1_RECT_F in = Box(c, t, r, L"MATERIAL");
     bool glass = m.look == 2;
     Seed s = Base(m, t);
-    float extra = glass ? 40.0f : 0.0f; // room for the frost bar
-    float sw = (Width(in) - 2 * kSwatchGap) / kSwatchCols, sh = (std::min)((Height(in) - extra - 2 * 18 - 6) / 2, sw * 0.62f); // three, then two, a label under each
+    constexpr float extra = 40; // room for the frost bar, or the opacity bar on the solid looks
+    float sw = (Width(in) - 2 * kSwatchGap) / kSwatchCols, sh = (std::min)((Height(in) - extra - 2 * 18 - 6) / 2, sw * 0.62f); // three, then the rest, a label under each
     static const wchar_t* const kNames[] = {L"Dark", L"Light", L"Glass", L"Custom", L"HaloBar"};
-    for (int i = 0; i <= Model::kLookHalo; ++i) {
-        int row = i / kSwatchCols, col = i % kSwatchCols;
-        float x0 = row ? in.left + (sw + kSwatchGap) / 2 : in.left; // the shorter second row sits centered
+    int looks = m.halo.FollowsUs() && !m.Following() ? Model::kLookHalo : Model::kLookHalo + 1; // halobar following us: no swatch to follow it back, unless already picked
+    for (int i = 0; i < looks; ++i) {
+        int row = i / kSwatchCols, col = i % kSwatchCols, inRow = (std::min)(kSwatchCols, looks - row * kSwatchCols);
+        float x0 = in.left + (kSwatchCols - inRow) * (sw + kSwatchGap) / 2; // a shorter second row sits centered
         D2D1_RECT_F q = Rect(x0 + col * (sw + kSwatchGap), in.top + 2 + row * (sh + 24), sw, sh);
         uint32_t id = Ui::Id("set.mat", i);
         Ui::Hit h = live ? ui.Button(id, q) : Ui::Hit{};
@@ -434,22 +414,28 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // five swatches dr
         if (on > 0.01f || hov > 0.01f) c.Stroke(Inset(q, -3, -3), 14, t.accent.Alpha((std::max)(on, 0.5f * hov)), 2);
         c.Text(kNames[i], Rect(q.left - 4, q.bottom + 3, Width(q) + 8, 14), Weight::Medium, 11, t.textDim.Mix(t.text, on), Align::Center);
         if (h.clicked && m.look != i) {
-            if (i == 3 && m.accentMode == 0) m.SetAccent(1, ToHex(t.accent)); // the wheel starts from the accent you're looking at
+            if (i == 3 && m.accentMode != 1) m.SetAccent(1, ToHex(t.accent)); // the wheel starts from the accent you're looking at
             m.SetLook(i); // drawer crossfades, glass swaps its pipeline
         }
     }
-    if (glass) { // how frosted: fades between clear glass and windows' full backdrop blur
-        float v = m.glassBlur / 100.0f;
-        uint32_t id = Ui::Id("set.blur");
-        c.TextSp(L"BLUR", Rect(in.left + 2, in.bottom - 38, 80, 12), Weight::Medium, 9.5f, t.textLow, 1.6f);
-        c.Text(std::to_wstring(m.glassBlur) + L"%", Rect(in.right - 60, in.bottom - 41, 58, 16), Weight::Semi, 12, t.accentHi, Align::Right);
-        D2D1_RECT_F bar = {in.left + 2, in.bottom - 20, in.right - 2, in.bottom - 6}; // clear on the left, frosted on the right
+    if (m.Following()) { // halobar's look: its blur and opacity are tuned there, and shared, so no slider here that does nothing
+        c.Text(m.Look() == 2 ? L"Blur follows HaloBar" : L"Opacity follows HaloBar", Rect(in.left, in.bottom - 30, Width(in), 16), Weight::Medium, 11, t.textLow, Align::Center);
+        return;
+    }
+    { // glass: how frosted, between clear glass and windows' full backdrop blur; the solid looks: how much desktop shows through
+        int& field = glass ? m.glassBlur : m.bgOpacity;
+        int lo = glass ? 0 : Model::kMinOpacity;
+        float v = (field - lo) / (float)(100 - lo);
+        uint32_t id = Ui::Id(glass ? "set.blur" : "set.opacity");
+        c.TextSp(glass ? L"BLUR" : L"OPACITY", Rect(in.left + 2, in.bottom - 38, 80, 12), Weight::Medium, 9.5f, t.textLow, 1.6f);
+        c.Text(std::to_wstring(field) + L"%", Rect(in.right - 60, in.bottom - 41, 58, 16), Weight::Semi, 12, t.accentHi, Align::Right);
+        D2D1_RECT_F bar = {in.left + 2, in.bottom - 20, in.right - 2, in.bottom - 6}; // clear on the left, frosted or solid on the right
         D2D1_RECT_F track = Inset(bar, 7, -6); // the knob stays inside the ends; a taller grab zone
-        if (live && ui.Slider(id, track, v, false)) m.glassBlur = (int)(v * 100 + 0.5f); // live preview
-        if (ui.IsActive(id) && ui.In().released) m.SetPref(m.glassBlur, L"GlassBlur", m.glassBlur);
+        if (live && ui.Slider(id, track, v, false)) field = lo + (int)(v * (100 - lo) + 0.5f); // live preview
+        if (ui.IsActive(id) && ui.In().released) m.SetPref(field, glass ? L"GlassBlur" : L"BgOpacity", field);
         float hot = ui.Smooth(id + 1, ui.IsActive(id) || (live && Inside(track, ui.In().mouse)) ? 1.0f : 0, 16);
-        float rad = Height(bar) / 2, cy = (bar.top + bar.bottom) / 2, x = track.left + Width(track) * (m.glassBlur / 100.0f);
-        c.FillH(bar, rad, Color{1, 1, 1, 0.04f}, Color{1, 1, 1, 0.55f}); // the frost itself, thicker as it goes
+        float rad = Height(bar) / 2, cy = (bar.top + bar.bottom) / 2, x = track.left + Width(track) * ((field - lo) / (float)(100 - lo));
+        c.FillH(bar, rad, Color{1, 1, 1, 0.04f}, Color{1, 1, 1, 0.55f}); // the frost or the body itself, thicker as it goes
         c.Stroke(bar, rad, t.hairTop, 1);
         c.FillH({bar.left, bar.top, x + rad, bar.bottom}, rad, t.accent.Alpha(0.35f), t.accentHi.Alpha(0.55f));
         if (hot > 0.01f) c.Glow({x, cy}, 22, 18, t.accent.Alpha(0.35f * hot));
@@ -480,9 +466,10 @@ void Position(PageCtx& p, const D2D1_RECT_F& r, bool live) { // tap an edge of t
                         : e == 1 ? D2D1_RECT_F{scr.left - 8, scr.top + mh * 0.15f, scr.left + mw * 0.3f, scr.bottom - mh * 0.15f}
                                  : D2D1_RECT_F{scr.right - mw * 0.3f, scr.top + mh * 0.15f, scr.right + 8, scr.bottom - mh * 0.15f};
         uint32_t id = Ui::Id("set.edge", e);
-        Ui::Hit h = live ? ui.Button(id, hot) : Ui::Hit{};
-        float on = ui.Smooth(id + 10, m.edge == e ? 1.0f : 0, 14), hov = h.hover ? 1.0f : 0;
-        Color col = t.accent.Alpha(0.25f + 0.75f * on).Mix(t.text.Alpha(0.5f), hov * (1 - on));
+        bool taken = m.haloEdge == e; // halobar's dock is there: not offered
+        Ui::Hit h = live && !taken ? ui.Button(id, hot) : Ui::Hit{};
+        float on = ui.Smooth(id + 10, m.Edge() == e ? 1.0f : 0, 14), hov = h.hover ? 1.0f : 0;
+        Color col = taken ? t.textDim.Alpha(0.18f) : t.accent.Alpha(0.25f + 0.75f * on).Mix(t.text.Alpha(0.5f), hov * (1 - on));
         float d = 4 + (e == 0 ? mh * 0.30f : mw * 0.22f) * on; // the docked edge grows into a little panel
         D2D1_RECT_F bar = e == 0 ? D2D1_RECT_F{scr.left + mw * 0.3f, scr.top + 3, scr.right - mw * 0.3f, scr.top + 3 + d}
                         : e == 1 ? D2D1_RECT_F{scr.left + 3, scr.top + mh * 0.22f, scr.left + 3 + d, scr.bottom - mh * 0.22f}
@@ -491,7 +478,7 @@ void Position(PageCtx& p, const D2D1_RECT_F& r, bool live) { // tap an edge of t
         if (h.clicked && m.edge != e) m.SetPref(m.edge, L"Edge", e); // panel retracts and re-docks
     }
     static const wchar_t* const kNames[] = {L"Top edge", L"Left edge", L"Right edge"};
-    c.Text(kNames[m.edge], Rect(in.left, in.bottom - 14, Width(in), 14), Weight::Medium, 11, t.textDim, Align::Center);
+    c.Text(m.edge != m.Edge() ? std::wstring(kNames[m.Edge()]) + L" · HaloBar " + (m.edge == 0 ? L"top" : m.edge == 1 ? L"left" : L"right") : std::wstring(kNames[m.Edge()]), Rect(in.left, in.bottom - 14, Width(in), 14), Weight::Medium, 11, t.textDim, Align::Center);
 }
 
 void Screens(PageCtx& p, const D2D1_RECT_F& r, bool live) { // your monitors as they're arranged: tap one, or All
@@ -530,8 +517,8 @@ void Screens(PageCtx& p, const D2D1_RECT_F& r, bool live) { // your monitors as 
         c.FillV(q, 6, t.track.Alpha(0.9f).Mix(t.accent.Alpha(0.35f), on), t.track.Alpha(0.5f).Mix(t.accent.Alpha(0.18f), on));
         c.Stroke(q, 6, t.accent.Alpha(on).Mix(t.text.Alpha(0.5f), h.hover ? 0.5f * (1 - on) : 0), on > 0.5f ? 1.5f : 1);
         float mx = (q.left + q.right) / 2, my = (q.top + q.bottom) / 2; // where the panel docks on that screen
-        D2D1_RECT_F dock = m.edge == 0 ? D2D1_RECT_F{mx - Width(q) * 0.18f, q.top + 3, mx + Width(q) * 0.18f, q.top + 6}
-                         : m.edge == 1 ? D2D1_RECT_F{q.left + 3, my - Height(q) * 0.2f, q.left + 6, my + Height(q) * 0.2f}
+        D2D1_RECT_F dock = m.Edge() == 0 ? D2D1_RECT_F{mx - Width(q) * 0.18f, q.top + 3, mx + Width(q) * 0.18f, q.top + 6}
+                         : m.Edge() == 1 ? D2D1_RECT_F{q.left + 3, my - Height(q) * 0.2f, q.left + 6, my + Height(q) * 0.2f}
                                        : D2D1_RECT_F{q.right - 6, my - Height(q) * 0.2f, q.right - 3, my + Height(q) * 0.2f};
         c.Fill(dock, 1.5f, t.accentHi.Alpha(on));
         c.Text(std::to_wstring(s.number ? s.number : i + 1), q, Weight::Medium, (std::min)(14.0f, Height(q) * 0.45f), t.text.Alpha(0.5f + 0.5f * on),
@@ -619,14 +606,19 @@ void Island(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the pill over a ma
     c.Fill(pill, ph / 2, Color{0.02f, 0.02f, 0.03f, 0.95f});
     c.Dot({pill.right - ph * 0.9f, (pill.top + pill.bottom) / 2}, ph * 0.22f, t.accent.Alpha(0.5f + 0.5f * always)); // its little visualizer, lit when it stays
 
-    float x0 = scr.right + 18, cy = (in.top + in.bottom) / 2;
+    float x0 = scr.right + 18, cy = (in.top + in.bottom) / 2 - kDeskLift, rw = in.right - x0 - 2; // the desktop switch sits under the slider
     float v = StayToSlider(m.islandSecs);
     bool done = false;
-    if (Knob(ui, t, Ui::Id("set.stay"), Rect(x0, cy - 22, in.right - x0 - 2, 22), L"Stays", StayText(m.islandSecs), v, live, done))
+    if (Knob(ui, t, Ui::Id("set.stay"), Rect(x0, cy - 22, rw, 22), L"Stays", StayText(m.islandSecs), v, live, done))
         m.islandSecs = SliderToStay(v); // any time from a moment to five minutes, or always at the end
     if (done) m.SetPref(m.islandSecs, L"IslandSecs", m.islandSecs);
-    c.Text(m.IslandAlways() ? L"Stays up whenever something is playing" : L"Over maximized windows, after you move away",
-           Rect(x0, cy + 6, in.right - x0 - 2, 16), Weight::Light, 10.5f, t.textLow);
+    c.Text(m.IslandAlways() ? L"Up whenever music plays" : L"Over maximized windows,\nafter you move away",
+           Rect(x0, cy + 6, rw, 30), Weight::Light, 10.5f, t.textLow);
+    D2D1_RECT_F desk = Rect(x0, cy + 40, rw, kDeskRowH); // off: on the desktop a hover drops the whole panel, as before
+    Ui::Hit h = live ? ui.Button(Ui::Id("set.desk", 1), {desk.left, desk.top, desk.right - 52, desk.bottom}) : Ui::Hit{}; // the words flip it too
+    c.Text(L"Pill on the desktop", {desk.left, desk.top, desk.right - 56, desk.bottom}, Weight::Regular, 11.5f, h.hover ? t.text : t.text.Mix(t.textDim, 0.25f));
+    if ((w::Switch(ui, t, Ui::Id("set.desk"), {desk.right - 24, (desk.top + desk.bottom) / 2}, m.pillDesk != 0, live) || h.clicked) && live)
+        m.SetPref(m.pillDesk, L"PillDesktop", m.pillDesk ? 0 : 1); // shown while no app is under it, even with stays short of always
 }
 
 }
@@ -639,7 +631,9 @@ void DrawSettings(PageCtx& p, float k) {
     const D2D1_RECT_F& s = p.area;
     Frame frame = Begin(p, k);
     bool live = ui.In().mouse.x > -1e5f; // inputs only while the mouse is around
-    static const wchar_t* const kSources[] = {L"Wallpaper", L"Custom"};
+    static const wchar_t* const kSources[] = {L"Wallpaper", L"Windows", L"Custom"};
+    static const int kSourceMode[] = {0, Model::kAccentWindows, 1}; // segment to accent mode
+    int segNow = m.accentMode == 1 ? 2 : m.accentMode == Model::kAccentWindows ? 1 : 0;
 
     D2D1_RECT_F grid;
     if (!frame.tall) { // hero column: the color orb
@@ -653,8 +647,8 @@ void DrawSettings(PageCtx& p, float k) {
             Shade(p, Rect(hx - 90, s.top + 218, 180, 12), live);
         } else {
             Orb(p, {hx, s.top + 98}, 56, live);
-            int v = Segmented(ui, t, "set.accent", Rect(hx - 90, s.top + 172, 180, 24), kSources, 2, m.accentMode, live);
-            if (v >= 0) m.SetAccent(v, m.accentHex);
+            int v = Segmented(ui, t, "set.accent", Rect(hx - 100, s.top + 172, 200, 24), kSources, 3, segNow, live);
+            if (v >= 0) m.SetAccent(kSourceMode[v], m.accentHex);
             Presets(p, hx - 84, s.top + 214, 24, live);
         }
         if (ScanBtn(ui, t, "set.win", Rect(s.left + 28, s.bottom - 44, kHero - 56, 32), false, true, glyph::OpenNew, L"Windows settings", L"")) {
@@ -675,8 +669,8 @@ void DrawSettings(PageCtx& p, float k) {
             c.Text(L"Tap a color twice to type a hex", Rect(x0, s.top + 96, Width(s) - 146, 16), Weight::Light, 10.5f, t.textLow);
         } else {
             Orb(p, {s.left + 66, s.top + 66}, 44, live);
-            int v = Segmented(ui, t, "set.accent", Rect(x0, s.top + 28, (std::min)(Width(s) - 176, 180.0f), 24), kSources, 2, m.accentMode, live);
-            if (v >= 0) m.SetAccent(v, m.accentHex);
+            int v = Segmented(ui, t, "set.accent", Rect(x0, s.top + 28, (std::min)(Width(s) - 176, 200.0f), 24), kSources, 3, segNow, live);
+            if (v >= 0) m.SetAccent(kSourceMode[v], m.accentHex);
             Presets(p, x0 + 10, s.top + 76, 22, live);
             c.Text(L"Tap the orb to type a hex", Rect(x0, s.top + 96, Width(s) - 146, 16), Weight::Light, 10.5f, t.textLow);
         }
@@ -690,10 +684,11 @@ void DrawSettings(PageCtx& p, float k) {
 
     int rows = frame.tall ? 3 : 2;
     float ch = (std::max)(kMinRow, (Height(grid) - rows * kGap - kLyricsRow) / rows); // short page: cards keep their size and the page scrolls
-    float content = rows * (ch + kGap) + kLyricsRow + (frame.tall ? kLyricsRow + kGap : 0); // the sidebar stacks lyrics and motion
+    static float prefsH = 0; // the newer cards' height, as they measured last frame
+    float content = rows * (ch + kGap) + kLyricsRow + (frame.tall ? kLyricsRow + kGap : 0) + kGap + prefsH; // the sidebar stacks lyrics and motion
     float scroll = Scroll(ui, "set.scroll", settingsScroll, grid, content);
     D2D1_RECT_F view = grid;
-    live = live && Inside(view, ui.In().mouse); // cards scrolled out of view can't be hit through the header
+    live = live && (Inside(view, ui.In().mouse) || ui.Captured()); // cards scrolled out of view can't be hit through the header; a slider being dragged keeps following past it
     c.PushClip(view);
     grid.top -= scroll;
     if (!frame.tall) { // five instruments: three across, then notifications and a wide island
@@ -706,6 +701,7 @@ void DrawSettings(PageCtx& p, float k) {
         float half = (Width(grid) - kGap) / 2;
         Lyrics(p, Rect(grid.left, grid.top + 2 * (ch + kGap), half, kLyricsRow), live);
         Motion(p, Rect(grid.left + half + kGap, grid.top + 2 * (ch + kGap), half, kLyricsRow), live);
+        prefsH = DrawPrefs(p, {grid.left, grid.top + 2 * (ch + kGap) + kLyricsRow + kGap, grid.right, grid.bottom}, live, false);
     } else { // sidebar: two by two, the island across the bottom
         float cw = (Width(grid) - kGap) / 2;
         Material(p, Rect(grid.left, grid.top, cw, ch), live);
@@ -715,6 +711,7 @@ void DrawSettings(PageCtx& p, float k) {
         Island(p, Rect(grid.left, grid.top + 2 * (ch + kGap), Width(grid), ch), live);
         Lyrics(p, Rect(grid.left, grid.top + 3 * (ch + kGap), Width(grid), kLyricsRow), live);
         Motion(p, Rect(grid.left, grid.top + 3 * (ch + kGap) + kLyricsRow + kGap, Width(grid), kLyricsRow), live);
+        prefsH = DrawPrefs(p, {grid.left, grid.top + 3 * (ch + kGap) + 2 * (kLyricsRow + kGap), grid.right, grid.bottom}, live, true);
     }
     c.PopClip();
     Fades(c, t, view, scroll, content);

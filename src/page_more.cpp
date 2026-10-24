@@ -1,13 +1,21 @@
 #include <algorithm>
 #include <cmath>
 #include <cwctype>
+#include <vector>
 
 #include "anim.h"
 #include "glyphs.h"
 #include "page_sheet.h"
 #include "pages.h"
+#include "saver.h"
 
 namespace {
+
+constexpr float kTimerW = 400; // the timer card; the quick tiles take the rest
+constexpr float kQuickGap = 10;
+constexpr float kStackedW = 140; // w::Tile puts the icon over the words below this width
+constexpr float kDoneW = 64, kEditHeadH = 26; // editing the tiles: the done pill and its row
+constexpr int kEditCols = 4; // the fewest columns while editing
 
 struct Cell {
     const wchar_t* name;
@@ -108,13 +116,14 @@ void DrawSys(PageCtx& p) {
     D2D1_RECT_F left = tall ? Rect(a.left, a.top, Width(a), 232) : Rect(a.left, a.top, 480, Height(a)); // fixed gauge card, procs take rest
     w::Card(p.ui, p.shell, left);
 
-    std::vector<Cell> cells;
-    cells.push_back({L"CPU", glyph::Cpu, (float)s.cpu, w::Pct((float)s.cpu), std::to_wstring(s.threads) + L" threads"});
-    if (s.gpu >= 0) cells.push_back({L"GPU", glyph::Gpu, (float)s.gpu, w::Pct((float)s.gpu), L"3D engine"}); // gpu gauge only if counter exists
-    cells.push_back({L"Memory", glyph::Ram, (float)s.mem, w::Pct((float)s.mem), fmt::Gb(s.memUsedGb) + L" of " + fmt::Gb(s.memTotalGb)});
+    Cell cells[3]{}; // on the stack: this runs every frame the page shows
+    size_t count = 0;
+    cells[count++] = {L"CPU", glyph::Cpu, (float)s.cpu, w::Pct((float)s.cpu), std::to_wstring(s.threads) + L" threads"};
+    if (s.gpu >= 0) cells[count++] = {L"GPU", glyph::Gpu, (float)s.gpu, w::Pct((float)s.gpu), L"3D engine"}; // gpu gauge only if counter exists
+    cells[count++] = {L"Memory", glyph::Ram, (float)s.mem, w::Pct((float)s.mem), fmt::Gb(s.memUsedGb) + L" of " + fmt::Gb(s.memTotalGb)};
 
-    float cw = (Width(left) - 20) / (float)cells.size(); // split card evenly among 2 or 3 gauges
-    for (size_t i = 0; i < cells.size(); ++i)
+    float cw = (Width(left) - 20) / (float)count; // split card evenly among 2 or 3 gauges
+    for (size_t i = 0; i < count; ++i)
         GaugeCell(p, Rect(left.left + 10 + cw * i, left.top + 10, cw, Height(left) - 20), cells[i], (int)i);
 
     Procs(p, tall ? D2D1_RECT_F{a.left, left.bottom + 12, a.right, a.bottom} : D2D1_RECT_F{left.right + 12, a.top, a.right, a.bottom});
@@ -231,6 +240,115 @@ void Focus(PageCtx& p, const D2D1_RECT_F& r, bool tall) {
     if (w::IconBtn(ui, t, Ui::Id("tl.focus.stop"), {r.right - 44, rc.y}, 44, glyph::Stop, 26, true, true)) m.StopFocus();
 }
 
+void Tile(PageCtx& p, int id, const D2D1_RECT_F& r) { // one quick tile: its state, the words that fit its width, what a tap does
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    bool narrow = Width(r) < kStackedW; // w::Tile stacks its icon over the words below this
+    float room = narrow ? Width(r) - 24 : Width(r) - 56; // what's left beside or under the icon
+    auto label = [&](const wchar_t* full, const wchar_t* brief) { return c.Measure(full, Weight::Medium, narrow ? 12.5f : 13) <= room ? full : brief; };
+    auto detail = [&](const wchar_t* full, const wchar_t* brief) { return c.Measure(full, Weight::Light, narrow ? 10.5f : 11.5f) <= room ? full : brief; };
+    uint32_t uid = Ui::Id("tl.tile", id);
+    switch (id) {
+    case Model::kTlSnip:
+        if (w::Tile(ui, t, uid, r, glyph::Snip, label(L"Screenshot", L"Snip"), detail(L"Pick a region", L"A region"), false)) {
+            p.wantClose = true; // hide drawer so it's not in the snip
+            sys::OpenSnip();
+        }
+        break;
+    case Model::kTlColor:
+        if (w::Tile(ui, t, uid, r, glyph::Edit, L"Color", detail(L"Pick from screen", L"From screen"), false)) {
+            p.wantClose = true; // out of the way of what you're picking from
+            m.pickPending = true; // the picker starts once the panel is all the way up
+        }
+        break;
+    case Model::kTlAwake:
+        if (w::Tile(ui, t, uid, r, glyph::Coffee, L"Awake", m.awake ? detail(L"Screen stays on", L"Stays on") : L"Off", m.awake)) m.SetAwake(!m.awake);
+        break;
+    case Model::kTlAlerts:
+        if (w::Tile(ui, t, uid, r, glyph::Bell, label(L"Notifications", L"Alerts"), detail(L"Open the list", L"Open"), false)) {
+            p.wantClose = true;
+            sys::OpenUri(L"ms-actioncenter:"); // windows' own notification center
+        }
+        break;
+    case Model::kTlDnd:
+        if (w::Tile(ui, t, uid, r, glyph::Dnd, label(L"Do not disturb", L"Quiet"), m.quiet ? L"On" : L"Off", m.quiet)) m.SetQuiet(!m.quiet); // halobar goes quiet with it
+        break;
+    case Model::kTlSaver: {
+        static int saverHere = -1; // asked once: the state's shape doesn't change while running
+        if (saverHere < 0) saverHere = sys::SaverAvailable() ? 1 : 0;
+        bool saver = saverHere && sys::SaverOn();
+        if (w::Tile(ui, t, uid, r, glyph::Saver, label(L"Energy saver", L"Saver"), saver ? L"On" : L"Off", saver, saverHere != 0) && !sys::SetSaver(!saver))
+            p.wantClose = true; // older windows: its settings page opened instead
+        break;
+    }
+    case Model::kTlAir: {
+        bool hasW = m.radios.HasWifi(), hasB = m.radios.HasBt();
+        bool air = (hasW || hasB) && !(hasW && m.radios.WifiOn()) && !(hasB && m.radios.BtOn()); // every radio off is airplane mode
+        static bool wasW = true, wasB = true; // the radios that were on before airplane mode: only those come back
+        if (w::Tile(ui, t, uid, r, air ? glyph::Airplane : glyph::AirplaneOff, L"Airplane", air ? L"On" : L"Off", air, hasW || hasB)) {
+            if (!air) wasW = hasW && m.radios.WifiOn(), wasB = hasB && m.radios.BtOn();
+            bool any = (hasW && wasW) || (hasB && wasB); // all were off when it began: off means every radio back
+            if (hasW) m.radios.SetWifi(air && (wasW || !any)); // on: all of them down
+            if (hasB) m.radios.SetBt(air && (wasB || !any));
+        }
+        break;
+    }
+    default:
+        if (w::Tile(ui, t, uid, r, glyph::Settings, L"Settings", L"Astraeus", false)) m.OpenSettings(); // windows settings is one tap away inside the sheet
+        break;
+    }
+}
+
+void EditTiles(PageCtx& p, const D2D1_RECT_F& quick) { // the tiles the widgets way: x takes one off, + brings one back, drag to move
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F done = Rect(quick.right - kDoneW, quick.top, kDoneW, kEditHeadH);
+    if (sheet::Act(ui, t, Ui::Id("tl.done"), done, L"Done", true, false, true) || ui.RClick(quick)) m.tilesEdit = false;
+    c.Text(L"Drag to move, × removes, + adds", {quick.left + 4, quick.top, done.left - 8, done.bottom}, Weight::Light, 11, t.textDim);
+    sheet::Arrange a = sheet::TileSet(m);
+    int total = (int)(a.shown.size() + a.hidden.size());
+    int cols = (std::max)(kEditCols, (total + 1) / 2), rows = (std::max)(1, (total + cols - 1) / cols);
+    D2D1_RECT_F grid = {quick.left, done.bottom + kQuickGap, quick.right, quick.bottom};
+    float cellH = (Height(grid) - (rows - 1) * sheet::kArrangeGap) / rows;
+    if (sheet::Arranger(ui, t, "tl.edit", grid, cols, cellH, a, true)) sheet::KeepTiles(m, a.shown);
+}
+
+void QuickTiles(PageCtx& p, const D2D1_RECT_F& quick) { // the picked tiles, half on top and the rest below; right-click to edit them
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    if (m.tilesEdit) return EditTiles(p, quick);
+    if (ui.RClick(quick)) m.tilesEdit = true;
+    sheet::Ids shown;
+    for (int id : m.tiles)
+        if (m.TileHere(id)) shown.push_back(id);
+    int n = (int)shown.size();
+    if (n == 0) { // every tile taken off: a way to bring them back
+        Ui::Hit h = ui.Button(Ui::Id("tl.add"), quick);
+        float hover = ui.Smooth(Ui::Id("tl.add", 1), h.hover ? 1.0f : 0, 16);
+        c.Fill(quick, 18, t.track.Alpha(0.20f + 0.30f * hover));
+        c.Stroke(quick, 18, t.accent.Alpha(0.30f + 0.40f * hover), 1);
+        D2D1_POINT_2F o = {(quick.left + quick.right) / 2, (quick.top + quick.bottom) / 2 - 10};
+        c.Icon(glyph::Add, o, 24, t.accentHi);
+        c.Text(L"Add tiles", Rect(quick.left, o.y + 16, Width(quick), 18), Weight::Medium, 12.5f, t.textDim.Mix(t.text, hover), Align::Center);
+        if (h.clicked) m.tilesEdit = true;
+        return;
+    }
+    int top = n / 2, bottom = n - top; // the release's layout: two above, the rest below
+    float th = top ? (Height(quick) - kQuickGap) / 2 : Height(quick);
+    auto row = [&](int count, int i, float y) { // the i-th of count tiles sharing a row
+        float tw = (Width(quick) - kQuickGap * (count - 1)) / count;
+        return Rect(quick.left + i * (tw + kQuickGap), y, tw, th);
+    };
+    for (int i = 0; i < n; ++i)
+        Tile(p, shown[(size_t)i], i < top ? row(top, i, quick.top) : row(bottom, i - top, quick.top + (top ? th + kQuickGap : 0)));
+}
+
 void DrawTools(PageCtx& p) {
     Ui& ui = p.ui;
     Canvas& c = ui.C();
@@ -256,7 +374,7 @@ void DrawTools(PageCtx& p) {
     }
 
     bool tall = Height(a) > Width(a); // sidebar: timer and tiles stack under the power row
-    D2D1_RECT_F timer = tall ? Rect(a.left, power.bottom + 12, Width(a), 190) : Rect(a.left, power.bottom + 12, 470, a.bottom - power.bottom - 12);
+    D2D1_RECT_F timer = tall ? Rect(a.left, power.bottom + 12, Width(a), 190) : Rect(a.left, power.bottom + 12, kTimerW, a.bottom - power.bottom - 12);
     w::Card(ui, t, timer);
     static const wchar_t* kTabs[] = {L"TIMER", L"STOPWATCH", L"FOCUS"};
     float tx = timer.left + 20;
@@ -294,28 +412,7 @@ void DrawTools(PageCtx& p) {
     }
 
     D2D1_RECT_F quick = tall ? D2D1_RECT_F{a.left, timer.bottom + 12, a.right, a.bottom} : D2D1_RECT_F{timer.right + 12, timer.top, a.right, a.bottom};
-    float tw = (Width(quick) - 10) / 2, th = (Height(quick) - 10) / 2; // 2x2 quick grid, 10px gaps
-    // screenshot and color on top; do not disturb and settings below, awake first on laptops (task manager lives on the system page)
-    if (w::Tile(ui, t, Ui::Id("tl.snip"), Rect(quick.left, quick.top, tw, th), glyph::Snip, L"Screenshot", L"Pick a region", false)) {
-        p.wantClose = true; // hide drawer so it's not in the snip
-        sys::OpenSnip();
-    }
-    if (w::Tile(ui, t, Ui::Id("tl.pick"), Rect(quick.left + tw + 10, quick.top, tw, th), glyph::Edit, L"Color", L"Pick from screen", false)) {
-        p.wantClose = true; // out of the way of what you're picking from
-        m.pickPending = true; // the picker starts once the panel is all the way up
-    }
-    int cells = m.portable ? 3 : 2; // below: awake on laptops, do not disturb, settings
-    float sw = (Width(quick) - 10 * (cells - 1)) / cells, sx = quick.left, by = quick.top + th + 10;
-    if (m.portable) {
-        if (w::Tile(ui, t, Ui::Id("tl.awake"), Rect(sx, by, sw, th), glyph::Coffee, L"Awake", m.awake ? L"Screen stays on" : L"Off", m.awake))
-            m.SetAwake(!m.awake);
-        sx += sw + 10;
-    }
-    if (w::Tile(ui, t, Ui::Id("tl.dnd"), Rect(sx, by, sw, th), glyph::Dnd, L"Do not disturb", m.quiet ? L"On" : L"Off", m.quiet))
-        m.SetQuiet(!m.quiet); // halobar goes quiet with it
-    sx += sw + 10;
-    if (w::Tile(ui, t, Ui::Id("tl.settings"), Rect(sx, by, sw, th), glyph::Settings, L"Settings", L"Astraeus", false))
-        m.OpenSettings(); // windows settings is one tap away inside the sheet
+    QuickTiles(p, quick);
 }
 
 namespace fmt {

@@ -4,6 +4,8 @@
 #include <pdhmsg.h>
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 
 namespace sys {
 namespace {
@@ -23,17 +25,29 @@ struct StatSrc::Impl {
     PDH_HQUERY query = nullptr;
     PDH_HCOUNTER gpuCtr = nullptr;
     bool gpuOk = false;
+    enum : int { kGpuIdle, kGpuPending, kGpuReady, kGpuFailed };
+    std::atomic<int> gpuState{kGpuIdle}; // the counter is opened the first time a gauge wants it, never at launch
+    std::thread gpuOpen; // opening it costs seconds of cpu: the gauge reads 0 until it's done
     std::vector<BYTE> gpuBuf;  // reused counter array buffer
     int threads = 0;
 
     Impl() {
         threads = static_cast<int>(GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));  // all groups, not just >64 cpu group 0
-        InitGpu();
         ReadCpu();  // prime baseline so first sample has a delta
     }
 
     ~Impl() {
+        if (gpuOpen.joinable()) gpuOpen.join();
         if (query) PdhCloseQuery(query);
+    }
+
+    void OpenGpu() {
+        gpuState = kGpuPending;
+        gpuOpen = std::thread([this] {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST); // a one-off, nobody waits on it
+            InitGpu();
+            gpuState.store(gpuOk ? kGpuReady : kGpuFailed, std::memory_order_release);
+        });
     }
 
     void InitGpu() {
@@ -79,7 +93,10 @@ struct StatSrc::Impl {
     }
 
     double ReadGpu() {
-        if (!gpuOk) return -1;  // -1 tells ui gpu is unavailable
+        int state = gpuState.load(std::memory_order_acquire);
+        if (state == kGpuIdle) OpenGpu();
+        if (state == kGpuIdle || state == kGpuPending) return 0; // still opening: an empty gauge, not a missing one
+        if (state == kGpuFailed) return -1;  // -1 tells ui gpu is unavailable
         PDH_STATUS st = PdhCollectQueryData(query);
         if (st != ERROR_SUCCESS) return 0;
         for (int attempt = 0; attempt < 3; ++attempt) {  // instance count can grow between calls

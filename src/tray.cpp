@@ -25,7 +25,8 @@ struct Item {
     int glyph;
     const wchar_t* label;
 };
-const Item kItems[] = {{kConfig, glyph::Edit, L"Edit config"}, // no "open": clicking the icon does that
+const Item kItems[] = {{kSettings, glyph::Settings, L"Settings"}, // reachable whatever pages and tiles are kept
+                       {kConfig, glyph::Edit, L"Edit config"}, // no "open": clicking the icon does that
                        {kStartup, glyph::Rocket, L"Start with Windows"},
                        {kUpdate, 0, L"Check for updates"},
                        {kSepCmd, 0, nullptr},
@@ -155,7 +156,7 @@ void Paint() {
         c.Icon(glyph::Sparkle, badge, 18, t.accentHi, true);
     }
     c.Text(L"Astraeus", Rect(kPad + 48, 13, 160, 18), Weight::Medium, 14, t.text);
-    c.Text(L"Bezel dashboard", Rect(kPad + 48, 30, 160, 14), Weight::Light, 11, t.textLow);
+    c.Text(L"Dynamic island", Rect(kPad + 48, 30, 160, 14), Weight::Light, 11, t.textLow);
 
     for (int i = 0; i < kCount; ++i) {
         const Item& it = kItems[i];
@@ -379,7 +380,7 @@ void AskPaint() {
     c.Icon(glyph::Rocket, badge, 24, t.accentHi, true);
     c.Text(L"Start with Windows?", Rect(80, 28, kAskW - 100, 24), Weight::Medium, 17, t.text);
     c.Text(L"Astraeus can open when you sign in,", Rect(80, 54, kAskW - 100, 18), Weight::Light, 12.5f, t.textDim);
-    c.Text(L"so the bezel is always ready.", Rect(80, 72, kAskW - 100, 18), Weight::Light, 12.5f, t.textDim); // manual wrap
+    c.Text(L"so the island is always ready.", Rect(80, 72, kAskW - 100, 18), Weight::Light, 12.5f, t.textDim); // manual wrap
     for (int i = 0; i < 2; ++i) {
         D2D1_RECT_F r = AskBtn(i);
         bool hot = q->hover == i;

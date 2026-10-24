@@ -26,6 +26,8 @@ constexpr int64_t kDay = 86400;
 constexpr int64_t kPastDays = 62, kAheadDays = 400; // occurrences kept: two months back, a year and a bit ahead
 constexpr size_t kMaxIcs = 8 << 20; // years of events stay well under this
 constexpr int kMaxRepeats = 4000; // a rule with no end stops here even if the window didn't stop it
+constexpr int kStoreTries = 10; // the other app may be reading the store just as this one replaces it
+constexpr DWORD kStoreWaitMs = 30;
 constexpr wchar_t kEntropy[] = L"Astraeus calendars";
 
 // ---- days and dates, in plain civil arithmetic ----
@@ -194,7 +196,17 @@ std::wstring Param(const std::wstring& params, const wchar_t* key) { // ;TZID=Eu
 }
 
 std::vector<Raw> ParseIcs(const std::string& body) {
-    std::wstring text = Widen(body);
+    std::string flat; // unfolded as bytes first: a fold may split a multibyte character, widened apart it would turn into two broken ones
+    flat.reserve(body.size());
+    for (size_t i = 0; i < body.size(); ++i) {
+        if (body[i] == '\n' && i + 1 < body.size() && (body[i + 1] == ' ' || body[i + 1] == '\t')) {
+            if (!flat.empty() && flat.back() == '\r') flat.pop_back();
+            ++i; // the fold's space goes too
+            continue;
+        }
+        flat += body[i];
+    }
+    std::wstring text = Widen(flat);
     std::vector<std::wstring> lines; // unfolded: a line that starts with a space continues the one before
     for (size_t at = 0; at < text.size();) {
         size_t e = text.find(L'\n', at);
@@ -208,6 +220,7 @@ std::vector<Raw> ParseIcs(const std::string& body) {
     std::vector<Raw> out;
     Raw cur;
     bool in = false;
+    int inner = 0; // inside an event's alarm: its summary and duration aren't the event's
     for (const auto& line : lines) {
         bool quoted = false;
         size_t colon = std::wstring::npos;
@@ -220,15 +233,18 @@ std::vector<Raw> ParseIcs(const std::string& body) {
         size_t semi = head.find(L';');
         std::wstring name = head.substr(0, semi), params = semi == std::wstring::npos ? L"" : head.substr(semi);
         if (name == L"BEGIN" && value == L"VEVENT") {
-            cur = Raw{}, in = true;
+            cur = Raw{}, in = true, inner = 0;
             continue;
         }
         if (name == L"END" && value == L"VEVENT") {
-            if (in && cur.start.ok && !cur.cancelled) out.push_back(std::move(cur));
+            if (in && cur.start.ok && (!cur.cancelled || cur.recurrenceId.ok)) out.push_back(std::move(cur)); // a cancelled occurrence still hides its slot in the series
             in = false;
             continue;
         }
         if (!in) continue;
+        if (name == L"BEGIN") ++inner;
+        else if (name == L"END" && inner > 0) --inner;
+        if (inner > 0 || name == L"END") continue;
         std::wstring tz = Param(params, L"TZID=");
         bool dateParam = Param(params, L"VALUE=") == L"DATE";
         if (name == L"DTSTART") cur.start = ParseStamp(value, tz, dateParam);
@@ -259,6 +275,7 @@ struct Rule {
     int64_t until = 0; // unix, 0 = none
     std::vector<std::pair<int, int>> byDay; // (ordinal, weekday 0 monday): ordinal 0 = every one
     std::vector<int> byMonthDay;
+    std::vector<int> byMonth; // a yearly series' months, "the last monday of may"
 };
 
 int ToInt(const std::wstring& s) { return (int)wcstol(s.c_str(), nullptr, 10); }
@@ -276,11 +293,12 @@ Rule ParseRule(const std::wstring& r, Zones& z) {
         else if (k == L"UNTIL") {
             Stamp u = ParseStamp(v, L"", false);
             if (u.ok) o.until = u.date ? z.ToUnix(L"", u.y, u.mo, u.d, 23, 59, 59) : z.ToUnix(u.utc ? L"UTC" : L"", u.y, u.mo, u.d, u.h, u.mi, u.s);
-        } else if (k == L"BYDAY" || k == L"BYMONTHDAY") {
+        } else if (k == L"BYDAY" || k == L"BYMONTHDAY" || k == L"BYMONTH") {
             for (size_t c = 0; c <= v.size();) {
                 size_t f = v.find(L',', c);
                 std::wstring one = v.substr(c, f == std::wstring::npos ? std::wstring::npos : f - c);
                 if (k == L"BYMONTHDAY" && !one.empty()) o.byMonthDay.push_back(ToInt(one));
+                else if (k == L"BYMONTH" && ToInt(one) >= 1 && ToInt(one) <= 12) o.byMonth.push_back(ToInt(one));
                 else if (k == L"BYDAY" && one.size() >= 2) {
                     static const wchar_t* const kDays[] = {L"MO", L"TU", L"WE", L"TH", L"FR", L"SA", L"SU"};
                     std::wstring day = one.substr(one.size() - 2), ord = one.substr(0, one.size() - 2);
@@ -301,7 +319,8 @@ int64_t ToUnix(Zones& z, const Stamp& t) { return t.date ? z.ToUnix(L"", t.y, t.
 
 std::vector<int> MonthDays(const Rule& r, const Stamp& start, int y, int m) { // a monthly or yearly series' days in one month
     std::vector<int> out;
-    if (r.freq == Rule::Monthly && !r.byDay.empty()) {
+    bool pattern = r.freq == Rule::Monthly || (r.freq == Rule::Yearly && !r.byMonth.empty()); // a yearly rule with its months picks days within them the monthly way
+    if (pattern && !r.byDay.empty()) {
         int64_t firstOfMonth = DaysFromCivil(y, m, 1);
         for (auto [ord, wd] : r.byDay) {
             std::vector<int> hits;
@@ -310,12 +329,12 @@ std::vector<int> MonthDays(const Rule& r, const Stamp& start, int y, int m) { //
             else if (ord > 0 && ord <= (int)hits.size()) out.push_back(hits[ord - 1]);
             else if (ord < 0 && -ord <= (int)hits.size()) out.push_back(hits[hits.size() + ord]);
         }
-    } else if (r.freq == Rule::Monthly && !r.byMonthDay.empty()) {
+    } else if (pattern && !r.byMonthDay.empty()) {
         for (int d : r.byMonthDay) {
             int dd = d > 0 ? d : DaysIn(y, m) + d + 1;
             if (dd >= 1 && dd <= DaysIn(y, m)) out.push_back(dd);
         }
-    } else if ((r.freq == Rule::Monthly || m == start.mo) && start.d <= DaysIn(y, m)) {
+    } else if ((pattern || m == start.mo) && start.d <= DaysIn(y, m)) {
         out.push_back(start.d); // the 31st skips short months, feb 29 skips other years
     }
     std::sort(out.begin(), out.end());
@@ -323,6 +342,7 @@ std::vector<int> MonthDays(const Rule& r, const Stamp& start, int y, int m) { //
 }
 
 void Expand(const Raw& ev, const std::unordered_set<std::wstring>& overridden, Zones& z, int64_t from, int64_t to, std::vector<Event>& out) {
+    if (ev.cancelled) return; // a deleted occurrence of a series: it only hides the one it replaces
     int64_t first = ToUnix(z, ev.start);
     int64_t length = ev.duration >= 0 ? ev.duration : ev.endAt.ok ? ToUnix(z, ev.endAt) - first : ev.start.date ? kDay : 0;
     length = (std::max)(length, (int64_t)0);
@@ -348,8 +368,11 @@ void Expand(const Raw& ev, const std::unordered_set<std::wstring>& overridden, Z
         emit(s);
         return s <= to;
     };
+    int64_t fromDay = from / kDay - 2; // a day of slack each side for zones; COUNT needs every occurrence from the start, so no skipping then
     if (r.freq == Rule::Daily) {
-        for (int64_t day = startDay; guard++ < kMaxRepeats && occur(day); day += r.interval) {
+        int64_t day = startDay;
+        if (!r.count && fromDay > day) day += (fromDay - day) / r.interval * r.interval; // a daily habit begun years ago: straight to the window, it would run out of repeats first
+        for (; guard++ < kMaxRepeats && occur(day); day += r.interval) {
         }
     } else if (r.freq == Rule::Weekly) {
         std::vector<int> days;
@@ -357,18 +380,26 @@ void Expand(const Raw& ev, const std::unordered_set<std::wstring>& overridden, Z
         if (days.empty()) days.push_back(Weekday(startDay));
         std::sort(days.begin(), days.end());
         bool going = true;
-        for (int64_t week = startDay - Weekday(startDay); going && guard++ < kMaxRepeats; week += 7LL * r.interval) // weeks start on monday, as ical's default
+        int64_t week = startDay - Weekday(startDay), step = 7LL * r.interval;
+        if (!r.count && fromDay - 7 > week) week += (fromDay - 7 - week) / step * step; // same for a weekly one: the same weeks of its cycle, just later
+        for (; going && guard++ < kMaxRepeats; week += step) // weeks start on monday, as ical's default
             for (int wd : days)
                 if (!(going = occur(week + wd))) break;
     } else {
         bool going = true;
+        std::vector<int> months = r.byMonth; // yearly: its months, in order, or the start's own
+        if (months.empty()) months.push_back(ev.start.mo);
+        std::sort(months.begin(), months.end());
         for (int y = ev.start.y, m = ev.start.mo; going && guard++ < kMaxRepeats;) {
-            for (int d : MonthDays(r, ev.start, y, m))
-                if (!(going = occur(DaysFromCivil(y, m, d)))) break;
             if (r.freq == Rule::Monthly) {
+                for (int d : MonthDays(r, ev.start, y, m))
+                    if (!(going = occur(DaysFromCivil(y, m, d)))) break;
                 m += r.interval;
                 while (m > 12) m -= 12, ++y;
             } else {
+                for (int mo : months)
+                    for (int d : MonthDays(r, ev.start, y, mo))
+                        if (going && !(going = occur(DaysFromCivil(y, mo, d)))) break;
                 y += r.interval;
             }
         }
@@ -390,7 +421,7 @@ std::wstring StorePath() {
 std::vector<Link> ReadLinks() {
     std::vector<Link> links;
     std::wstring path = StorePath();
-    HANDLE f = path.empty() ? INVALID_HANDLE_VALUE : CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    HANDLE f = path.empty() ? INVALID_HANDLE_VALUE : CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr); // share delete: the other app's save can swap the file in meanwhile
     if (f == INVALID_HANDLE_VALUE) return links;
     std::vector<BYTE> blob;
     LARGE_INTEGER size{};
@@ -430,7 +461,12 @@ bool WriteLinks(const std::vector<Link>& links) {
     ok = f != INVALID_HANDLE_VALUE && WriteFile(f, out.pbData, out.cbData, &done, nullptr) && done == out.cbData;
     if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
     LocalFree(out.pbData);
-    return ok && MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING); // whole or not at all: the other app may be reading it
+    for (int i = 0; ok && i < kStoreTries; ++i) { // whole or not at all; the other app may be reading it this instant
+        if (MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) return true;
+        Sleep(kStoreWaitMs);
+    }
+    DeleteFileW(temp.c_str());
+    return false;
 }
 
 std::wstring NameFor(const std::wstring& url) {
@@ -449,6 +485,9 @@ struct Calendars::Impl {
     std::vector<Link> links;
     std::atomic<int> busy{0};
     int64_t syncedAt = 0;
+    bool again = false; // asked for while a fetch ran (a link just added): one more right after
+    HWND againTo = nullptr;
+    UINT againMsg = 0;
     std::atomic<bool> stop{false};
     std::atomic<void*> req{nullptr};
 };
@@ -475,6 +514,7 @@ void Calendars::Sync(HWND notify, UINT msg, int maxAge) {
     int64_t now = (int64_t)time(nullptr);
     {
         std::lock_guard g(impl->lock);
+        if (impl->busy > 0 && maxAge == 0) impl->again = true, impl->againTo = notify, impl->againMsg = msg; // the running fetch may predate a new link
         if (now - impl->syncedAt < maxAge || impl->busy > 0) return;
         impl->syncedAt = now;
         ++impl->busy;
@@ -506,13 +546,20 @@ void Calendars::Sync(HWND notify, UINT msg, int maxAge) {
             int64_t d0 = z.LocalDay(e.start), d1 = z.LocalDay((std::max)(e.start, e.end - 1));
             for (int64_t d = d0; d <= d1 && d - d0 < 60; ++d) days.insert(d);
         }
+        bool more = false;
+        HWND moreTo = nullptr;
+        UINT moreMsg = 0;
         {
             std::lock_guard g(s->lock);
             s->links = links;
             if (any || links.empty()) s->events = std::move(events), s->days = std::move(days); // offline: keep what we had
+            else s->syncedAt = 0; // nothing answered (early at sign-in, offline): the next open asks again at once
+            std::swap(more, s->again);
+            moreTo = s->againTo, moreMsg = s->againMsg;
+            --s->busy;
         }
-        --s->busy;
         if (notify && msg) PostMessageW(notify, msg, 0, 0);
+        if (more && moreTo && moreMsg) PostMessageW(moreTo, moreMsg, 1, 0); // wParam 1: the owner syncs again, now that this one is done
     }).detach();
 }
 
@@ -548,6 +595,11 @@ bool Calendars::LooksLikeCalendar(const std::wstring& text, std::wstring* url) {
     std::wstring lower = s;
     std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
     std::wstring path = lower.substr(0, lower.find(L'?'));
+    if (lower.find(L"/owa/calendar/") != std::wstring::npos && path.size() > 5 && path.compare(path.size() - 5, 5, L".html") == 0) { // outlook shares an html page and an ics link side by side: the page is a website, the ics is the calendar
+        s.replace(path.size() - 5, 5, L".ics");
+        lower.replace(path.size() - 5, 5, L".ics");
+        path.replace(path.size() - 5, 5, L".ics");
+    }
     bool ics = path.size() > 4 && path.compare(path.size() - 4, 4, L".ics") == 0;
     bool known = lower.find(L"calendar.google.com/calendar/ical/") != std::wstring::npos || lower.find(L"/owa/calendar/") != std::wstring::npos ||
                  lower.find(L"icloud.com/published/") != std::wstring::npos;
@@ -561,7 +613,10 @@ bool Calendars::Add(const std::wstring& text, HWND notify, UINT msg) {
     if (!LooksLikeCalendar(text, &url)) return false;
     std::vector<Link> links = ReadLinks();
     for (const auto& l : links)
-        if (l.url == url) return true; // already connected
+        if (l.url == url) { // already connected: copied again to try again, so it's fetched now
+            Sync(notify, msg, 0);
+            return true;
+        }
     links.push_back({url, NameFor(url)});
     if (!WriteLinks(links)) return false;
     {

@@ -405,7 +405,7 @@ void Stage::Leave() { // the compositor shrinks the last frame into the bezel; n
     leaving = true;
     leaveAt = Seconds();
     float pw = W * scale, ph = H * scale;
-    float cx = model.edge == 1 ? 0 : model.edge == 2 ? pw : pw / 2, cy = model.edge == 0 ? 0 : ph / 2; // where the panel lives
+    float cx = model.Edge() == 1 ? 0 : model.Edge() == 2 ? pw : pw / 2, cy = model.Edge() == 0 ? 0 : ph / 2; // where the panel lives
     leaveTick = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS); // auto-reset: one wake per tick
     LARGE_INTEGER first;
     first.QuadPart = -160000; // 16 ms
@@ -471,7 +471,7 @@ void Stage::Frame(const Theme& media) {
     frameDt = dt;
 
     bool paused = !model.hasTrack || !model.track.playing;
-    float show = ui.Smooth(Ui::Id("st.show"), now - lastMove < kIdleSec || paused || ui.Captured() ? 1.0f : 0, 6);
+    float show = ui.Smooth(Ui::Id("st.show"), !model.stageHide || now - lastMove < kIdleSec || paused || ui.Captured() ? 1.0f : 0, 6); // the hide-at-rest switch off: they stay
 
     SyncLyrics(now);
     bool lyrOn = lyrDoc && !lyrDoc->lines.empty();

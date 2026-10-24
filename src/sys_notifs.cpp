@@ -405,15 +405,16 @@ std::wstring ColText(sqlite3_stmt* st, int col) {
     return p && n > 0 ? Wide(std::string_view(p, static_cast<size_t>(n))) : std::wstring();
 }
 
-std::vector<Notif> Query(size_t max) {
+std::vector<Notif> Query(size_t max, bool& ok) {
     std::vector<Notif> out;
+    ok = false;
     Db db;
     Stmt st(db.get(), kQuery);
     if (!st.get()) return out;  // no db, locked past the timeout, or a schema we don't know
     // rows past `max` may parse to nothing, so fetch a little extra and stop once full
     sqlite3_bind_int64(st.get(), 1, NowFiletime());
     sqlite3_bind_int64(st.get(), 2, static_cast<sqlite3_int64>((std::min)(max * 2, kMaxRows)));
-    int rc;
+    int rc = SQLITE_DONE;
     while (out.size() < max && (rc = sqlite3_step(st.get())) == SQLITE_ROW) {
         Notif n;
         n.id = sqlite3_column_int64(st.get(), 0);
@@ -425,6 +426,7 @@ std::vector<Notif> Query(size_t max) {
         if (xml.empty() || !Parse(xml, n.aumid, n)) continue;  // silent toasts and progress shells are skipped
         out.push_back(std::move(n));
     }
+    ok = rc == SQLITE_DONE || rc == SQLITE_ROW; // read to the end or filled up; busy or broken is no answer, not "nothing new"
     return out;
 }
 
@@ -492,10 +494,13 @@ bool Shell(const std::wstring& target) {
 
 }  // namespace
 
-std::vector<Notif> ReadNotifs(size_t max) noexcept {
+std::vector<Notif> ReadNotifs(size_t max, bool* ok) noexcept {
+    bool read = false;
+    if (ok) *ok = false;
     try {
         if (max == 0) return {};
-        std::vector<Notif> out = Query((std::min)(max, kMaxRows));
+        std::vector<Notif> out = Query((std::min)(max, kMaxRows), read);
+        if (ok) *ok = read;
         for (Notif& n : out) n.app = AppNameOf(n.aumid);  // after the db is closed, shell lookups can be slow
         return out;
     } catch (...) {

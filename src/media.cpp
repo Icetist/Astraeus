@@ -37,8 +37,8 @@ constexpr uint32_t kChunk = 64u << 10; // read size when stream size unknown
 constexpr auto kDebounce = std::chrono::milliseconds(40); // debounce bursts of winrt events
 constexpr auto kSettleFirst = std::chrono::milliseconds(600); // follow-up reads after a song change, catch late metadata
 constexpr auto kSettleLast = std::chrono::milliseconds(1400); // second one lands 2 s after the change
-constexpr auto kSettleMore = std::chrono::milliseconds(2500); // then, only while the art is still missing, a few more
-constexpr int kSettleSteps = 6; // up to ~12 s after the change, never forever
+constexpr auto kSettleMore = std::chrono::milliseconds(2500); // then, only while the art is still missing or may be the last song's, a few more
+constexpr int kSettleSteps = 8; // up to ~17 s after the change, never forever
 constexpr uint64_t kLoopLeadMs = 1000; // loop restarts this far before the end, ahead of players auto-advancing
 constexpr double kLoopEndMs = 250; // paused this close to the end counts as finished, not paused by the user
 constexpr uint64_t kMusicLookMs = 12000; // a browser tab's title can lag the song: keep looking this long
@@ -213,6 +213,7 @@ struct MediaSt {
 
     std::wstring coverKey; // worker-only, no lock needed
     uint64_t keyTick = 0; // when coverKey last changed
+    std::atomic<bool> artUnsure{false}; // the art read with a new song was the last song's: spotify names the song before it swaps the picture, so look again
     bool music = false; // worker-only: this song is from a music app or site
     uint64_t tlSig = 0; // the app's last timeline report, to tell a fresh one from a re-read of the old (guarded by mu)
     uint64_t seq = 0; // coverId source
@@ -242,7 +243,7 @@ winrt::fire_and_forget Settle(std::weak_ptr<MediaSt> w, uint64_t gen) { // apps 
             if (!s || s->closed.load() || s->settleGen.load() != gen) co_return; // a newer change restarted the schedule
             if (step >= 2) { // past the usual two: keep going only while the song still has no art
                 std::lock_guard lock(s->mu);
-                if (!s->has || s->track.cover) co_return;
+                if (!s->has || (s->track.cover && !s->artUnsure.load())) co_return; // art in, and not the last song's leftover
             }
             Poke(s);
         }
@@ -472,7 +473,7 @@ WF::IAsyncAction Refresh(MediaP s) { // pull full state, publish if changed
         if (newKey || (!s->music && nowMs - s->keyTick < kMusicLookMs)) s->music = MusicApp(selId) || (Browser(t.app) && MusicSite(t));
         t.music = s->music;
         t.cover = newKey ? nullptr : oldCover; // drop stale art on track change
-        const bool want = thumb && (newKey || !oldCover || nowMs - s->keyTick < kCoverRetry); // apps often send art late
+        const bool want = thumb && (newKey || !oldCover || s->artUnsure.load() || nowMs - s->keyTick < kCoverRetry); // apps often send art late
         if (want) {
             auto bytes = std::make_shared<std::vector<uint8_t>>();
             try {
@@ -485,6 +486,10 @@ WF::IAsyncAction Refresh(MediaP s) { // pull full state, publish if changed
                 if (oldCover && *oldCover == *bytes) t.cover = oldCover; // reuse ptr so coverId stays stable
                 else t.cover = std::move(bytes);
             }
+            if (newKey) s->artUnsure.store(t.cover && t.cover == oldCover); // same picture as the song before: an album's next track, or art not swapped yet
+            else if (t.cover != oldCover) s->artUnsure.store(false); // the new picture landed
+        } else if (newKey) {
+            s->artUnsure.store(false); // no art at all yet: the missing-art retries cover it
         }
     } else {
         s->coverKey.clear(); // next session always counts as new
@@ -723,6 +728,8 @@ struct RadioState {
     std::atomic<HWND> notify{nullptr};
     std::atomic<UINT> msg{0};
     std::atomic<bool> closed{false}, started{false};
+    std::atomic<bool> busy{false}, asked{false}; // a lookup is running; access was requested once
+    std::atomic<ULONGLONG> tried{0}; // when the last lookup began
     std::atomic<bool> hasWifi{false}, hasBt{false}, wifiOn{false}, btOn{false}; // atomics so getters skip the lock
 
     std::mutex mu; // guards radios + revokers
@@ -746,18 +753,26 @@ void OnRadio(const std::weak_ptr<RadioState>& w, const WR::Radio& sender) noexce
     }
 }
 
-winrt::fire_and_forget StartRadios(RadioP s) {
+winrt::fire_and_forget StartRadios(RadioP s) { // also the later lookups: a radio already held is kept, only a missing kind is filled in
+    struct Done {
+        RadioState& st;
+        ~Done() { st.busy.store(false); } // the next recheck may run, however this one ends
+    } done{*s};
     try {
         co_await winrt::resume_background();
-        const auto access = co_await WR::Radio::RequestAccessAsync(); // needed for SetStateAsync
-        if (access != WR::RadioAccessStatus::Allowed) Log(L"radios", L"access not allowed; states are read-only");
+        if (!s->asked.exchange(true)) {
+            const auto access = co_await WR::Radio::RequestAccessAsync(); // needed for SetStateAsync
+            if (access != WR::RadioAccessStatus::Allowed) Log(L"radios", L"access not allowed; states are read-only");
+        }
         const auto radios = co_await WR::Radio::GetRadiosAsync();
+        bool haveW = s->hasWifi.load(), haveB = s->hasBt.load();
         WR::Radio wifi{nullptr}, bt{nullptr};
         for (const auto& r : radios) {
             const auto kind = r.Kind();
-            if (kind == WR::RadioKind::WiFi && !wifi) wifi = r; // first of each kind wins
-            else if (kind == WR::RadioKind::Bluetooth && !bt) bt = r;
+            if (kind == WR::RadioKind::WiFi && !wifi && !haveW) wifi = r; // first of each kind wins
+            else if (kind == WR::RadioKind::Bluetooth && !bt && !haveB) bt = r;
         }
+        if (!wifi && !bt) co_return; // nothing new: still missing, or both were already there
         std::weak_ptr<RadioState> w = s;
         WR::Radio::StateChanged_revoker wr, br;
         if (wifi) wr = wifi.StateChanged(winrt::auto_revoke, [w](const WR::Radio& r, auto&&) { OnRadio(w, r); });
@@ -767,16 +782,20 @@ winrt::fire_and_forget StartRadios(RadioP s) {
         {
             std::lock_guard lock(s->mu);
             if (s->closed.load()) co_return; // revokers unhook on return
-            s->wifi = wifi;
-            s->bt = bt;
-            s->wifiRev = std::move(wr);
-            s->btRev = std::move(br);
-            s->hasWifi.store(static_cast<bool>(wifi));
-            s->hasBt.store(static_cast<bool>(bt));
-            s->wifiOn.store(wifiOn);
-            s->btOn.store(btOn);
+            if (wifi) {
+                s->wifi = wifi;
+                s->wifiRev = std::move(wr);
+                s->wifiOn.store(wifiOn);
+                s->hasWifi.store(true);
+            }
+            if (bt) {
+                s->bt = bt;
+                s->btRev = std::move(br);
+                s->btOn.store(btOn);
+                s->hasBt.store(true);
+            }
         }
-        Ping(*s); // first paint with real state
+        Ping(*s); // paint with the real state
     } catch (...) {
         LogErr(L"radios start");
     }
@@ -906,10 +925,28 @@ void Radios::Start(HWND notify, UINT msg) {
     s->notify.store(notify);
     s->msg.store(msg);
     if (s->started.exchange(true)) return; // idempotent
+    s->busy.store(true);
+    s->tried.store(GetTickCount64());
     try {
         StartRadios(s); // fire and forget
     } catch (...) {
+        s->busy.store(false);
         LogErr(L"Radios::Start");
+    }
+}
+
+void Radios::Recheck() {
+    constexpr ULONGLONG kRecheckMs = 10000; // a panel opened again and again looks once per this, at most
+    if (!impl || !impl->s || !impl->s->started.load() || (HasWifi() && HasBt())) return;
+    auto& s = impl->s;
+    ULONGLONG now = GetTickCount64();
+    if (now - s->tried.load() < kRecheckMs || s->busy.exchange(true)) return;
+    s->tried.store(now);
+    try {
+        StartRadios(s);
+    } catch (...) {
+        s->busy.store(false);
+        LogErr(L"Radios::Recheck");
     }
 }
 

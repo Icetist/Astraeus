@@ -8,38 +8,27 @@
 
 namespace {
 
-constexpr float kRailW = 72; // left nav rail width in dips
-constexpr int kPages = 5;
-const int kRailIcons[kPages] = {glyph::Overview, glyph::Music, glyph::System, glyph::Network, glyph::Tools};
 constexpr float kThemeSec = 0.8f; // palette crossfade duration
+constexpr float kFlipRate = 3.4f; // the cover's turn, ~0.7 s
+constexpr float kWidgetW = 52; // a status widget on either side of the pill's clock
 
-}
-
-bool Drawer::EnsureDev() {
-    if (ctx) return true; // already built, lazy create on first open
+bool MakeDev(ComPtr<ID3D11Device>& d3d, ComPtr<ID2D1DeviceContext>& ctx) { // a d3d device and a d2d context on it
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_SINGLETHREADED | // bgra needed for d2d interop
                  D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS; // fewer driver threads, less idle memory
     HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, nullptr, 0, D3D11_SDK_VERSION, &d3d, nullptr, nullptr);
     if (FAILED(hr)) hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags, nullptr, 0, D3D11_SDK_VERSION, &d3d, nullptr, nullptr); // software fallback
     if (FAILED(hr)) return false;
-
     ComPtr<IDXGIDevice> dxgi;
     ComPtr<ID2D1Device> device;
-    ComPtr<IDXGIAdapter> adapter;
-    ComPtr<IDXGIFactory2> factory;
-    ComPtr<IDXGISwapChain1> sc;
-    ComPtr<IDXGISurface> surface;
-    if (FAILED(d3d.As(&dxgi)) || FAILED(gfx::D2D()->CreateDevice(dxgi.Get(), &device)) || // d2d device on top of d3d
-        (device->SetMaximumTextureMemory(24ull << 20), false) || // d2d's own cache (glyph atlases, scratch layers) stays small however long a session runs
-        FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &ctx)) ||
-        FAILED(dxgi->GetAdapter(&adapter)) || FAILED(adapter->GetParent(IID_PPV_ARGS(&factory)))) { // factory that owns this adapter
-        FreeDev();
-        return false;
-    }
+    if (FAILED(d3d.As(&dxgi)) || FAILED(gfx::D2D()->CreateDevice(dxgi.Get(), &device))) return false; // d2d device on top of d3d
+    device->SetMaximumTextureMemory(24ull << 20); // d2d's own cache (glyph atlases, scratch layers) stays small however long a session runs
+    return SUCCEEDED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &ctx));
+}
 
+DXGI_SWAP_CHAIN_DESC1 SwapDesc(UINT w, UINT h) {
     DXGI_SWAP_CHAIN_DESC1 d = {};
-    d.Width = (UINT)((Side() ? Depth() + overshoot : W) * scale + 0.5f);
-    d.Height = (UINT)((Side() ? Span() : H + overshoot) * scale + 0.5f); // max size, window clips the rest
+    d.Width = w;
+    d.Height = h;
     d.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     d.SampleDesc.Count = 1;
     d.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -47,20 +36,41 @@ bool Drawer::EnsureDev() {
     d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL; // flip-model swapchain for composition
     d.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED; // per-pixel transparency
     d.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT; // lets main loop sleep until vsync
-    surfW = d.Width;
-    surfH = d.Height;
-    if (lookNow == 2 && GlassDev(d)) return true; // glass: windows composition with a live backdrop blur, frames go straight into it
-    if (FAILED(factory->CreateSwapChainForComposition(d3d.Get(), &d, nullptr, &sc)) || FAILED(sc.As(&swap))) {
+    return d;
+}
+
+bool MakeSwap(ID3D11Device* d3d, ID2D1DeviceContext* ctx, const DXGI_SWAP_CHAIN_DESC1& d, float dpi, ComPtr<IDXGISwapChain2>& swap,
+              ComPtr<ID2D1Bitmap1>& buf, HANDLE& wait) { // a composition swapchain on d3d, its waitable and its backbuffer as a d2d target
+    ComPtr<IDXGIDevice> dxgi;
+    ComPtr<IDXGIAdapter> adapter;
+    ComPtr<IDXGIFactory2> factory;
+    ComPtr<IDXGISwapChain1> sc;
+    ComPtr<IDXGISurface> surface;
+    if (FAILED(d3d->QueryInterface(IID_PPV_ARGS(&dxgi))) || FAILED(dxgi->GetAdapter(&adapter)) || FAILED(adapter->GetParent(IID_PPV_ARGS(&factory))) || // factory that owns this adapter
+        FAILED(factory->CreateSwapChainForComposition(d3d, &d, nullptr, &sc)) || FAILED(sc.As(&swap)))
+        return false;
+    swap->SetMaximumFrameLatency(1); // lowest input lag
+    wait = swap->GetFrameLatencyWaitableObject();
+    D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, // backbuffer is target only
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi, dpi);
+    return SUCCEEDED(swap->GetBuffer(0, IID_PPV_ARGS(&surface))) && SUCCEEDED(ctx->CreateBitmapFromDxgiSurface(surface.Get(), &bp, &buf));
+}
+
+}
+
+bool Drawer::EnsureDev() {
+    if (ctx) return true; // already built, lazy create on first open
+    if (!MakeDev(d3d, ctx)) {
         FreeDev();
         return false;
     }
-    swap->SetMaximumFrameLatency(1); // lowest input lag
-    frameWait = swap->GetFrameLatencyWaitableObject();
-
-    D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(
-        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, // backbuffer is target only
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96 * scale, 96 * scale);
-    if (FAILED(swap->GetBuffer(0, IID_PPV_ARGS(&surface))) || FAILED(ctx->CreateBitmapFromDxgiSurface(surface.Get(), &bp, &backBuf))) {
+    DXGI_SWAP_CHAIN_DESC1 d = SwapDesc((UINT)((Side() ? Depth() + overshoot : W) * scale + 0.5f),
+                                       (UINT)((Side() ? Span() : H + overshoot) * scale + 0.5f)); // max size, window clips the rest
+    surfW = d.Width;
+    surfH = d.Height;
+    if (lookNow == 2 && GlassDev(d)) return true; // glass: windows composition with a live backdrop blur, frames go straight into it
+    if (!MakeSwap(d3d.Get(), ctx.Get(), d, 96 * scale, swap, backBuf, frameWait)) {
         FreeDev();
         return false;
     }
@@ -68,13 +78,59 @@ bool Drawer::EnsureDev() {
     ctx->SetDpi(96 * scale, 96 * scale); // draw in dips
     ctx->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE); // cleartype breaks on transparent bg
 
-    if (FAILED(DCompositionCreateDevice(dxgi.Get(), IID_PPV_ARGS(&dcomp))) ||
+    if (FAILED(DCompositionCreateDevice2(nullptr, IID_PPV_ARGS(&dcomp))) || // no rendering device: it only ever shows a swapchain
         FAILED(dcomp->CreateTargetForHwnd(hwnd, TRUE, &target)) || FAILED(dcomp->CreateVisual(&visual)) || // topmost target on our hwnd
         FAILED(visual->SetContent(swap.Get())) || FAILED(target->SetRoot(visual.Get())) || FAILED(dcomp->Commit())) { // bind swapchain to window
         FreeDev();
         return false;
     }
     canvas = std::make_unique<Canvas>(ctx.Get());
+    return true;
+}
+
+bool Drawer::RenewDev() {
+    if (!ctx || !canvas || stage || (!glass && !(swap && visual && dcomp))) return false;
+    // the old device goes first: the driver hands its pools back only once no device is left. nothing is committed in between, so the pill never blinks
+    if (glass) GlassRenew(nullptr); // its surface off the content visual, the blur and outline stay
+    else visual->SetContent(nullptr);
+    ctx->SetTarget(nullptr);
+    canvas.reset(); // everything made on the old device goes with it
+    cover.Reset();
+    coverBlur.Reset();
+    coverPrev.Reset();
+    ForgetShelfArt();
+    pillLayer.Reset();
+    pillKey = 0;
+    backBuf.Reset();
+    if (!glass && frameWait) CloseHandle(frameWait), frameWait = nullptr;
+    swap.Reset();
+    ctx.Reset();
+    gfx::Settle(d3d.Get());
+    d3d.Reset();
+    bool ok = MakeDev(d3d, ctx);
+    if (ok && glass) {
+        D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+                                                             96 * scale, 96 * scale);
+        ComPtr<ID2D1Device> dev;
+        ctx->GetDevice(&dev);
+        ok = SUCCEEDED(ctx->CreateBitmap({surfW, surfH}, nullptr, 0, bp, &backBuf)) && GlassRenew(dev.Get());
+    } else if (ok) {
+        ok = MakeSwap(d3d.Get(), ctx.Get(), SwapDesc(surfW, surfH), 96 * scale, swap, backBuf, frameWait);
+    }
+    if (!ok) { // no new device: the whole thing is built again the usual way on the next frame
+        FreeDev();
+        needsFrame = true;
+        return true;
+    }
+    ctx->SetTarget(backBuf.Get());
+    ctx->SetDpi(96 * scale, 96 * scale);
+    ctx->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+    canvas = std::make_unique<Canvas>(ctx.Get());
+    Frame(); // the pill drawn on the new device before anything is shown
+    if (!glass && swap && visual && dcomp && SUCCEEDED(visual->SetContent(swap.Get()))) dcomp->Commit();
+    devWide = false;
+    gfx::GiveBack(); // what the old device held goes back to windows now
+    Log(L"pill moved to a fresh device");
     return true;
 }
 
@@ -103,6 +159,7 @@ void Drawer::FitSurfaces() {
     // only the depth changes and the surfaces stay anchored to the same corner, so nothing on screen moves when they grow back
     bool alone = !opened && !peeking && !grow && !dragging && spring.target <= kIslandH + 1 && spring.value <= kIslandH + overshoot;
     float depth = alone ? kIslandH + overshoot : Depth() + overshoot;
+    if (!alone && ctx) devWide = true, trimKey = 0; // the next resting pill tidies up, even if it looks just like the last one
     UINT w = (UINT)((Side() ? depth : W) * scale + 0.5f), h = (UINT)((Side() ? Span() : depth) * scale + 0.5f);
     if (!ctx || (w == surfW && h == surfH) || !w || !h) return;
     pillLayer.Reset(); // sized for the old surfaces
@@ -146,6 +203,8 @@ void Drawer::FreeDev() {
     canvas.reset();
     cover.Reset();
     coverBlur.Reset();
+    coverPrev.Reset(); // the flip's old cover too: it would hold the device
+    ForgetShelfArt(); // its previews belong to this device
     if (frameWait) {
         CloseHandle(frameWait);
         frameWait = nullptr; // main loop falls back to plain msg wait
@@ -156,6 +215,7 @@ void Drawer::FreeDev() {
     dcomp.Reset();
     backBuf.Reset();
     pillLayer.Reset(); // belongs to this device
+    devWide = false;
     swap.Reset();
     ctx.Reset();
     gfx::Settle(d3d.Get());
@@ -169,6 +229,8 @@ void Drawer::SyncCover() {
     uint64_t id = model.hasTrack ? model.track.coverId : 0;
     if (id != coverId) {
         coverId = id;
+        bool turn = opened && !model.reduceMotion; // turns over only where someone sees it; calm motion just crossfades
+        coverPrev = turn ? cover : nullptr;
         coverSrc.Reset();
         cover.Reset();
         coverBlur.Reset();
@@ -311,6 +373,11 @@ void Drawer::DrawBody(float h, float dt, double now) {
     local.pressPos = {input.pressPos.x - org.x, input.pressPos.y - org.y};
     ui.Begin(*canvas, local, dt, now);
 
+    if (!model.HasPage(page)) { // the page showing was just taken off the rail in settings: the first one stands in, no slide
+        page = prevPage = model.pages.front();
+        pageT = 1;
+        model.SetLive(opened, page == Model::kPgSystem, page == Model::kPgNetwork);
+    }
     if (Side()) { // sidebar: icons along the top
         DrawRailTop(shellNow);
         canvas->Line({20, kTopRail}, {panelW - 20, kTopRail}, shellNow.line, 1, false);
@@ -322,7 +389,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
 
     if (pageT < 1) pageT = (std::min)(1.0f, pageT + dt / 0.38f); // 380ms page switch
     float e = anim::EaseOut(pageT);
-    float slide = (1 - e) * (model.reduceMotion ? 0 : 26) * (page > prevPage ? 1 : -1); // slide 26 dips in the nav direction; calm: a crossfade
+    float slide = (1 - e) * (model.reduceMotion ? 0 : 26) * (model.SlotOf(page) > model.SlotOf(prevPage) ? 1 : -1); // slide 26 dips in the nav direction down the rail; calm: a crossfade
     float sheet = ui.Smooth(Ui::Id("bt.sheet"), model.btOpen ? 1.0f : 0, 14); // bt menu open anim
     float wsheet = ui.Smooth(Ui::Id("wifi.sheet"), model.wifiOpen ? 1.0f : 0, 14); // wi-fi picker open anim
     float ssheet = ui.Smooth(Ui::Id("set.sheet"), model.settingsOpen ? 1.0f : 0, 14); // settings open anim
@@ -335,16 +402,21 @@ void Drawer::DrawBody(float h, float dt, double now) {
     if (fading) ctx->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
                                                       D2D1::IdentityMatrix(), pageAlpha), nullptr); // opacity follows slide and sheets
     float fade = ui.SmoothFrom(Ui::Id("cover.fade", (int)coverId), 1, 0, 6); // id per cover restarts fade on track change
-    PageCtx pc{ui, model, shellNow, mediaNow, cover.Get(), coverBlur.Get(), fade,
+    bool art = model.showArt != 0; // album art off: placeholders and plain cards
+    PageCtx pc{ui, model, shellNow, mediaNow, art ? cover.Get() : nullptr, art ? coverBlur.Get() : nullptr, fade,
                    D2D1_RECT_F{area.left, area.top - slide, area.right, area.bottom - slide}}; // undo slide so hit rects stay put
+    pc.flip = coverPrev ? ui.SmoothFrom(Ui::Id("cover.flip", (int)coverId), 1, 0, kFlipRate) : 1;
+    pc.coverPrev = art && pc.flip < 0.5f ? coverPrev.Get() : nullptr;
+    if (pc.flip > 0.999f) coverPrev.Reset(); // turned: the old one can go
     ui.Block(sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f || csheet > 0.01f || msheet > 0.01f); // page under a sheet takes no input
     if (under > 0.001f) { // a sheet that has taken over hides the page, skip drawing it
         switch (page) {
-        case 0: DrawHome(pc); break;
-        case 1: DrawMedia(pc); break;
-        case 2: DrawSys(pc); break;
-        case 3: DrawNet(pc); break;
-        default: DrawTools(pc); break;
+        case Model::kPgHome: DrawHome(pc); break;
+        case Model::kPgMedia: DrawMedia(pc); break;
+        case Model::kPgSystem: DrawSys(pc); break;
+        case Model::kPgNetwork: DrawNet(pc); break;
+        case Model::kPgTools: DrawTools(pc); break;
+        default: DrawShelf(pc); break;
         }
     }
     if (fading) ctx->PopLayer();
@@ -392,7 +464,15 @@ void Drawer::DrawBody(float h, float dt, double now) {
     if (pc.wantPage >= 0) SetPage(pc.wantPage);
 }
 
+void Drawer::PlayFull() {
+    if (stage || hidden || !model.hasTrack) return; // already up, a game has the screen, or nothing to show
+    stageAway = true;
+    OpenStage();
+    stageHalo = true; // after OpenStage: the way back is halobar's, even with this panel open
+}
+
 void Drawer::OpenStage() {
+    if (opened) stageAway = false; // asked from the panel: it comes back when the stage leaves; a resting pill or a notice isn't the panel
     Close(); // the panel steps aside, the stage covers this screen
     stage = std::make_unique<Stage>(model, MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY));
     if (!stage->Ok()) stage.reset();
@@ -421,6 +501,15 @@ void Drawer::DrawPeek(float h) {
     float cx = (area.left + area.right) / 2 + (Side() ? 60 : 0), cy = Side() ? area.top + 70 : (area.top + area.bottom) / 2 + 2; // sidebar: near the top
     canvas->Dot({cx - 112, cy}, 17, t.accent.Alpha(0.18f * a));
     canvas->Icon(peekIcon ? peekIcon : glyph::Timer, {cx - 112, cy}, 21, t.accentHi.Alpha(a), true);
+    if (peekLevel >= 0) { // the hud: what changed, a bar and the number
+        float lv = peekLevel;
+        canvas->Text(peekTitle, Rect(cx - 84, cy - 20, 150, 20), Weight::Medium, 14, t.text.Alpha(a));
+        canvas->Text(w::Pct(peekLevel), Rect(cx + 76, cy - 20, 60, 20), Weight::Medium, 13, t.textDim.Alpha(a), Align::Right);
+        D2D1_RECT_F bar = Rect(cx - 84, cy + 7, 220, 6);
+        canvas->Fill(bar, 3, t.track.Alpha(a));
+        if (lv > 0.01f) canvas->FillH({bar.left, bar.top, bar.left + Width(bar) * lv, bar.bottom}, 3, t.accent.Alpha(a), t.accentHi.Alpha(a));
+        return;
+    }
     canvas->Text(peekTitle, Rect(cx - 84, cy - 20, 240, 22), Weight::Medium, 15, t.text.Alpha(a));
     canvas->Text(peekDetail, Rect(cx - 84, cy + 1, 240, 18), Weight::Light, 12.5f, t.textDim.Alpha(a));
 }
@@ -447,7 +536,9 @@ bool Drawer::DrawIsland(float h, float dt, double now) {
     float a = anim::Clamp01((h - 14) / 18); // fade in as the pill drops
     hand = true; // the whole pill is a button
     if (a <= 0) return false;
-    bool moving = pillPass != 1 && model.hasTrack && !model.track.title.empty() && StepIslandBars(dt, now); // the layer pass leaves the bars alone
+    bool music = model.pillMusic && model.hasTrack && !model.track.title.empty(); // music mode can be turned off: the clock stays
+    bool moving = pillPass != 1 && music && model.vizOn && StepIslandBars(dt, now); // the layer pass leaves the bars alone
+    if (pillPass != 2 && Bubble()) DrawBubble();
     if (Side()) return DrawIslandSide(h, a) && moving;
     bool still = pillPass != 2, bars = pillPass != 1; // which parts this pass draws
     float inner = kIslandW - 2 * cfg.fillet - 20; // usable width inside the shoulders
@@ -457,14 +548,28 @@ bool Drawer::DrawIsland(float h, float dt, double now) {
     float hw = islandHot ? 26.0f : 16.0f; // handle bar: the "pull me down" hint, wider and brighter on hover
     if (still) canvas->Line({cx - hw / 2, h - 3.5f}, {cx + hw / 2, h - 3.5f}, t.text.Alpha((islandHot ? 0.75f : 0.30f) * a), 2.5f);
 
-    if (!model.hasTrack || model.track.title.empty()) { // nothing playing: time and date
+    if (!music) { // nothing playing: time and date, or the clock between two widgets
         if (!still) return false;
         SYSTEMTIME st;
         GetLocalTime(&st);
         wchar_t clock[32] = {}, day[48] = {};
         GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &st, nullptr, clock, 32);
         GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &st, L"ddd d MMM", day, 48, nullptr);
-        canvas->Text(std::wstring(clock) + L"  ·  " + day, Rect(x0, cy - 8, inner, 16), Weight::Medium, 11.5f, t.text.Alpha(a), Align::Center);
+        int gl = 0, gr = 0;
+        std::wstring left = model.pillAlways ? model.PillWidget(model.pillLeft, gl) : L"", right = model.pillAlways ? model.PillWidget(model.pillRight, gr) : L"";
+        if (left.empty() && right.empty()) {
+            canvas->Text(std::wstring(clock) + L"  ·  " + day, Rect(x0, cy - 8, inner, 16), Weight::Medium, 11.5f, t.text.Alpha(a), Align::Center);
+            return false;
+        }
+        canvas->Text(clock, Rect(x0 + kWidgetW, cy - 8, inner - 2 * kWidgetW, 16), Weight::Medium, 11.5f, t.text.Alpha(a), Align::Center);
+        auto widget = [&](const std::wstring& text, int g, bool atRight) { // icon and value, hugging the pill's ends
+            if (text.empty()) return;
+            float ix = atRight ? x0 + inner - kWidgetW + 7 : x0 + 7;
+            canvas->Icon(g, {ix, cy}, 13, mt.accentHi.Alpha(a), true);
+            canvas->Text(text, Rect(ix + 9, cy - 7, kWidgetW - 14, 14), Weight::Medium, 10, t.textDim.Alpha(a));
+        };
+        widget(left, gl, false);
+        widget(right, gr, true);
         return false;
     }
 
@@ -491,7 +596,7 @@ bool Drawer::DrawIsland(float h, float dt, double now) {
         canvas->Line({ccx, cy + 3}, {ccx + 6, cy - 3}, ink, 2);
         return false;
     }
-    for (int i = 0; bars && i < 4; ++i) {
+    for (int i = 0; bars && model.vizOn && i < 4; ++i) {
         float v = islandBars[i], bh = 3 + 11 * v;
         canvas->Fill(Rect(bx + i * 6, cy - bh / 2, 3.5f, bh), 1.75f, mt.accent.Mix(mt.accentHi, v).Alpha(a));
     }
@@ -504,7 +609,8 @@ uint64_t Drawer::PillKey(float h) const {
         for (size_t i = 0; i < n; ++i) k = (k ^ ((const unsigned char*)p)[i]) * 1099511628211ull;
     };
     auto text = [&mix](const std::wstring& s) { mix(s.data(), s.size() * sizeof(wchar_t)); };
-    bool track = model.hasTrack && !model.track.title.empty();
+    bool track = model.pillMusic && model.hasTrack && !model.track.title.empty();
+    text(PillSig()); // widgets, the bubble's time
     if (track) {
         text(model.track.title);
         text(model.track.artist);
@@ -517,7 +623,7 @@ uint64_t Drawer::PillKey(float h) const {
     }
     void* art = cover.Get();
     mix(&art, sizeof(art));
-    float f[] = {h, W, winW, winH, glassShade, (float)edgeNow, islandHot ? 1.0f : 0.0f, track ? 1.0f : 0.0f};
+    float f[] = {h, W, winW, winH, glassShadeNow, (float)edgeNow, islandHot ? 1.0f : 0.0f, track ? 1.0f : 0.0f, (float)model.BgOpacity(), Bubble() ? model.ActivityFrac() : -1};
     mix(f, sizeof(f));
     for (const Color* c : {&shellNow.bg, &shellNow.text, &shellNow.textDim, &shellNow.sheen, &mediaNow.cardHi, &mediaNow.accentHi}) mix(c, sizeof(Color));
     return k;
@@ -562,7 +668,7 @@ bool Drawer::DrawIslandSide(float h, float a) {
     float hw = islandHot ? 26.0f : 16.0f;
     canvas->Line({X(h - 3.5f), mid - hw / 2}, {X(h - 3.5f), mid + hw / 2}, t.text.Alpha((islandHot ? 0.75f : 0.30f) * a), 2.5f);
 
-    if (!model.hasTrack || model.track.title.empty()) { // nothing playing: the time, hours over minutes
+    if (!model.pillMusic || !model.hasTrack || model.track.title.empty()) { // nothing playing: the time, hours over minutes
         SYSTEMTIME st;
         GetLocalTime(&st);
         wchar_t hh[4], mm[4];
@@ -606,30 +712,32 @@ bool Drawer::DrawIslandSide(float h, float a) {
 
 void Drawer::DrawRailTop(const Theme& t) {
     Canvas& c = *canvas;
-    float step = (CW() - 28) / kPages, cy = kTopRail / 2;
-    float x = ui.Smooth(Ui::Id("railx"), 14 + step * (page + 0.5f), 18); // highlight glides to the active page
+    int n = (int)model.pages.size(), slot = (std::max)(0, model.SlotOf(page));
+    float step = (CW() - 28) / n, cy = kTopRail / 2;
+    float x = ui.Smooth(Ui::Id("railx"), 14 + step * (slot + 0.5f), 18); // highlight glides to the active page
     c.Fill({x - 26, cy - 19, x + 26, cy + 19}, 19, t.accent.Alpha(0.13f));
     c.Fill({x - 11, kTopRail - 6, x + 11, kTopRail - 3}, 1.5f, t.accent); // accent bar under the active icon
-    for (int i = 0; i < kPages; ++i) {
+    for (int i = 0; i < n; ++i) {
+        int id = model.pages[(size_t)i];
         float ix = 14 + step * (i + 0.5f);
-        Ui::Hit h = ui.Button(Ui::Id("railt", i), {ix - 28, 4, ix + 28, kTopRail - 4});
-        if (h.clicked) SetPage(i);
-        if (h.hover) railTip = i, railTipAt = {ix, kTopRail + 4};
-        float hover = ui.Smooth(Ui::Id("railt.h", i), h.hover && i != page ? 1.0f : 0, 16);
-        bool active = i == page;
-        c.Icon(kRailIcons[i], {ix, cy}, 22, active ? t.accentHi : t.textDim.Mix(t.text, hover), active);
+        Ui::Hit h = ui.Button(Ui::Id("railt", id), {ix - 28, 4, ix + 28, kTopRail - 4});
+        if (h.clicked) SetPage(id);
+        if (h.hover) railTip = id, railTipAt = {ix, kTopRail + 4};
+        float hover = ui.Smooth(Ui::Id("railt.h", id), h.hover && id != page ? 1.0f : 0, 16);
+        bool active = id == page;
+        c.Icon(Model::PageGlyph(id), {ix, cy}, 22, active ? t.accentHi : t.textDim.Mix(t.text, hover), active);
     }
+    if (ui.RClick({0, 0, CW(), kTopRail})) model.OpenSettings(); // settings stay a click away even with the tools page taken off
 }
 
 void Drawer::DrawRailTip(const Theme& t) { // a word beside the rail icon under the mouse
-    static const wchar_t* const kNames[kPages] = {L"Home", L"Media", L"System", L"Network", L"Tools"};
     if (railTip >= 0) railTipShown = railTip;
     float a = ui.Smooth(Ui::Id("rail.tip"), railTip >= 0 ? 1.0f : 0, 18);
     railTip = -1; // the rail sets it again next frame while the mouse stays
     if (a < 0.01f || railTipShown < 0) return;
     Canvas& c = *canvas;
-    const wchar_t* name = kNames[railTipShown];
-    static float widths[kPages] = {}; // measured once per name
+    const wchar_t* name = Model::PageName(railTipShown);
+    static float widths[Model::kPageIds] = {}; // measured once per name
     float& tw = widths[railTipShown];
     if (tw <= 0) {
         tw = std::wcslen(name) * 6.6f;
@@ -652,8 +760,9 @@ void Drawer::DrawRailTip(const Theme& t) { // a word beside the rail icon under 
 void Drawer::DrawRail(const Theme& t) {
     Canvas& c = *canvas;
     const float spacing = 54;
-    float first = (H - spacing * (kPages - 1)) / 2;
-    float targetTop = first + page * spacing - 20, targetBottom = targetTop + 40; // 40 dip pill around active icon
+    int n = (int)model.pages.size(), slot = (std::max)(0, model.SlotOf(page));
+    float first = (H - spacing * (n - 1)) / 2; // however many pages are kept, they sit centered
+    float targetTop = first + slot * spacing - 20, targetBottom = targetTop + 40; // 40 dip pill around active icon
     if (railBot <= railTop) {
         railTop = targetTop;
         railBot = targetBottom;
@@ -666,15 +775,36 @@ void Drawer::DrawRail(const Theme& t) {
     c.Fill({13, railTop, kRailW - 13, railBot}, 20, t.accent.Alpha(0.13f));
     c.Fill({5, railTop + 10, 8, railBot - 10}, 1.5f, t.accent); // thin accent bar on left edge
 
-    for (int i = 0; i < kPages; ++i) {
+    for (int i = 0; i < n; ++i) {
+        int id = model.pages[(size_t)i];
         float y = first + i * spacing;
         D2D1_RECT_F hit = {10, y - 22, kRailW - 10, y + 22};
-        Ui::Hit h = ui.Button(Ui::Id("rail", i), hit);
-        if (h.clicked) SetPage(i);
-        if (h.hover) railTip = i, railTipAt = {kRailW - 6, y};
-        float hover = ui.Smooth(Ui::Id("rail.h", i), h.hover && i != page ? 1.0f : 0, 16); // no hover tint on active
-        bool active = i == page;
+        Ui::Hit h = ui.Button(Ui::Id("rail", id), hit);
+        if (h.clicked) SetPage(id);
+        if (h.hover) railTip = id, railTipAt = {kRailW - 6, y};
+        float hover = ui.Smooth(Ui::Id("rail.h", id), h.hover && id != page ? 1.0f : 0, 16); // no hover tint on active
+        bool active = id == page;
         Color ink = active ? t.accentHi : t.textDim.Mix(t.text, hover);
-        c.Icon(kRailIcons[i], {kRailW / 2, y}, 23, ink, active);
+        c.Icon(Model::PageGlyph(id), {kRailW / 2, y}, 23, ink, active);
     }
+    if (ui.RClick({0, 0, kRailW, H})) model.OpenSettings(); // settings stay a click away even with the tools page taken off
+}
+
+void Drawer::DrawBubble() { // a running timer, stopwatch or focus session: a ring and its time, beside the pill
+    const Theme& t = shellNow;
+    D2D1_MATRIX_3X2_F was;
+    ctx->GetTransform(&was);
+    ctx->SetTransform(D2D1::Matrix3x2F::Identity()); // window dips: the box is worked out there
+    D2D1_RECT_F b = BubbleBox();
+    D2D1_POINT_2F o = {(b.left + b.right) / 2, (b.top + b.bottom) / 2};
+    float r = kBubble / 2;
+    Color fill = t.glass ? t.veil.Alpha(0.92f) : t.bg; // no blur reaches out here: glass gets its dark twin
+    if (!t.glass) fill.a *= model.BgOpacity() / 100.0f;
+    canvas->Dot(o, r, fill);
+    if (t.glass) canvas->Ring(o, r - 0.5f, Color{1, 1, 1, 0.26f}, 1);
+    canvas->Ring(o, r - 3, t.track, 2);
+    float f = anim::Clamp01(model.ActivityFrac());
+    if (f > 0.005f) canvas->Arc(o, r - 3, -3.14159265f / 2, f * 2 * 3.14159265f, t.accent, 2);
+    canvas->Text(model.ActivityText(), Rect(b.left - 2, o.y - 7, kBubble + 4, 14), Weight::Medium, 9.5f, t.text, Align::Center);
+    ctx->SetTransform(was);
 }

@@ -17,7 +17,7 @@ bool Strip(PageCtx& p, const D2D1_RECT_F& r, const D2D1_RECT_F& view, uint32_t i
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.shell;
-    bool live = Inside(view, ui.In().mouse);
+    bool live = Inside(view, ui.In().mouse) || ui.IsActive(id); // a fader being dragged keeps following past the view's edge
     float cx = (r.left + r.right) / 2;
     float hover = ui.Smooth(id + 20, live && Inside(r, ui.In().mouse) ? 1.0f : 0, 16);
     c.Fill(r, 18, (master ? t.accent.Alpha(0.16f) : t.cardHi.Alpha(0.35f)).Mix(t.cardHi, 0.3f * hover));

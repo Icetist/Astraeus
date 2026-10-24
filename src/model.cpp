@@ -2,11 +2,14 @@
 
 #include <iphlpapi.h>
 #include <icmpapi.h>
+#include "glyphs.h"
+#include "pages.h"
 #include "picker.h"
 #include <shellapi.h>
 
 #include <algorithm>
 #include <climits>
+#include <cmath>
 
 namespace {
 
@@ -24,6 +27,29 @@ constexpr int kLooks = Model::kLookHalo + 1;
 constexpr wchar_t kQuietVal[] = L"Quiet"; // do not disturb: halobar reads and writes the same value
 constexpr wchar_t kHaloKey[] = L"Software\\HaloBar"; // halobar's own settings, never written from here
 constexpr wchar_t kHaloClass[] = L"HaloBar"; // its window: there means it's running
+
+constexpr wchar_t kPagesVal[] = L"PageOrder", kTilesVal[] = L"ToolTiles"; // saved by name: a new page or tile later never shifts the old ones
+const wchar_t* const kPageKeys[Model::kPageIds] = {L"home", L"media", L"system", L"network", L"tools", L"shelf"};
+const wchar_t* const kTileKeys[Model::kToolTiles] = {L"screenshot", L"color", L"awake", L"notifications", L"dnd", L"saver", L"airplane", L"settings"};
+constexpr wchar_t kNoneVal[] = L"none"; // every tile taken off: an empty text would read as never set
+
+std::vector<int> ParseList(const std::wstring& s, const wchar_t* const* keys, int n) { // comma separated names; unknown and repeated ones dropped
+    std::vector<int> out;
+    for (size_t at = 0; at <= s.size();) {
+        size_t end = (std::min)(s.find(L',', at), s.size());
+        std::wstring tok = s.substr(at, end - at);
+        for (int i = 0; i < n; ++i)
+            if (tok == keys[i] && std::find(out.begin(), out.end(), i) == out.end()) out.push_back(i);
+        at = end + 1;
+    }
+    return out;
+}
+
+std::wstring JoinList(const std::vector<int>& v, const wchar_t* const* keys) {
+    std::wstring s;
+    for (int id : v) s += (s.empty() ? L"" : L",") + std::wstring(keys[id]);
+    return s.empty() ? kNoneVal : s;
+}
 
 int HaloNum(HKEY key, const wchar_t* name, int fallback, int lo, int hi) { // out of range is stale or hand-edited: the default
     DWORD v = 0, size = sizeof(v);
@@ -43,7 +69,8 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     screen = sys::ReadText(L"Screen");
     islandSecs = (std::clamp)(sys::ReadNum(L"IslandSecs", 0), -1, kIslandMaxSecs);
     int iniHex = ((int)(cfg.themeCol.r * 255 + 0.5f) << 16) | ((int)(cfg.themeCol.g * 255 + 0.5f) << 8) | (int)(cfg.themeCol.b * 255 + 0.5f);
-    accentMode = (std::clamp)(sys::ReadNum(L"AccentMode", cfg.wallTheme ? 0 : 1), 0, 1); // settings override the ini once used
+    accentMode = (std::clamp)(sys::ReadNum(L"AccentMode", cfg.wallTheme ? 0 : 1), 0, kAccentWindows); // settings override the ini once used
+    if (accentMode == kAccentWindows) winAccentHex = winAccent.Read();
     accentHex = sys::ReadNum(L"AccentHex", iniHex) & 0xFFFFFF;
     notifyPills = (std::clamp)(sys::ReadNum(L"NotifyPills", 0), 0, 1);
     quiet = sys::ReadNum(kQuietVal, 0) ? 1 : 0; // missing means off
@@ -51,6 +78,29 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     BOOL anim = TRUE;
     SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &anim, 0); // windows' own "animation effects": off means start calm
     reduceMotion = (std::clamp)(sys::ReadNum(L"ReduceMotion", anim ? 0 : 1), 0, 1);
+    auto flag = [](const wchar_t* key, int fallback) { return sys::ReadNum(key, fallback) ? 1 : 0; };
+    powerPills = flag(L"PowerPills", 1);
+    batLow = (std::clamp)(sys::ReadNum(L"BatteryLow", 20), 5, 50);
+    activityBubble = flag(L"ActivityBubble", 1);
+    rememberPage = flag(L"RememberPage", 1);
+    defaultPage = (std::clamp)(sys::ReadNum(L"DefaultPage", 0), 0, kPageIds - 1); // identities: the numbers saved before the rail could change still mean the same pages
+    lastPage = (std::clamp)(sys::ReadNum(L"LastPage", 0), 0, kPageIds - 1);
+    pages = ParseList(sys::ReadText(kPagesVal), kPageKeys, kPageIds);
+    if (pages.empty()) pages = {kPgHome, kPgMedia, kPgSystem, kPgNetwork, kPgShelf, kPgTools}; // every page, the shelf above the tools
+    std::wstring tl = sys::ReadText(kTilesVal);
+    tiles = tl.empty() ? std::vector<int>{kTlSnip, kTlColor, kTlAwake, kTlDnd, kTlSettings} : ParseList(tl, kTileKeys, kToolTiles); // the tiles the tools page always had
+    stageHide = flag(L"StageHide", 1);
+    uiScale = (std::clamp)(sys::ReadNum(L"UiScale", 100), 80, 130);
+    bgOpacity = (std::clamp)(sys::ReadNum(L"BgOpacity", kMaxOpacity), kMinOpacity, kMaxOpacity);
+    pillAlways = flag(L"PillAlways", 0);
+    pillDesk = flag(L"PillDesktop", 0);
+    pillLeft = (std::clamp)(sys::ReadNum(L"PillLeft", kWWeather), 0, kWidgets - 1);
+    pillRight = (std::clamp)(sys::ReadNum(L"PillRight", kWCpu), 0, kWidgets - 1);
+    mediaCompact = flag(L"MediaCompact", 0);
+    pillMusic = flag(L"PillMusic", 1);
+    showArt = flag(L"ShowArt", 1);
+    vizOn = flag(L"Visualizer", cfg.viz ? 1 : 0); // the ini's choice until the switch in settings is used
+    hud = flag(L"Hud", 0); // experimental: off unless asked for
 }
 
 Model::~Model() {
@@ -70,6 +120,9 @@ void Model::Start(HWND hwnd) {
     media.Start(hwnd, WM_APP_MEDIA);
     radios.Start(hwnd, WM_APP_RADIOS);
     cals.Sync(hwnd, WM_APP_CAL, 0); // the month's dots are ready by the time the calendar first opens
+    shelf.Start(hwnd, WM_APP_SHELF); // a kept shelf comes back
+    if (accentMode == kAccentWindows) winAccent.Watch(hwnd, WM_APP_ACCENT);
+    if (portable) ReadBattery();
     Sample(0); // seed cpu/net baselines, pushes nothing
     worker = std::thread([this] { Worker(); });
 }
@@ -79,9 +132,9 @@ void Model::SetLive(bool active, bool processes, bool ping) {
     if (!active) CloseMixer(); // the audio sessions and icons go with the panel
     {
         std::lock_guard<std::mutex> guard(lock);
-        bool wakeNow = active && (!pollOn || (processes && !wantProcs)); // wake only if newly on or procs newly wanted
+        bool wakeNow = active && ((processes && !wantProcs) || (ping && !wantPing)); // wake only if the system or network page just came up
         pollOn = active;
-        wantProcs = processes;
+        wantProcs = active && processes;
         wantPing = active && ping;
         if (!wakeNow) return; // otherwise next 1s cycle picks it up
     }
@@ -92,11 +145,11 @@ void Model::Worker() {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL); // stats never starve ui
     std::unique_lock<std::mutex> lk(lock);
     while (!quit) {
-        wake.wait(lk, [this] { return quit || pollOn; }); // sleep while drawer closed
+        wake.wait(lk, [this] { return quit || (pollOn && (wantProcs || wantPing)); }); // asleep unless the system page (gauges, processes) or the network page (latency) shows
         if (quit) break;
         bool procsNow = wantProcs, pingNow = wantPing; // snapshot, flags may change while unlocked
         lk.unlock(); // slow sampling runs without lock
-        sys::Stats s = statSrc.Sample();
+        sys::Stats s = procsNow ? statSrc.Sample() : sys::Stats{}; // the gpu counter is costly: only where its gauge is
         std::vector<sys::ProcRow> top;
         if (procsNow) top = procSrc.Top(6); // top 6 procs, only on sys page
         float ping = -2;
@@ -123,8 +176,10 @@ void Model::OnStats() {
     std::lock_guard<std::mutex> guard(lock);
     if (!ready) return; // stale or duplicate post
     ready = false;
-    stats = newStats;
-    if (wantProcs) procs = newProcs; // keep old list when procs not polled
+    if (wantProcs) { // the system page shows: its gauges and process list
+        stats = newStats;
+        procs = newProcs;
+    }
     if (newPing > -2) {
         if (newPing >= 0 && pingMs >= 0) jitterMs = jitterMs * 0.8f + std::fabs(newPing - pingMs) * 0.2f; // how much it wobbles, smoothed
         pingMs = newPing;
@@ -137,12 +192,6 @@ void Model::Tick() {
     if (timerOn && GetTickCount64() >= timerEnd) { // timer checked at tick granularity
         timerOn = false;
         timerDone = true; // ui consumes via TimerDone()
-    }
-    if (portable) { // a laptop's own battery: one cheap call, nothing held
-        SYSTEM_POWER_STATUS ps{};
-        bool have = GetSystemPowerStatus(&ps) && !(ps.BatteryFlag & 128) && ps.BatteryLifePercent <= 100;
-        batPct = have ? ps.BatteryLifePercent : -1;
-        charging = have && ps.ACLineStatus == 1;
     }
     if (mixerOpen) mixer.Refresh(); // apps come and go while it's shown
     if (fullLyrics && hasTrack && track.music && track.duration > 0) // the song's lyrics, fetched while it plays: ready long before fullscreen opens; a cache check once known
@@ -189,12 +238,13 @@ void Model::OnOpen() {
     spk.Refresh(); // device may have changed while hidden
     mic.Refresh();
     ReadAudio();
-    if (portable) pwrMode = ReadPower(); // laptop shows power mode, desktop shows outputs
+    if (portable) pwrMode = ReadPower(), ReadBattery(); // laptop shows power mode, desktop shows outputs
     else outs = sys::ListOuts(outId);
-    if (cfg.viz) meter.Refresh();
+    if (vizOn) meter.Refresh();
     bright.ReadAsync(notify, WM_APP_BRIGHT); // ddc/wmi is slow, result posted back
     if (cfg.weather) weather.Refresh(notify, WM_APP_WEATHER);
     netSrc.FetchWan(notify, WM_APP_WANIP); // async public ip lookup
+    radios.Recheck(); // a bluetooth or wi-fi radio that wasn't ready at start shows up now, not "unavailable" all session
 }
 
 void Model::ReadAudio() {
@@ -351,6 +401,47 @@ void Model::SetPref(int& field, const wchar_t* key, int value) {
     sys::SaveNum(key, value);
 }
 
+int Model::SlotOf(int id) const {
+    auto it = std::find(pages.begin(), pages.end(), id);
+    return it == pages.end() ? -1 : (int)(it - pages.begin());
+}
+
+int Model::OpenPage() const {
+    int want = rememberPage ? lastPage : defaultPage;
+    return HasPage(want) ? want : pages.front();
+}
+
+void Model::SetPages(const std::vector<int>& order) {
+    if (order.empty()) return; // one page always stays
+    pages = order;
+    sys::SaveText(kPagesVal, JoinList(pages, kPageKeys));
+}
+
+void Model::SetTiles(const std::vector<int>& order) {
+    tiles = order;
+    sys::SaveText(kTilesVal, JoinList(tiles, kTileKeys));
+}
+
+const wchar_t* Model::PageName(int id) {
+    static const wchar_t* const kNames[kPageIds] = {L"Home", L"Media", L"System", L"Network", L"Tools", L"Shelf"};
+    return kNames[(std::clamp)(id, 0, kPageIds - 1)];
+}
+
+int Model::PageGlyph(int id) {
+    static const int kGlyphs[kPageIds] = {glyph::Overview, glyph::Music, glyph::System, glyph::Network, glyph::Tools, glyph::Shelf};
+    return kGlyphs[(std::clamp)(id, 0, kPageIds - 1)];
+}
+
+const wchar_t* Model::TileName(int id) {
+    static const wchar_t* const kNames[kToolTiles] = {L"Screenshot", L"Color picker", L"Awake", L"Notifications", L"Do not disturb", L"Energy saver", L"Airplane", L"Settings"};
+    return kNames[(std::clamp)(id, 0, kToolTiles - 1)];
+}
+
+int Model::TileGlyph(int id) {
+    static const int kGlyphs[kToolTiles] = {glyph::Snip, glyph::Edit, glyph::Coffee, glyph::Bell, glyph::Dnd, glyph::Saver, glyph::Airplane, glyph::Settings};
+    return kGlyphs[(std::clamp)(id, 0, kToolTiles - 1)];
+}
+
 void Model::OpenSettings() {
     if (settingsOpen) return;
     CloseBt(); // one sheet at a time
@@ -454,7 +545,11 @@ void Model::StopCalWait() {
 }
 
 bool Model::OnClipboard() {
-    if (!calWaiting || !IsClipboardFormatAvailable(CF_UNICODETEXT) || !OpenClipboard(notify)) return false;
+    if (!calWaiting || !IsClipboardFormatAvailable(CF_UNICODETEXT)) return false;
+    constexpr int kClipTries = 10; // the copying app, clipboard history or a manager may hold it open just as it tells us
+    bool open = false;
+    for (int i = 0; i < kClipTries && !(open = OpenClipboard(notify) != FALSE); ++i) Sleep(20);
+    if (!open) return false;
     std::wstring text;
     if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
         if (const wchar_t* p = static_cast<const wchar_t*>(GlobalLock(h))) {
@@ -497,23 +592,29 @@ bool Model::PollShared() {
     haloRuns = FindWindowW(kHaloClass, nullptr) != nullptr;
     Halo was = halo, now;
     bool pills = haloRuns; // running without saved settings: its default is pills on
+    int dock = -1; // its dock's edge, only while it runs
     HKEY key = nullptr;
     bool theme = Following() || settingsOpen; // the settings swatch previews it too
     if ((haloRuns || theme) && RegOpenKeyExW(HKEY_CURRENT_USER, kHaloKey, 0, KEY_QUERY_VALUE, &key) == ERROR_SUCCESS) {
         pills = haloRuns && HaloNum(key, L"Pills", 1, 0, 1) != 0;
+        static constexpr int kHaloToOurs[] = {-1, 1, 2, 0}; // halobar counts bottom, left, right, top; we have no bottom
+        dock = haloRuns ? kHaloToOurs[HaloNum(key, L"Edge", 0, 0, 3)] : -1;
         if (theme) { // its theme matters only while we wear it or show it
+            now.here = true;
             now.look = HaloNum(key, L"Look", -1, -1, 3);
             now.accent = HaloNum(key, L"Accent", -1, -1, 1);
             now.accentHex = HaloNum(key, L"AccentHex", now.accentHex, INT_MIN, INT_MAX) & 0xFFFFFF;
             now.customBg = HaloNum(key, L"CustomBg", now.customBg, INT_MIN, INT_MAX) & 0xFFFFFF;
             now.glassBlur = HaloNum(key, L"GlassBlur", now.glassBlur, 0, 100);
+            now.opacity = HaloNum(key, L"Opacity", now.opacity, kMinOpacity, 100);
         }
         RegCloseKey(key);
     }
     haloPills = pills;
+    haloEdge = dock; // the drawer re-docks off it once the panel is closed, and back when it leaves
     if (theme) halo = now; // not installed: its defaults, which follow us, so dark
     SyncNotify();
-    return Following() && halo != was;
+    return (Following() || settingsOpen) && halo != was; // open settings repaint too: the halobar swatch, and whether it's offered at all
 }
 
 int Model::Look() const {
@@ -522,13 +623,26 @@ int Model::Look() const {
 }
 
 int Model::AccentMode() const { return Following() && halo.accent >= 0 ? halo.accent : accentMode; }
-int Model::AccentHex() const { return Following() && halo.accent == 1 ? halo.accentHex : accentHex; }
+int Model::AccentHex() const {
+    if (Following() && halo.accent == 1) return halo.accentHex;
+    return accentMode == kAccentWindows && winAccentHex >= 0 ? winAccentHex : accentHex;
+}
 int Model::CustomBg() const { return Following() && halo.look == 3 ? halo.customBg : customBg; }
 int Model::GlassBlur() const { return Following() && halo.look == 2 ? halo.glassBlur : glassBlur; }
+int Model::BgOpacity() const {
+    if (!Following()) return bgOpacity;
+    return halo.look >= 0 ? halo.opacity : kMaxOpacity; // halobar follows us back: the default ends the loop, as the look's dark does
+}
 
 void Model::SetAccent(int mode, int hex) {
-    SetPref(accentMode, L"AccentMode", mode ? 1 : 0);
+    SetPref(accentMode, L"AccentMode", (std::clamp)(mode, 0, kAccentWindows));
     SetPref(accentHex, L"AccentHex", hex & 0xFFFFFF);
+    if (accentMode == kAccentWindows) { // windows' own accent, and word when it changes
+        winAccentHex = winAccent.Read();
+        winAccent.Watch(notify, WM_APP_ACCENT);
+    } else {
+        winAccent.Stop(); // nothing listens unless it's picked
+    }
 }
 
 bool Model::ParseHex(const std::wstring& text, int& rgb) {
@@ -598,7 +712,7 @@ void Model::CycleOut() {
     if (!sys::SetOut(next.id)) return;
     outId = next.id;
     spk.Refresh(); // rebind volume + meter to new default
-    if (cfg.viz) meter.Refresh();
+    if (vizOn) meter.Refresh();
     ReadAudio();
 }
 
@@ -638,4 +752,77 @@ void Model::Bands(float (&out)[sys::Spectrum::kBands]) {
 
 void Model::IdleSpectrum() {
     if (spectrum && GetTickCount64() - spectrumAsked > 3000) spectrum.reset(); // page changed, panel closed or stage left: capture stops
+}
+
+void Model::ReadBattery() {
+    sys::BatteryInfo b = sys::ReadBattery(false); // one cheap call, on power events only
+    batPct = b.pct;
+    charging = b.pct >= 0 && b.charging; // plugged in and full, or held at a care limit, isn't charging
+}
+
+int Model::Activity() const {
+    if (timerOn) return kActTimer;
+    if (focusOn) return kActFocus;
+    if (swOn) return kActWatch; // a paused stopwatch isn't running
+    return kActNone;
+}
+
+std::wstring Model::ActivityText() const { // short enough for a 30 dip bubble: 4:59, then whole minutes past ten
+    double secs = 0;
+    switch (Activity()) {
+    case kActTimer: secs = std::ceil(TimerLeft()); break;
+    case kActFocus: secs = std::ceil(FocusLeft()); break;
+    case kActWatch: secs = (double)(SwMs() / 1000); break;
+    default: return L"";
+    }
+    long long s = (long long)secs;
+    if (s >= 3600) return std::to_wstring(s / 3600) + L"h";
+    if (s >= 600) return std::to_wstring(s / 60) + L"m";
+    wchar_t buf[16];
+    swprintf_s(buf, L"%lld:%02lld", s / 60, s % 60);
+    return buf;
+}
+
+float Model::ActivityFrac() const {
+    switch (Activity()) {
+    case kActTimer: return (float)TimerFrac();
+    case kActFocus: return (float)FocusFrac();
+    case kActWatch: return (float)(SwMs() % 60000) / 60000.0f; // a lap of the ring a minute
+    default: return 0;
+    }
+}
+
+void Model::CommitCity() {
+    cityFocus = false;
+    std::wstring city = cityEdit;
+    size_t a = city.find_first_not_of(L" \t"), b = city.find_last_not_of(L" \t");
+    city = a == std::wstring::npos ? L"" : city.substr(a, b - a + 1);
+    cityEdit.clear();
+    if (city == weather.City()) return;
+    weather.SetCity(city, notify, WM_APP_WEATHER); // empty: back to finding you by ip
+}
+
+std::wstring Model::PillWidget(int which, int& icon) const {
+    switch (which) {
+    case kWWeather:
+        if (!cfg.weather || !wx.valid) return L"";
+        icon = fmt::WxIcon(wx.code, wx.isDay);
+        return fmt::Temp(wx.tempC, cfg.fahr);
+    case kWBattery:
+        if (batPct < 0) return L"";
+        icon = charging ? glyph::BatteryCharging : batPct <= batLow ? glyph::BatteryLow : glyph::Battery;
+        return std::to_wstring(batPct) + L"%";
+    case kWCpu:
+        icon = glyph::Cpu;
+        return std::to_wstring((int)std::lround(cpuHist.Last() * 100)) + L"%";
+    case kWRam:
+        icon = glyph::Ram;
+        return std::to_wstring((int)std::lround(ramHist.Last() * 100)) + L"%";
+    case kWNet: {
+        icon = glyph::Down;
+        double k = downHist.Last() / 1024; // short: the pill has room for four or five characters
+        return k < 1000 ? std::to_wstring((int)std::lround(k)) + L"K" : std::to_wstring((int)std::lround(k / 1024)) + L"M";
+    }
+    default: return L"";
+    }
 }

@@ -40,7 +40,7 @@ void SaveNum(const wchar_t* name, int v) {
 void SaveFlag(const wchar_t* name, bool on) { SaveNum(name, on ? 1 : 0); }
 
 std::wstring ReadText(const wchar_t* name) {
-    wchar_t buf[64] = {};
+    wchar_t buf[256] = {}; // a found place is "lat|lon|" plus a name of up to 63: a 64 wide buffer lost the longer ones and searched again every launch
     DWORD size = sizeof(buf);
     if (RegGetValueW(HKEY_CURRENT_USER, kRegKey, name, RRF_RT_REG_SZ, nullptr, buf, &size) != ERROR_SUCCESS) return {};
     return buf;

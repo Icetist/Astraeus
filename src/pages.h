@@ -20,6 +20,8 @@ struct PageCtx {
     const wchar_t* hint = nullptr; // a short tip the drawer shows just outside the panel, next to hintRect
     D2D1_RECT_F hintRect{};
     float hintFade = 0;
+    ID2D1Bitmap* coverPrev = nullptr; // the cover before the track changed, shown for the first half of the flip
+    float flip = 1; // 0..1 the art turning over to the new cover
 };
 
 void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale, const Theme& t); // audio-reactive glow behind art, in t's accent
@@ -28,7 +30,7 @@ struct Swell { // soft blobs of light that rise from the bottom and swell with t
     float level[kMax] = {}, gain[kMax] = {}, heat = 0; // eased blob sizes, each blob's recent loudest, overall warmth
 };
 bool StepSwell(Swell& s, Model& m, float dt, bool playing, int blobs); // true while anything still glows
-void DrawSwell(Canvas& c, const Swell& s, int blobs, const D2D1_RECT_F& r, const Theme& t, double now); // glows up from r's bottom
+void DrawSwell(Canvas& c, const Swell& s, int blobs, const D2D1_RECT_F& r, const Theme& t, double now, const D2D1_ROUNDED_RECT* in = nullptr); // glows up from r's bottom, in: kept inside a card
 void WaveLine(Canvas& c, float a0, float a1, float cy, float amp, double now, Color col, float width, float wavelen); // the played part of the seek line, rippling
 
 void DrawHome(PageCtx& p);
@@ -36,6 +38,10 @@ void DrawMedia(PageCtx& p);
 void DrawSys(PageCtx& p);
 void DrawNet(PageCtx& p);
 void DrawTools(PageCtx& p);
+void DrawShelf(PageCtx& p); // files and notes dropped on the island
+void ForgetShelfArt(); // the device is going: drop the shelf's preview bitmaps
+void FlipArt(PageCtx& p, const D2D1_RECT_F& r, float radius, float iconPx); // album art that turns over on a track change
+float DrawPrefs(PageCtx& p, const D2D1_RECT_F& area, bool live, bool tall); // the newer settings cards, returns their height
 void DrawBt(PageCtx& p, float t); // bluetooth menu overlay, t = open anim 0..1
 void DrawWifi(PageCtx& p, float t); // wi-fi network picker overlay, same sheet style
 void DrawShare(PageCtx& p, const D2D1_RECT_F& view); // shared-audio tab inside the bluetooth sheet

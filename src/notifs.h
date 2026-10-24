@@ -16,7 +16,7 @@ struct Notif {
     std::wstring image;  // appLogoOverride as a local file path, else empty
 };
 
-std::vector<Notif> ReadNotifs(size_t max = 50) noexcept;  // newest first, toasts only, not expired; empty on any failure
+std::vector<Notif> ReadNotifs(size_t max = 50, bool* ok = nullptr) noexcept;  // newest first, toasts only, not expired; empty on any failure, ok tells it apart from none
 int64_t NotifStamp() noexcept;  // changes when the db or its wal is written; cheap, poll only while the panel is open
 bool OpenNotifApp(const Notif& n) noexcept;  // protocol launch uri if it looks like one, else shell:AppsFolder\<aumid>
 std::wstring AppNameOf(const std::wstring& aumid) noexcept;  // shell display name, cached; falls back to the aumid's last segment

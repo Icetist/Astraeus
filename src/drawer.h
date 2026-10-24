@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "anim.h"
+#include "hud.h"
 #include "config.h"
 #include "model.h"
 #include "stage.h"
@@ -32,6 +33,11 @@ public:
     void SetFull(bool on); // fullscreen app present, stay out of the way
     void SyncHide();
     void OnSecond();
+    void ShowSettings(); // the tray's settings item: the panel opens with its settings sheet up
+    void Wake(); // launched again while running: whatever kept it hidden is dropped and it shows itself
+    void Greet(); // at sign-in: the home page drops down and stays until the mouse moves
+    void PlayFull(); // the fullscreen player for the playing song, asked for from outside (halobar's cover), panel open or not
+    void Reconfig(); // astraeus.ini changed on disk: sizes and corners follow without a restart
 
     bool Busy() const { return opened || peeking || dragging || island; } // user is looking, don't restart now
     bool NeedsFrame() const { return needsFrame || stage; } // main loop polls this to keep rendering
@@ -39,8 +45,51 @@ public:
     void Frame();
 
 private:
+    enum : UINT_PTR { kHoverTimer = 1, kCloseTimer, kReleaseTimer, kPeekTimer, kDevTimer, kFollowTimer, kTrimTimer = 8, kFullTimer, kGreetTimer, kDeskTimer }; // all one-shot; 7 is the model's
+    static constexpr UINT kAdoptMsg = WM_APP + 60; // a hover strip on another screen asks the panel to come over
+    static constexpr float kStrip = 3; // idle bezel height in dips, just enough to catch the mouse
+    static constexpr UINT kShelfMsg = WM_APP + 61; // the shelf page asked for a drag out, run after the frame: it's modal
+    static constexpr int kShelfPage = Model::kPgShelf; // pages go by identity; model.pages holds the rail's order
     static LRESULT CALLBACK Proc(HWND, UINT, WPARAM, LPARAM);
     LRESULT Handle(UINT msg, WPARAM wp, LPARAM lp);
+
+    struct DropSink; // the island as an ole drop target, feeding the shelf
+    DropSink* drop = nullptr;
+    bool dragSelf = false; // our own drag out is under way: dropping it back on the panel does nothing
+    void StartShelf(); // registers the drop target, ole is up on this thread
+    void StopShelf();
+    bool DropEnter(); // something droppable came over the island: the panel opens on the shelf
+    void DropLeave();
+    void DropDone(IDataObject* data);
+    void ShelfOut(); // the modal drag of one shelf item to wherever the user lets go
+    HPOWERNOTIFY acNote = nullptr, batNote = nullptr; // plugged in or out, battery percent: laptops only
+    int acNow = -1; // -1 until windows' first notice, which only says how things are
+    void WatchPower(); // laptops: register for the two power notices
+    void OnPower(const POWERBROADCAST_SETTING& s);
+    static constexpr float kRailW = 72; // the page rail's width in dips
+    static constexpr float kBubble = 30, kBubbleGap = 6; // the live activity bubble beside the pill
+    bool Bubble() const; // a timer, stopwatch or focus session sits beside the resting pill
+    D2D1_RECT_F BubbleBox() const; // where, in window dips
+    bool bubbleNow = false; // the window region was cut with the bubble
+    void DrawBubble();
+    std::wstring PillSig() const; // what a still pill shows, to redraw only when that changes
+    std::wstring pillSig;
+    bool pageSet = false; // whoever opens the panel already chose its page
+    ULONGLONG wheelAt = 0; // last page step from the wheel, a swipe moves one page
+    float railWheel = 0; // wheel notches over the rail or pill, a page per whole notch
+    void WheelPages(float notches); // the rail or the closed pill: next or previous page
+    int zoomNow = 100; // the ui scale the window is built for
+    float Zoom() const { return model.uiScale / 100.0f; } // the scale setting is just a bigger dip: everything follows, hit tests too
+    sys::VolumeWatch volWatch; // these three only while the hud option is on
+    sys::BrightWatch brightWatch;
+    sys::VolumeKeys volKeys;
+    bool hudNow = false;
+    void SyncHud();
+    void RetryHud();
+    void ShowHud(int icon, float level, const wchar_t* title); // the volume or brightness pill, a short drop with a bar
+    void OnVolumeKey(UINT vk);
+    float peekLevel = -1; // a hud pill's bar 0..1, -1 a plain notice
+    ComPtr<ID2D1Bitmap1> coverPrev; // the last cover, for the art's flip
 
     void Place();
     void Resize(float hDip, bool topmost); // window only as tall as visible shape
@@ -62,6 +111,7 @@ private:
     bool EnsureDev();
     void FreeDev();
     void TrimDev(); // keep the device, drop its caches // drop gpu objects when idle
+    bool RenewDev(); // a resting pill: swapped onto a fresh device its own size, what the open panel grew in the driver goes with the old one
     void ReleaseLater(); // schedule FreeDev if the panel stays shut
     UINT ambientSync = 2; // present interval for ambient-only motion, ~30 fps at any refresh rate
     UINT pillSync = 4; // vsyncs per frame for the resting pill's bars, ~15 fps
@@ -102,15 +152,32 @@ private:
     ComPtr<ID2D1Bitmap1> pillLayer; // the resting pill without its bars
     uint64_t pillKey = 0;
     uint64_t trimKey = 0; // the resting pill the last cache trim was scheduled for
+    bool devWide = false; // this device has drawn more than the pill: once a pill rests again it moves to a fresh one
     float IslandSpan() const { return Side() ? kIslandSide : kIslandW; } // pill length along its edge
     void ShowIsland(); // small pill instead of the panel, over maximized apps
-    bool MaximizedBelow() const; // a maximized app sits under the hot zone
-    bool TiledEdge(const RECT& work) const; // tiled windows cover the whole docked edge between them
+    bool AppBelow() const; // an app window lies where the panel would drop
+    bool Stays() const; // the resting pill holds still: by itself, or because the desktop is what's under it
+    void SyncStay(); // the pill comes back by itself, or goes once nothing holds it up
+    void WatchDesk(); // pill on the desktop: the window hooks go on with the option and off without it
+    void UnwatchDesk();
+    void OnDeskTimer(); // the windows have settled: is the desktop what's under the island now
+    void HookFront(HWND front); // the front app's own moves: maximize, snap and win+arrows change no focus
+    static void CALLBACK DeskEvent(HWINEVENTHOOK, DWORD ev, HWND w, LONG obj, LONG child, DWORD, DWORD);
+    HWINEVENTHOOK deskHooks[3] = {}; // focus changed, a move or resize ended, a minimize began or ended
+    HWINEVENTHOOK frontHook = nullptr; // location changes, from the front window's thread only
+    DWORD frontThread = 0;
+    bool deskOn = false; // the hooks are in: the option was on last second
+    bool deskView = false; // nothing of an app's under the island, or the desktop has the focus
+    RECT Footprint() const; // that area on screen, in pixels
     void DrawRail(const Theme& t);
     void SyncWall();
     void Perf(double drawSec);
     void Log(const wchar_t* what) const; // with perflog on: one line about where the panel is, for multi screen reports
     bool FullOn(HMONITOR m) const; // another app fills that screen
+    static bool Overlay(HWND w); // screen sized but never a fullscreen app: an overlay, a click-through layer, a tool window, halobar
+    int fullChecks = 0; // the shell said fullscreen: looks left to confirm it, on a short timer
+    void OnFullTimer(); // one of those looks
+    void OnGreetTimer(); // drops the greeting, then watches the cursor
     void SetShell(const Theme& t);
     Theme Make(Seed s) const; // palette for a seed in the current appearance
     void SyncLook(); // appearance changed: crossfade palettes, swap presentation for glass
@@ -124,15 +191,24 @@ private:
     void GlassMask(ID2D1Geometry* shape); // cut the blur to this frame's shape
     void FreeGlass();
     bool GlassResize(UINT w, UINT h); // the composition surface and visuals to a new pixel size, in place
+    bool GlassRenew(ID2D1Device* dev); // the same visuals and blur, a new surface on dev to draw into; null lets go of the old one
     void FitSurfaces(); // a pill alone needs a short strip, not the whole panel's surfaces
     UINT surfW = 0, surfH = 0; // the surfaces' size now, pixels
     void GlassBlur(float amount); // 0 clear .. 1 fully frosted
     void SampleBehind(); // glass: how bright the screen under the panel is
     float glassShade = 0; // 0 .. 1, deepens the glass tint over bright backgrounds so white text stays readable
+    float glassShadeNow = 0; // what's drawn: eases to glassShade, so the tint follows the page behind without a jump
+    int shadeTick = 0; // seconds toward the next look behind the glass
+    void SampleShade(); // glass, while showing: what's behind it now, every half minute
     void SetMedia(const Theme& t);
     void OpenStage(); // fullscreen ambient player, replaces the panel until it's left
     std::unique_ptr<Stage> stage;
     bool stageBack = false; // the panel already reopened under a leaving stage
+    bool greeting = false; // the sign-in greeting is up: the first move of the mouse puts it away
+    int greetTries = 0;
+    POINT greetAt{};
+    bool stageHalo = false; // opened from halobar's cover: leaving it opens halobar's own player again
+    bool stageAway = false; // opened from outside: leaving it goes straight back to the desktop, no panel
     bool StepTheme(float dt); // crossfade palettes, true while moving
 
     const Config& cfg;
@@ -160,7 +236,7 @@ private:
     bool islandHot = false; // mouse over the island: show the expand hint
     bool stayWasAlways = false; // the island was set to always last second, to notice it being switched off
     float islandBars[4] = {}; // mini visualizer levels, eased per frame
-    static constexpr UINT kIslandMs = 500; // dwell before the island shows over a maximized app
+    static constexpr UINT kIslandMs = 500; // dwell before the island shows over an app window
     anim::Spring spring;
     bool opened = false, dragging = false, peeking = false;
     bool island = false; // island pill is up (or dropping)
@@ -170,7 +246,7 @@ private:
     float winW = 0; // current window length along the edge in dips
     int edgeNow = 0, screensNow = 0; // placement the window is built for
     std::wstring screenNow; // the picked screen the window is built for
-    bool PlaceStale() const { return model.edge != edgeNow || model.screens != screensNow || model.screen != screenNow; }
+    bool PlaceStale() const { return model.Edge() != edgeNow || model.screens != screensNow || model.screen != screenNow; }
     HMONITOR mon = nullptr; // screen we live on, null = primary
     std::vector<HWND> strips; // hover strips on other screens, all-screens mode only
     D2D1_MATRIX_3X2_F shapeXform = D2D1::Matrix3x2F::Identity(); // this frame's shape placement, the glass mask reuses it
@@ -218,9 +294,9 @@ private:
     ComPtr<ID2D1DeviceContext> ctx;
     ComPtr<IDXGISwapChain2> swap;
     ComPtr<ID2D1Bitmap1> backBuf;
-    ComPtr<IDCompositionDevice> dcomp;
+    ComPtr<IDCompositionDesktopDevice> dcomp; // made without a rendering device: a swapchain from a new device can go in its visual
     ComPtr<IDCompositionTarget> target;
-    ComPtr<IDCompositionVisual> visual;
+    ComPtr<IDCompositionVisual2> visual;
     HANDLE frameWait = nullptr;
     std::unique_ptr<Canvas> canvas;
 

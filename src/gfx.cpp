@@ -6,6 +6,7 @@
 #include <d3d11.h>
 #include <dxgi1_3.h>
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -148,9 +149,13 @@ bool Init(const std::wstring& fontDir) {
     if (g) return true;
     g = new State();
     D2D1_FACTORY_OPTIONS opts = {};
-    if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory3), &opts, &g->d2d))) return false; // ui thread only
-    if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory5), &g->dw))) return false; // shared = system font cache
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&g->wic)))) return false; // needs CoInitialize first
+    if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory3), &opts, &g->d2d)) || // ui thread only
+        FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory5), &g->dw)) || // shared = system font cache
+        FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&g->wic)))) { // needs CoInitialize first
+        delete g; // half made: the next try starts over instead of finding it "done"
+        g = nullptr;
+        return false;
+    }
 
     if (SUCCEEDED(g->dw->CreateInMemoryFontFileLoader(&g->mem)) && FAILED(g->dw->RegisterFontFileLoader(g->mem.Get())))
         g->mem.Reset();
@@ -425,7 +430,7 @@ void Canvas::FillGeoV(ID2D1Geometry* geometry, const D2D1_RECT_F& bounds, Color 
     if (auto* b = Gradient(top, bottom, true, bounds)) rt->FillGeometry(geometry, b);
 }
 
-void Canvas::Glow(D2D1_POINT_2F center, float rx, float ry, Color c) {
+void Canvas::Glow(D2D1_POINT_2F center, float rx, float ry, Color c, const D2D1_ROUNDED_RECT* in) {
     if (c.a <= 0.003f || rx <= 0 || ry <= 0) return; // below 1/255, invisible
     uint64_t key = ColKey(c.Alpha(1 / c.a)); // key on opaque color, alpha applied via opacity
     auto it = glows.find(key);
@@ -442,7 +447,16 @@ void Canvas::Glow(D2D1_POINT_2F center, float rx, float ry, Color c) {
     }
     it->second->SetOpacity(c.a);
     it->second->SetTransform(D2D1::Matrix3x2F::Scale(rx, ry) * D2D1::Matrix3x2F::Translation(center.x, center.y)); // stretch unit circle to ellipse
-    rt->FillEllipse({center, rx, ry}, it->second.Get());
+    if (!in) {
+        rt->FillEllipse({center, rx, ry}, it->second.Get());
+        return;
+    }
+    D2D1_RECT_F box = {(std::max)(center.x - rx, in->rect.left), (std::max)(center.y - ry, in->rect.top), (std::min)(center.x + rx, in->rect.right),
+                       (std::min)(center.y + ry, in->rect.bottom)}; // the glow's own square, inside the card
+    if (box.right <= box.left || box.bottom <= box.top) return;
+    rt->PushAxisAlignedClip(box, D2D1_ANTIALIAS_MODE_ALIASED); // the brush is clear at the box edge, so a hard scissor never shows
+    rt->FillRoundedRectangle(*in, it->second.Get()); // the card shape itself carries the light: rounded corners without a mask layer
+    rt->PopAxisAlignedClip();
 }
 
 void Canvas::StrokeGeo(ID2D1Geometry* geometry, Color c, float width) {
@@ -465,6 +479,14 @@ float Canvas::TextOnce(const std::wstring& s, const D2D1_RECT_F& r, Weight w, fl
     return SUCCEEDED(l->GetMetrics(&tm)) ? tm.widthIncludingTrailingWhitespace : 0;
 }
 
+float Canvas::Measure(const std::wstring& s, Weight w, float size) {
+    constexpr float kRoom = 4000; // wide enough that nothing trims
+    IDWriteTextFormat* f = s.empty() ? nullptr : gfx::TextFmt(w, size, Align::Left);
+    IDWriteTextLayout* l = f ? Layout(s, f, kRoom, size * 2, 0) : nullptr;
+    DWRITE_TEXT_METRICS tm{};
+    return l && SUCCEEDED(l->GetMetrics(&tm)) ? tm.widthIncludingTrailingWhitespace : 0;
+}
+
 void Canvas::TextSp(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c, float spacing, Align a) {
     if (s.empty()) return;
     IDWriteTextFormat* f = gfx::TextFmt(w, size, a);
@@ -476,8 +498,8 @@ void Canvas::Icon(int glyph, D2D1_POINT_2F center, float size, Color c, bool fil
     wchar_t ch = (wchar_t)glyph; // codepoints are bmp, fits one wchar
     IDWriteTextFormat* f = gfx::IconFmt(size, filled);
     if (!f) return;
-    D2D1_RECT_F r = {center.x - size, center.y - size, center.x + size, center.y + size}; // 2x box, centered format does the rest
-    rt->DrawTextW(&ch, 1, f, r, Brush(c), D2D1_DRAW_TEXT_OPTIONS_NONE);
+    IDWriteTextLayout* l = Layout(std::wstring(1, ch), f, 2 * size, 2 * size, 0); // 2x box, centered format does the rest; cached like text, drawtext would reshape every frame
+    if (l) rt->DrawTextLayout({center.x - size, center.y - size}, l, Brush(c), D2D1_DRAW_TEXT_OPTIONS_NONE);
 }
 
 ID2D1BitmapBrush* Canvas::BitmapBrush(ID2D1Bitmap* bmp) {

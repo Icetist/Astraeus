@@ -25,4 +25,8 @@ constexpr int Keys = 0xE312, Mouse = 0xE323, Phone = 0xE32C, Pc = 0xE30A, Pad = 
 constexpr int Delete = 0xE872, Add = 0xE145, Close = 0xE5CD, OpenNew = 0xE89E;
 constexpr int Sparkle = 0xE65F, Edit = 0xE3C9, Rocket = 0xEB9B; // tray menu
 constexpr int Dnd = 0xF08F; // do not disturb, the same mark halobar uses
+constexpr int Battery = 0xE1A4, BatteryCharging = 0xE1A3, BatteryLow = 0xE19C, Plug = 0xE63C; // power pills
+constexpr int Airplane = 0xE53D, AirplaneOff = 0xE194, Saver = 0xEA35, Bell = 0xE7F4, Disk = 0xF80E, Place = 0xE55F; // quick tiles, the same marks halobar uses
+constexpr int VolumeDown = 0xE04D; // hud
+constexpr int Shelf = 0xE1A1, File = 0xE873, Note = 0xF1FC, Image = 0xE3F4, Folder = 0xE2C7, Drop = 0xF090; // the shelf
 }
