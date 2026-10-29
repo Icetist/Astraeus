@@ -22,9 +22,6 @@
 #include "battery.h"
 #include "accent.h"
 
-namespace live {
-bool Typing(); // the live setup's search field holds the keyboard
-}
 
 enum : UINT { // posted to ui thread by services/worker
     WM_APP_MEDIA = WM_APP + 1,
@@ -239,7 +236,7 @@ public:
     bool passFocus = false, passShow = false, passWrong = false; // the wi-fi password field: taking keystrokes, shown in clear, last try failed
     std::string passFor; // raw ssid of the network being joined
     std::wstring passEdit; // what's typed so far, wiped once used
-    bool Typing() const { return hexFocus || passFocus || cityFocus || live::Typing(); } // the panel holds the keyboard
+    bool Typing() const { return hexFocus || passFocus || cityFocus; } // the panel holds the keyboard
     void AskPass(const sys::WifiNet& n); // a new secured network: type its password in the panel
     void SubmitPass();
     void CancelPass();
@@ -276,7 +273,7 @@ public:
     std::wstring ActivityText() const; // its time, short enough for the bubble
     float ActivityFrac() const; // its ring, 0..1
     int rememberPage = 1, defaultPage = 0, lastPage = 0; // the page the panel opens on, by identity
-    enum PageId { kPgHome, kPgMedia, kPgSystem, kPgNetwork, kPgTools, kPgShelf, kPgLive, kPageIds }; // what a page is, wherever it sits on the rail
+    enum PageId { kPgHome, kPgMedia, kPgSystem, kPgNetwork, kPgTools, kPgShelf, kPageIds }; // what a page is, wherever it sits on the rail
     std::vector<int> pages; // the rail's pages top to bottom, never empty
     int SlotOf(int id) const; // its place on the rail, -1 hidden
     bool HasPage(int id) const { return SlotOf(id) >= 0; }

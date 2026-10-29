@@ -5,7 +5,6 @@
 #include "drawer.h"
 #include "entry.h"
 #include "glyphs.h"
-#include "live_page.h"
 #include "pages.h"
 
 namespace {
@@ -398,8 +397,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
     float ssheet = ui.Smooth(Ui::Id("set.sheet"), model.settingsOpen ? 1.0f : 0, 14); // settings open anim
     float csheet = ui.Smooth(Ui::Id("cal.sheet"), model.calOpen ? 1.0f : 0, 14); // calendar open anim
     float msheet = ui.Smooth(Ui::Id("mix.sheet"), model.mixerOpen ? 1.0f : 0, 14); // volume mixer open anim
-    float lsheet = LiveSheetK(ui); // the live page's setup, over everything
-    float under = 1 - anim::Clamp01((std::max)((std::max)((std::max)(sheet, wsheet), (std::max)(ssheet, csheet)), (std::max)(msheet, lsheet)) * 1.6f); // the page fades out as a sheet fades in, a crossfade, not a stack
+    float under = 1 - anim::Clamp01((std::max)((std::max)((std::max)(sheet, wsheet), (std::max)(ssheet, csheet)), msheet) * 1.6f); // the page fades out as a sheet fades in, a crossfade, not a stack
     float pageAlpha = e * under;
     bool fading = pageAlpha < 0.999f;
     ctx->SetTransform(D2D1::Matrix3x2F::Translation(0, slide) * base);
@@ -412,7 +410,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
     pc.flip = coverPrev ? ui.SmoothFrom(Ui::Id("cover.flip", (int)coverId), 1, 0, kFlipRate) : 1;
     pc.coverPrev = art && pc.flip < 0.5f ? coverPrev.Get() : nullptr;
     if (pc.flip > 0.999f) coverPrev.Reset(); // turned: the old one can go
-    ui.Block(sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f || csheet > 0.01f || msheet > 0.01f || lsheet > 0.01f); // page under a sheet takes no input
+    ui.Block(sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f || csheet > 0.01f || msheet > 0.01f); // page under a sheet takes no input
     if (under > 0.001f) { // a sheet that has taken over hides the page, skip drawing it
         switch (page) {
         case Model::kPgHome: DrawHome(pc); break;
@@ -420,13 +418,11 @@ void Drawer::DrawBody(float h, float dt, double now) {
         case Model::kPgSystem: DrawSys(pc); break;
         case Model::kPgNetwork: DrawNet(pc); break;
         case Model::kPgTools: DrawTools(pc); break;
-        case Model::kPgLive: DrawLive(pc); break;
         default: DrawShelf(pc); break;
         }
     }
     if (fading) ctx->PopLayer();
     ctx->SetTransform(base);
-    ui.Block(lsheet > 0.01f); // the sheets under the live setup take no input either
     if (sheet > 0.001f) {
         PageCtx bc{ui, model, shellNow, mediaNow, nullptr, nullptr, 1, area};
         DrawBt(bc, sheet);
@@ -454,11 +450,6 @@ void Drawer::DrawBody(float h, float dt, double now) {
         pc.wantClose = pc.wantClose || mc.wantClose;
     }
     ui.Block(false);
-    if (lsheet > 0.001f) {
-        PageCtx lc{ui, model, shellNow, mediaNow, nullptr, nullptr, 1, area};
-        DrawLiveSetup(lc, lsheet);
-        if (lc.wantPage >= 0) pc.wantPage = lc.wantPage; // saved: the live page shows
-    }
     DrawRailTip(shellNow); // over the page and its sheets
 
     ui.End();

@@ -2,7 +2,6 @@
 #include "entry.h"
 
 #include "glyphs.h"
-#include "live.h"
 
 #include <dwmapi.h>
 #include <shellscalingapi.h>
@@ -318,7 +317,6 @@ void Drawer::Close() {
     opened = false;
     island = false; // the island retracts with the same spring, its shape stays until it's gone
     model.hexFocus = model.cityFocus = model.tilesEdit = false;
-    live::Sheet().typing = false;
     Entry::Get().Drop(); // whatever was typed goes with the panel
     StagePrefs::Get().capture = 0; // a fullscreen key half picked is dropped with the panel
     model.CancelPass();
@@ -824,9 +822,6 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_VOLKEY:
         OnVolumeKey((UINT)wp);
         return 0;
-    case live::kMsg: // new scores: drawn if the live page shows
-        if (opened && page == Model::kPgLive) Redraw();
-        return 0;
     case WM_APP_SHELF: // a preview came in
         model.shelf.OnPreview();
         Redraw();
@@ -835,11 +830,6 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         ShelfOut();
         return 0;
     case WM_CHAR: // only reaches us while a field holds the keyboard
-        if (live::Typing()) {
-            live::OnChar((wchar_t)wp);
-            Redraw();
-            return 0;
-        }
         if (model.passFocus) {
             wchar_t ch = (wchar_t)wp;
             if (ch == 22) { // ctrl+v, first line only, appended in place
@@ -919,11 +909,6 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             else if (wp == VK_RIGHT || wp == VK_DOWN) SetPage(model.PageAt(model.SlotOf(page) + 1)); // the rail's order, not the pages' numbers
             else if (wp == VK_LEFT || wp == VK_UP) SetPage(model.PageAt(model.SlotOf(page) - 1));
             else if (wp >= '1' && wp < '1' + (WPARAM)model.pages.size()) SetPage(model.PageAt((int)(wp - '1')));
-            Redraw();
-            return 0;
-        }
-        if (live::Typing()) {
-            live::OnKey(wp);
             Redraw();
             return 0;
         }

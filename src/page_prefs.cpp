@@ -7,7 +7,6 @@
 #include "glyphs.h"
 #include "page_sheet.h"
 #include "entry.h"
-#include "live_settings.h"
 #include "stageprefs.h"
 #include "tray.h"
 
@@ -369,8 +368,6 @@ float Advanced(PageCtx& p, const D2D1_RECT_F& area, bool live, int cols) { // po
     Hud(p, next(), live);
     Backup(p, next(), live);
     y += ((n + cols - 1) / cols) * (kAdvRow + kPrefGap);
-    float lh = LiveSettings(p, {area.left, y, area.right, area.bottom}, live); // the live page's sports and news options
-    if (lh > 0) y += lh + kPrefGap;
     Code(p, Rect(area.left, y, Width(area), kCodeRow), live); // always last
     y += kCodeRow + kPrefGap;
     return y - area.top;
