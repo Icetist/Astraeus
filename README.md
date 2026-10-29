@@ -289,5 +289,4 @@ Yes. Set `AutoUpdate = false` in `astraeus.ini` and restart.
 - Synced lyrics from [LRCLIB](https://lrclib.net), NetEase Cloud Music and Kugou.
 
 ### 🧪 The testers
-
-**[Abrar Awwal](https://www.instagram.com/abrarr.png)** and **[ATK](https://github.com/atkftw)** ran every alpha and beta build before anyone else did. They hit the crashes, found the glitches and broke what could break, so that what reaches you doesn't.
+**[Abrar Awwal](https://www.instagram.com/abrarr.png)**, **[ATK](https://github.com/atkftw)**, and **[Raisah Tazmeen Ahad](https://medium.com/@rtaix15)** ran every alpha and beta build before anyone else did. They hit the crashes, found the glitches and broke what could break, so that what reaches you doesn't.
