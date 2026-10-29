@@ -1,6 +1,10 @@
-## Astraeus 2.2.1
+## Astraeus 2.2.2
 
-The Live page from 2.2.0 is gone; it wasn't ready. Everything else from 2.2.0 is here:
+### Fixes
+- **Bluetooth, Wi-Fi, Settings and the other panels answer clicks again.** In 2.2.1 they opened but ignored every click.
+- The Live page from 2.2.0 is gone; it wasn't ready.
+
+Everything else from 2.2.0 is here:
 
 ### New
 - **Two screens for the fullscreen player.** With two monitors, press **S** in the fullscreen player to spread it across both: the cover and the song on one screen, the lyrics on the other. Press **W** to swap them. Closing either screen closes both.

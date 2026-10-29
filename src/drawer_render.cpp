@@ -423,6 +423,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
     }
     if (fading) ctx->PopLayer();
     ctx->SetTransform(base);
+    ui.Block(false); // the sheets themselves take input
     if (sheet > 0.001f) {
         PageCtx bc{ui, model, shellNow, mediaNow, nullptr, nullptr, 1, area};
         DrawBt(bc, sheet);
@@ -449,7 +450,6 @@ void Drawer::DrawBody(float h, float dt, double now) {
         DrawMixer(mc, msheet);
         pc.wantClose = pc.wantClose || mc.wantClose;
     }
-    ui.Block(false);
     DrawRailTip(shellNow); // over the page and its sheets
 
     ui.End();
