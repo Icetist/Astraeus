@@ -20,6 +20,7 @@ constexpr float kChipH = 28;
 constexpr float kNoteH = 17; // one line of a two-line label
 constexpr int kBatLowMin = 5, kBatLowMax = 50; // the low battery pill, in percent
 constexpr int kScaleMin = 80, kScaleMax = 130; // ui scale, percent
+constexpr int kLyricStep = 5; // lyric size moves in 5% steps
 constexpr float kHoldSec = 1.2f; // hold to reset everything
 
 bool SwitchRow(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, const wchar_t* label, bool on, bool live, bool enabled = true) { // label left, switch right; true when flipped
@@ -208,6 +209,23 @@ void Display(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how big everythin
     Note(c, t, in, in.top + kSlideH + 26, L"Applied when you let go of the slider");
 }
 
+void LyricType(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how big the fullscreen player's words are
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F in = Box(c, t, r, L"LYRICS");
+    constexpr int lo = Model::kLyricMin, hi = Model::kLyricMax;
+    float v = (m.lyricScale - lo) / (float)(hi - lo);
+    bool done = false;
+    if (Knob(ui, t, Ui::Id("set.lyr.size"), Rect(in.left, in.top + 2, Width(in), kSlideH), L"Text size", std::to_wstring(m.lyricScale) + L"%", v, live, done,
+             (float)kLyricStep / (hi - lo)))
+        m.lyricScale = lo + (int)std::lround(v * (hi - lo) / kLyricStep) * kLyricStep; // live: an open player re-lays as it moves
+    if (done) m.SetPref(m.lyricScale, L"LyricScale", m.lyricScale);
+    Note(c, t, in, in.top + kSlideH + 8, L"The fullscreen and split lyrics, 80 to 150%");
+    Note(c, t, in, in.top + kSlideH + 26, m.fullLyrics ? L"100% is the usual size" : L"Synced lyrics are switched off for now");
+}
+
 void Weather(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a city typed in, instead of finding you by your ip address
     Ui& ui = p.ui;
     Canvas& c = ui.C();
@@ -355,7 +373,7 @@ void AdvancedHead(PageCtx& p, const D2D1_RECT_F& r, bool live, float open) { // 
     if (h.clicked) advOpen = !advOpen;
 }
 
-float Advanced(PageCtx& p, const D2D1_RECT_F& area, bool live, int cols) { // power, weather, volume keys, backup, the live page's options, the code; returns its full height
+float Advanced(PageCtx& p, const D2D1_RECT_F& area, bool live, int cols) { // power, weather, volume keys, backup, display and lyric sizes, the live page's options, the code; returns its full height
     float cw = (Width(area) - (cols - 1) * kPrefGap) / cols, y = area.top;
     int n = 0;
     auto next = [&] {
@@ -367,6 +385,8 @@ float Advanced(PageCtx& p, const D2D1_RECT_F& area, bool live, int cols) { // po
     Weather(p, next(), live);
     Hud(p, next(), live);
     Backup(p, next(), live);
+    Display(p, next(), live); // the two sizes side by side
+    LyricType(p, next(), live);
     y += ((n + cols - 1) / cols) * (kAdvRow + kPrefGap);
     Code(p, Rect(area.left, y, Width(area), kCodeRow), live); // always last
     y += kCodeRow + kPrefGap;
@@ -391,7 +411,6 @@ float DrawPrefs(PageCtx& p, const D2D1_RECT_F& area, bool live, bool tall) {
     };
     Pill(p, next(), live);
     Media(p, next(), live);
-    Display(p, next(), live);
     Fullscreen(p, next(), live);
     y += ((n + cols - 1) / cols) * (kPrefRow + kPrefGap);
 

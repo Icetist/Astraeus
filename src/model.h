@@ -207,8 +207,9 @@ public:
     int brightPct = -1; // -1 hides brightness slider
 
     bool awake = false;
-    int look = 0; // appearance picked: 0 dark (default), 1 light, 2 glass, 3 custom, 4 follow halobar; Look() is what's drawn
+    int look = 0; // appearance picked: 0 dark (default), 1 light, 2 glass, 3 custom, 4 follow halobar, 5 starfall; Look() is what's drawn
     static constexpr int kLookHalo = 4;
+    static constexpr int kLookStarfall = 5; // ours alone: halobar wears it only by following us, and never hands it back
     struct Halo { // halobar's own theme, read only while following it
         int look = -1; // -1 it follows us back, else 0..3 like ours
         int accent = -1; // -1 ours, 0 wallpaper, 1 the hex
@@ -291,6 +292,8 @@ public:
     static int TileGlyph(int id);
     int stageHide = 1; // the fullscreen player's controls fade while the mouse rests (on by default)
     int uiScale = 100; // percent, 80..130, folded into the dpi scale
+    int lyricScale = 100; // percent, the fullscreen player's lyric type; 100 is the size it always had
+    static constexpr int kLyricMin = 80, kLyricMax = 150;
     int bgOpacity = 100; // percent, the panel and pill body on the solid looks; BgOpacity() is what's drawn
     static constexpr int kMinOpacity = 40, kMaxOpacity = 100; // below 40 the cards float on nothing; halobar keeps the same range
     static constexpr int kAccentWindows = 2; // accent source: windows' own accent color

@@ -86,6 +86,13 @@ void Drawer::WheelPages(float notches) {
     if (now - wheelAt < kWheelRestMs) return; // the rest of the swipe that already moved a page
     railWheel = (railWheel > 0) == (notches > 0) ? railWheel + notches : notches; // a turn the other way starts over
     if (std::fabs(railWheel) < 1) return; // a trackpad sends slivers: a page per whole notch
+    if (opened && (int)model.pages.size() > kRailShown) { // a rail longer than its window: the wheel scrolls it, a click picks
+        railScrollTo += railWheel > 0 ? 1.0f : -1.0f; // RailScroll clamps it
+        railWheel = 0;
+        wheelAt = now;
+        Redraw();
+        return;
+    }
     int to = model.PageAt(model.SlotOf(page) + (railWheel > 0 ? 1 : -1)); // the next on the rail, as it's ordered
     railWheel = 0;
     wheelAt = now;

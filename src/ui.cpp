@@ -4,6 +4,7 @@
 
 #include "anim.h"
 #include "glyphs.h"
+#include "starfall.h"
 
 namespace {
 constexpr float kPi = 3.14159265f;
@@ -146,6 +147,7 @@ void Card(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float radius) {
     c.FillV(D2D1_RECT_F{r.left, r.top, r.right, r.top + (std::min)(Height(r), 70.0f)}, radius, // top sheen, max 70px tall
                    t.sheen, t.sheen.Alpha(0));
     c.StrokeV(r, radius, t.hairTop, t.hairBot, 1); // hairline brighter on top, fake bevel
+    if (t.stars) starfall::Seam(c, {r.left + radius, r.top + 0.5f}, {r.right - radius, r.top + 0.5f}, t, 0.8f); // starfall: a faint line of light along the top edge
 }
 
 bool IconBtn(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, float size, int glyph, float iconPx,

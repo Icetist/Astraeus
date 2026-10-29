@@ -6,12 +6,36 @@
 #include "entry.h"
 #include "glyphs.h"
 #include "pages.h"
+#include "starfall.h"
 
 namespace {
 
 constexpr float kThemeSec = 0.8f; // palette crossfade duration
 constexpr float kFlipRate = 3.4f; // the cover's turn, ~0.7 s
+constexpr float kRailEase = 14; // the rail's scroll glide rate
+constexpr float kRailPeek = 22; // dips past the five shown where the next page's icon peeks
+constexpr float kRailFadeLen = 30, kRailFadeLead = 12; // icons fade over this near a clipped end, starting a little past it
 constexpr float kWidgetW = 52; // a status widget on either side of the pill's clock
+constexpr float kArrowPad = 18; // a rail chevron keeps at least this from the panel's edge
+constexpr float kArrowRoom = 22; // the top rail gives up this much at each end for its chevrons when it scrolls
+constexpr float kArrowHalf = 11, kArrowLen = 3; // its hit box half size; its arms' reach: small
+constexpr float kArrowRate = 14; // chevrons fade in and out at this rate
+
+// a chevron pointing (dx, dy) toward pages out of view; shown only while there are some. true when clicked
+bool RailArrow(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F at, float dx, float dy, bool more) {
+    float v = ui.Smooth(id, more ? 1.0f : 0, kArrowRate);
+    if (v < 0.01f) return false; // gone: nothing to click either
+    Ui::Hit h = more ? ui.Button(id + 1, {at.x - kArrowHalf, at.y - kArrowHalf, at.x + kArrowHalf, at.y + kArrowHalf}) : Ui::Hit{};
+    float hover = ui.Smooth(id + 2, h.hover ? 1.0f : 0, 16);
+    Canvas& c = ui.C();
+    if (hover > 0.01f) c.Dot(at, kArrowHalf - 1, t.text.Alpha(0.08f * hover * v));
+    Color ink = t.textDim.Mix(t.text, hover).Alpha((0.45f + 0.55f * hover) * v); // quiet until the mouse comes near
+    float px = -dy, py = dx; // across the arrow
+    D2D1_POINT_2F tip = {at.x + dx * kArrowLen / 2, at.y + dy * kArrowLen / 2}, back = {at.x - dx * kArrowLen / 2, at.y - dy * kArrowLen / 2};
+    c.Line({back.x + px * kArrowLen, back.y + py * kArrowLen}, tip, ink, 1.4f);
+    c.Line({back.x - px * kArrowLen, back.y - py * kArrowLen}, tip, ink, 1.4f);
+    return h.clicked;
+}
 
 bool MakeDev(ComPtr<ID3D11Device>& d3d, ComPtr<ID2D1DeviceContext>& ctx) { // a d3d device and a d2d context on it
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_SINGLETHREADED | // bgra needed for d2d interop
@@ -102,6 +126,7 @@ bool Drawer::RenewDev() {
     ForgetShelfArt();
     pillLayer.Reset();
     pillKey = 0;
+    starfall::Forget(); // its brushes too
     backBuf.Reset();
     if (!glass && frameWait) CloseHandle(frameWait), frameWait = nullptr;
     swap.Reset();
@@ -216,6 +241,7 @@ void Drawer::FreeDev() {
     dcomp.Reset();
     backBuf.Reset();
     pillLayer.Reset(); // belongs to this device
+    starfall::Forget(); // the sky's brushes, likewise
     devWide = false;
     swap.Reset();
     ctx.Reset();
@@ -380,13 +406,19 @@ void Drawer::DrawBody(float h, float dt, double now) {
         pageT = 1;
         model.SetLive(opened, page == Model::kPgSystem, page == Model::kPgNetwork);
     }
-    if (Side()) { // sidebar: icons along the top
+    auto divider = [&](D2D1_POINT_2F a, D2D1_POINT_2F b) { // starfall: a seam of starlight instead of a plain rule
+        if (shellNow.stars) starfall::Seam(*canvas, a, b, shellNow);
+        else canvas->Line(a, b, shellNow.line, 1, false);
+    };
+    if (Side()) { // sidebar: icons along the top, under them the divider
+        divider({20, kTopRail}, {panelW - 20, kTopRail});
         DrawRailTop(shellNow);
-        canvas->Line({20, kTopRail}, {panelW - 20, kTopRail}, shellNow.line, 1, false);
     } else {
+        divider({kRailW, 34}, {kRailW, H - 34});
         DrawRail(shellNow);
-        canvas->Line({kRailW, 34}, {kRailW, H - 34}, shellNow.line, 1, false);
     }
+    bool fieldFocus = model.Typing() || Entry::Get().focus || StagePrefs::Get().capture || ui.Captured(); // a text field, a key being picked or a slider held keeps its arrows
+    railHot = opened && !fieldFocus && Inside(Side() ? D2D1_RECT_F{0, 0, panelW, kTopRail} : D2D1_RECT_F{0, 0, kRailW, H}, local.mouse);
     D2D1_RECT_F area = Side() ? D2D1_RECT_F{14, kTopRail + 10, panelW - 14, panelH - 14} : D2D1_RECT_F{kRailW + 14, 18, panelW - 20, H - 20};
 
     if (pageT < 1) pageT = (std::min)(1.0f, pageT + dt / 0.38f); // 380ms page switch
@@ -774,22 +806,67 @@ bool Drawer::DrawIslandSide(float h, float a) {
     return true;
 }
 
+float Drawer::RailScroll(int n, int slot) {
+    int most = (std::max)(0, n - kRailShown);
+    if (most == 0) return railScroll = railScrollTo = 0, railSlotSeen = slot, 0.0f; // five or fewer: everything shows, as always
+    if (slot != railSlotSeen) { // a new page: bring it into view, only once, so the wheel can look elsewhere
+        if (slot < railScrollTo) railScrollTo = (float)slot;
+        if (slot > railScrollTo + kRailShown - 1) railScrollTo = (float)(slot - kRailShown + 1);
+        railSlotSeen = slot;
+    }
+    railScrollTo = (std::clamp)(railScrollTo, 0.0f, (float)most);
+    if (model.reduceMotion) railScroll = railScrollTo;
+    else if (anim::Approach(railScroll, railScrollTo, kRailEase, ui.Dt(), 0.002f)) ui.Wake();
+    return railScroll;
+}
+
+void Drawer::SyncRailKeys(bool want) {
+    if (want == railKeys) return;
+    railKeys = want;
+    if (!want) {
+        UnregisterHotKey(hwnd, kRailKeyPrev);
+        UnregisterHotKey(hwnd, kRailKeyNext);
+        return;
+    }
+    bool prev = RegisterHotKey(hwnd, kRailKeyPrev, 0, Side() ? VK_LEFT : VK_UP) != FALSE; // the panel never takes focus: a hotkey reaches it anyway, only while hovered
+    bool next = RegisterHotKey(hwnd, kRailKeyNext, 0, Side() ? VK_RIGHT : VK_DOWN) != FALSE;
+    if (!prev && !next) railKeys = false; // another app holds them: hovering just doesn't add keys
+}
+
+float Drawer::RailFade(float pos, float lo, float hi, float n) const { // pos and the view's ends along the rail; n pages
+    if (n <= kRailShown) return 1;
+    return anim::Clamp01(((std::min)(pos - lo, hi - pos) + kRailFadeLead) / kRailFadeLen);
+}
+
 void Drawer::DrawRailTop(const Theme& t) {
     Canvas& c = *canvas;
-    int n = (int)model.pages.size(), slot = (std::max)(0, model.SlotOf(page));
-    float step = (CW() - 28) / n, cy = kTopRail / 2;
-    float x = ui.Smooth(Ui::Id("railx"), 14 + step * (slot + 0.5f), 18); // highlight glides to the active page
-    c.Fill({x - 26, cy - 19, x + 26, cy + 19}, 19, t.accent.Alpha(0.13f));
-    c.Fill({x - 11, kTopRail - 6, x + 11, kTopRail - 3}, 1.5f, t.accent); // accent bar under the active icon
+    int n = (int)model.pages.size(), slot = (std::max)(0, model.SlotOf(page)), shown = (std::min)(n, kRailShown);
+    float room = n > shown ? kArrowRoom : 0; // scrolling: each end keeps a little space for its chevron
+    float step = (CW() - 28 - 2 * room) / shown, cy = kTopRail / 2;
+    float off = step * RailScroll(n, slot); // the row slides left as it scrolls
+    float lo = 14 + room, hi = lo + step * shown; // the view's ends
+    bool clip = n > shown;
+    if (clip) c.PushClip({lo - 6, 0, hi + 6, kTopRail});
+    float x = ui.Smooth(Ui::Id("railx"), 14 + step * (slot + 0.5f), 18) - off; // highlight glides to the active page
+    c.Fill({x - 26, cy - 19, x + 26, cy + 19}, 19, t.accent.Alpha(0.13f * RailFade(x, lo, hi, (float)n)));
+    if (t.stars) starfall::Halo(c, {x, cy}, 30, 22, t, RailFade(x, lo, hi, (float)n)); // starfall: the active page glows, with a faint violet reach
+    c.Fill({x - 11, kTopRail - 6, x + 11, kTopRail - 3}, 1.5f, t.accent.Alpha(RailFade(x, lo, hi, (float)n))); // accent bar under the active icon
     for (int i = 0; i < n; ++i) {
         int id = model.pages[(size_t)i];
-        float ix = 14 + step * (i + 0.5f);
-        Ui::Hit h = ui.Button(Ui::Id("railt", id), {ix - 28, 4, ix + 28, kTopRail - 4});
+        float ix = 14 + step * (i + 0.5f) - off, fade = RailFade(ix, lo, hi, (float)n);
+        if (fade <= 0) continue; // scrolled out of view: neither drawn nor clickable
+        Ui::Hit h = ui.Button(Ui::Id("railt", id), {(std::max)(lo, ix - 28), 4, (std::min)(hi, ix + 28), kTopRail - 4});
         if (h.clicked) SetPage(id);
         if (h.hover) railTip = id, railTipAt = {ix, kTopRail + 4};
         float hover = ui.Smooth(Ui::Id("railt.h", id), h.hover && id != page ? 1.0f : 0, 16);
         bool active = id == page;
-        c.Icon(Model::PageGlyph(id), {ix, cy}, 22, active ? t.accentHi : t.textDim.Mix(t.text, hover), active);
+        c.Icon(Model::PageGlyph(id), {ix, cy}, 22, (active ? t.accentHi : t.textDim.Mix(t.text, hover)).Alpha(fade), active);
+    }
+    if (clip) {
+        c.PopClip();
+        float most = (float)(n - shown);
+        if (RailArrow(ui, t, Ui::Id("railt.prev"), {lo - room / 2, cy}, -1, 0, railScrollTo > 0.01f)) railScrollTo = std::round(railScrollTo) - 1, ui.Wake(); // one slot; RailScroll clamps
+        if (RailArrow(ui, t, Ui::Id("railt.next"), {hi + room / 2, cy}, 1, 0, railScrollTo < most - 0.01f)) railScrollTo = std::round(railScrollTo) + 1, ui.Wake();
     }
     if (ui.RClick({0, 0, CW(), kTopRail})) model.OpenSettings(); // settings stay a click away even with the tools page taken off
 }
@@ -824,9 +901,11 @@ void Drawer::DrawRailTip(const Theme& t) { // a word beside the rail icon under 
 void Drawer::DrawRail(const Theme& t) {
     Canvas& c = *canvas;
     const float spacing = 54;
-    int n = (int)model.pages.size(), slot = (std::max)(0, model.SlotOf(page));
-    float first = (H - spacing * (n - 1)) / 2; // however many pages are kept, they sit centered
-    float targetTop = first + slot * spacing - 20, targetBottom = targetTop + 40; // 40 dip pill around active icon
+    int n = (int)model.pages.size(), slot = (std::max)(0, model.SlotOf(page)), shown = (std::min)(n, kRailShown);
+    float first = (H - spacing * (shown - 1)) / 2; // however many pages show, they sit centered
+    float off = spacing * RailScroll(n, slot); // more than five: the list slides up under a fixed window
+    float lo = first - spacing / 2, hi = first + spacing * (shown - 0.5f); // the window's ends
+    float targetTop = first + slot * spacing - 20, targetBottom = targetTop + 40; // 40 dip pill around active icon, in list space
     if (railBot <= railTop) {
         railTop = targetTop;
         railBot = targetBottom;
@@ -836,20 +915,31 @@ void Drawer::DrawRail(const Theme& t) {
     bool b = anim::Approach(railBot, targetBottom, down ? 24.0f : 9.0f, ui.Dt(), 0.05f); // so pill stretches like goo
     if (a || b) ui.Wake(); // keep frames coming while pill moves
 
-    c.Fill({13, railTop, kRailW - 13, railBot}, 20, t.accent.Alpha(0.13f));
-    c.Fill({5, railTop + 10, 8, railBot - 10}, 1.5f, t.accent); // thin accent bar on left edge
+    bool clip = n > shown;
+    if (clip) c.PushClip({0, lo - kRailPeek, kRailW, hi + kRailPeek}); // a sliver of the next one peeks, faded
+    float pt = railTop - off, pb = railBot - off, pf = RailFade((pt + pb) / 2, lo, hi, (float)n);
+    if (t.stars) starfall::Halo(c, {kRailW / 2, (pt + pb) / 2}, 34, 30, t, pf); // starfall: the active page glows, with a faint violet reach
+    c.Fill({13, pt, kRailW - 13, pb}, 20, t.accent.Alpha(0.13f * pf));
+    c.Fill({5, pt + 10, 8, pb - 10}, 1.5f, t.accent.Alpha(pf)); // thin accent bar on left edge
 
     for (int i = 0; i < n; ++i) {
         int id = model.pages[(size_t)i];
-        float y = first + i * spacing;
-        D2D1_RECT_F hit = {10, y - 22, kRailW - 10, y + 22};
+        float y = first + i * spacing - off, fade = RailFade(y, lo - kRailPeek, hi + kRailPeek, (float)n);
+        if (fade <= 0) continue; // scrolled out of view: neither drawn nor clickable
+        D2D1_RECT_F hit = {10, (std::max)(lo, y - 22), kRailW - 10, (std::min)(hi, y + 22)};
         Ui::Hit h = ui.Button(Ui::Id("rail", id), hit);
         if (h.clicked) SetPage(id);
         if (h.hover) railTip = id, railTipAt = {kRailW - 6, y};
         float hover = ui.Smooth(Ui::Id("rail.h", id), h.hover && id != page ? 1.0f : 0, 16); // no hover tint on active
         bool active = id == page;
         Color ink = active ? t.accentHi : t.textDim.Mix(t.text, hover);
-        c.Icon(Model::PageGlyph(id), {kRailW / 2, y}, 23, ink, active);
+        c.Icon(Model::PageGlyph(id), {kRailW / 2, y}, 23, ink.Alpha(fade), active);
+    }
+    if (clip) {
+        c.PopClip();
+        float most = (float)(n - shown), top = (std::max)(kArrowPad, (lo - kRailPeek) / 2), bot = (std::min)(H - kArrowPad, (H + hi + kRailPeek) / 2); // midway between the panel's edge and the peeking icon
+        if (RailArrow(ui, t, Ui::Id("rail.prev"), {kRailW / 2, top}, 0, -1, railScrollTo > 0.01f)) railScrollTo = std::round(railScrollTo) - 1, ui.Wake(); // one slot; RailScroll clamps
+        if (RailArrow(ui, t, Ui::Id("rail.next"), {kRailW / 2, bot}, 0, 1, railScrollTo < most - 0.01f)) railScrollTo = std::round(railScrollTo) + 1, ui.Wake();
     }
     if (ui.RClick({0, 0, kRailW, H})) model.OpenSettings(); // settings stay a click away even with the tools page taken off
 }
@@ -865,6 +955,7 @@ void Drawer::DrawBubble() { // a running timer, stopwatch or focus session: a ri
     Color fill = t.glass ? t.veil.Alpha(0.92f) : t.bg; // no blur reaches out here: glass gets its dark twin
     if (!t.glass) fill.a *= model.BgOpacity() / 100.0f;
     canvas->Dot(o, r, fill);
+    if (t.stars) starfall::Sky(*canvas, {o.x - r, o.y - r, o.x + r, o.y + r}, r, t, 0, fill.a, 0); // starfall: the bubble is a little moon of the same sky
     if (t.glass) canvas->Ring(o, r - 0.5f, Color{1, 1, 1, 0.26f}, 1);
     canvas->Ring(o, r - 3, t.track, 2);
     float f = anim::Clamp01(model.ActivityFrac());

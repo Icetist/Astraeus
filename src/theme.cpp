@@ -169,6 +169,24 @@ Theme Theme::From(Seed seed) {
         t.veil = Hsl(h, 0.30f * k, 0.06f);
         t.glass = true;
     }
+    if (seed.look == theme::kStarfall) { // deep space: near-black indigo, quiet surfaces, one luminous accent
+        auto toward = [&](float base, float f) { return base + (std::fmod(h - base + 540.0f, 360.0f) - 180) * f; }; // hue blend the short way round
+        t.bg = Hsl(toward(236, 0.2f), 0.45f, 0.045f); // indigo so deep it reads as black until it sits beside black
+        t.card = Hsl(toward(238, 0.3f), 0.26f, 0.095f).Alpha(0.74f); // smoked glass: the sky barely through
+        t.cardHi = Hsl(toward(238, 0.3f), 0.24f, 0.14f).Alpha(0.76f);
+        t.track = Hsl(toward(236, 0.3f), 0.20f, 0.21f).Alpha(0.88f);
+        t.accent = Hsl(h, (std::max)(0.60f, 0.80f * k), 0.72f); // clear and luminous, never neon
+        t.accentHi = Hsl(h, 0.70f, 0.86f);
+        t.text = Hsl(h, 0.08f, 0.95f); // full contrast ink on a near black sky
+        t.textDim = Hsl(h, 0.10f, 0.70f);
+        t.textLow = Hsl(h, 0.08f, 0.50f);
+        t.hairTop = Hsl(toward(215, 0.35f), 0.30f, 0.85f, 0.12f); // a faint cool edge, no colour show
+        t.hairBot = Color{1, 1, 1, 0.025f};
+        t.line = Hsl(toward(220, 0.3f), 0.25f, 0.80f, 0.08f);
+        t.sheen = Color{1, 1, 1, 0.025f};
+        t.veil = t.bg;
+        t.stars = true;
+    }
     if (seed.chroma < 0.08f) { // black and white art or wallpaper: a colored accent would invent a mood that isn't there
         bool lightLook = seed.look == 1;
         t.accent = Hsl(h, 0, lightLook ? 0.20f : 0.86f);
@@ -203,7 +221,7 @@ Theme Theme::From(Seed seed) {
         t.accentHi = Hsl(ah, (std::min)(1.0f, as + 0.08f), Clamp(al + (dark ? 0.10f : -0.10f), 0.03f, 0.97f));
         t.onAccent = theme::Luma(a) > 0.30f ? Color{0.07f, 0.07f, 0.08f, 1} : Color{0.98f, 0.98f, 0.98f, 1}; // ink on the accent, same rule
     }
-    t.glow = t.accent.Alpha(0.20f);
+    t.glow = t.accent.Alpha(t.stars ? 0.26f : 0.20f); // starfall: active controls glow a little brighter
     return t;
 }
 
@@ -226,5 +244,6 @@ Theme Theme::Lerp(const Theme& o, float t) const {
     r.sheen = sheen.Mix(o.sheen, t);
     r.veil = veil.Mix(o.veil, t);
     r.glass = t < 0.5f ? glass : o.glass;
+    r.stars = t < 0.5f ? stars : o.stars;
     return r;
 }

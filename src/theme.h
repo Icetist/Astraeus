@@ -4,7 +4,7 @@
 struct Seed {
     float hue = 255; // degrees, default periwinkle blue
     float chroma = 0.45f; // 0..1, scales saturation of every role
-    int look = 0; // appearance: 0 dark (default), 1 light, 2 glass, 3 custom
+    int look = 0; // appearance: 0 dark (default), 1 light, 2 glass, 3 custom, 5 starfall
     int rgb = -1; // the exact color this came from, if any: the custom look keeps it as the accent
     int bg = 0x121826; // custom look: the panel's background, 0xRRGGBB
 };
@@ -18,12 +18,14 @@ struct Theme {
     Color line, sheen; // divider lines, top-edge highlight on cards
     Color veil; // laid over art backdrops (alpha set by caller) so text stays legible
     bool glass = false; // surfaces are translucent over a live blur
+    bool stars = false; // starfall: a night sky behind everything
 
     static Theme From(Seed seed);
     Theme Lerp(const Theme& to, float t) const; // for animated theme crossfade
 };
 
 namespace theme {
+constexpr int kStarfall = 5; // the look's number; 4 is taken by following halobar
 Color Hsl(float h, float s, float l, float a = 1);
 Seed FromCol(Color c);
 float Luma(Color c); // relative luminance, 0 black .. 1 white

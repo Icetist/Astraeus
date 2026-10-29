@@ -35,7 +35,7 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 - **Media player and fullscreen lyrics.** Album art, a visualizer that swells with the music, and a fullscreen player with time-synced lyrics that light up word by word, spread across two monitors if you have them.
 - **Quick toggles and control centers.** Wi-Fi, Bluetooth, volume, brightness and a volume mixer, with devices and networks you connect to right in the panel.
 - **The island.** A small pill with what's playing over full-screen apps, or always on with the clock and two small widgets.
-- **Colors that follow you.** Dark, light, glass, custom or HaloBar's look, with the palette pulled from your wallpaper or the album art.
+- **Colors that follow you.** Dark, light, glass, custom, Starfall (a night sky only Astraeus has) or HaloBar's look, with the palette pulled from your wallpaper or the album art.
 - **Lightweight.** Nothing renders while closed, and the GPU is handed back seconds later.
 
 <details>
@@ -57,7 +57,7 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 - **Weather and a calendar.** Weather for your location, in Celsius or Fahrenheit. Type a city in Settings (add its country or region, like `Paris, Texas`, to pick between places with the same name) and your IP address is never used to look you up at all. Click the weather card for a month at a glance, with holidays from around the world lit up and a greeting when you hover them, and click the weather there for the next hours and days. Connect Google Calendar, Outlook or iCloud by copying your calendar's private link, and your events show up on it, stored encrypted and shared with HaloBar.
 - **Colors that follow you.** The palette is pulled from your wallpaper, or from the album art of whatever is playing, or from any accent you pick. The accent can also follow Windows' own accent color, live. Five looks: dark (the default), light, glass (a live frosted blur of whatever is behind the panel, with a tint that deepens over bright pages so white text stays readable and eases back over dark ones), custom, where a color wheel lets you pick any accent and any background, with text that turns white or black to suit, and HaloBar, which wears whatever HaloBar wears. On the solid looks an opacity slider lets the desktop show through; on glass the slider sets the blur instead. While it wears HaloBar's look, the opacity and blur are HaloBar's too, and its own slider steps aside; HaloBar does the same while it follows Astraeus.
 - **Settings you touch.** Pick the edge it lives on, which monitor (or all of them, with the open panel and the resting pill following your mouse from screen to screen), your accent color and look from small pictures of the real thing. Reduce motion calms every animation. Make everything 80 to 130% of its size, keep the fullscreen player's controls up or let them fade at rest, choose which pages the rail shows and in what order, open on the last page or one you choose, and export your settings to a file, import them on another PC, or reset everything to defaults. Power, weather, volume and brightness, and backup sit together under **Advanced**.
-- **The island.** Over a maximized window, or tiled windows that fill the screen, a small pill shows what's playing instead of dropping the whole panel over your work. It can stay a moment, minutes, or always while music plays. Turn on **Pill on the desktop** (off by default) and it also stays up whenever no app window is under it, after Win+D or once the last window closes; it goes again when a window comes back under it. Turn on **Always show the pill** and it stays up with the clock between two small widgets of your choice (weather, battery, CPU, memory or network); it repaints only when one of them changes, once a minute for the clock. Windows notifications can arrive as pills too, and when HaloBar is running with its notification pills on they always do, in place of its own. Do Not Disturb, in Settings and on the Tools page, quiets them, and is shared with HaloBar.
+- **The island.** Over a maximized window, or tiled windows that fill the screen, a small pill shows what's playing instead of dropping the whole panel over your work. It can stay a moment, minutes, or always while music plays. With **Pill on the desktop** (on by default) it also stays up whenever no app window is under it, after Win+D or once the last window closes; it goes again when a window comes back under it. Turn on **Always show the pill** and it stays up with the clock between two small widgets of your choice (weather, battery, CPU, memory or network); it repaints only when one of them changes, once a minute for the clock. Windows notifications can arrive as pills too, and when HaloBar is running with its notification pills on they always do, in place of its own. Do Not Disturb, in Settings and on the Tools page, quiets them, and is shared with HaloBar.
 - **Volume and brightness pill (experimental).** Off by default. Switch on **Replace Windows volume popup** and a pill shows every volume and brightness change. While it's on, Astraeus takes the volume keys before Windows sees them, so Windows' own volume popup stays away; the brightness keys still bring up Windows' popup alongside it.
 - **A hello at sign-in.** When it starts with Windows, the Home page drops down to greet you and goes back up the moment you move the mouse.
 - **Gets out of the way.** Hides itself when a game or video goes fullscreen. When it's on every screen, the pill moves straight to a screen without a game.
@@ -119,9 +119,9 @@ No Electron, no web view, no runtime to install. Just one small native executabl
   </tr>
 </table>
 
-### Four Themes, Infinite Possibilities
+### Five Themes, Infinite Possibilities
 
-Glass (above), Dark, Light and Custom, where a color wheel picks any accent and any background.
+Glass (above), Dark, Light, Custom, where a color wheel picks any accent and any background, and Starfall, a night sky with a slowly drifting violet glow that only Astraeus has.
 
 <table>
   <tr>
@@ -158,6 +158,18 @@ Astraeus is built to cost nothing while you are not looking at it. Measured on a
 | **Install size** | 1 file, no runtime, no installer |
 
 That's light enough for 2 GB machines and entry-level Celeron and Pentium laptops: closed, it uses about a tenth of a percent of 2 GB.
+
+### How it compares
+
+| | **Astraeus** | Typical web-based widget apps |
+| --- | --- | --- |
+| **Built with** | Native C++, Direct2D, DirectComposition | Electron or a bundled web view |
+| **Memory while idle** | 9 MB | Often 100 MB or more |
+| **Drawing while idle** | Nothing, the GPU is handed back | A page kept alive in the background |
+| **Download** | One 1.9 MB file | Often 80 MB or more |
+| **Account or sign-in** | Never | Sometimes required |
+| **Telemetry** | None | Varies |
+| **Source code** | Open | Often closed |
 
 How it stays this light:
 
@@ -205,7 +217,7 @@ Updates are automatic. Astraeus checks GitHub shortly after launch and every few
 - **Bluetooth devices:** right-click the Bluetooth tile on the Home page.
 - **Volume mixer:** click the speaker icon on the volume slider, or right-click the slider.
 - **Wi-Fi networks:** right-click the Wi-Fi tile on the Home page, or press **Networks** on the Network page.
-- **Settings:** the **Settings** tile on the Tools page, right-click the rail, or **Settings** in the tray menu, for the look (dark, light, glass, custom), accent color, edge, screens, notification pills, the island, fullscreen lyrics, the status pill, pages, tools tiles, media, display, power, weather city, the volume pill and backups.
+- **Settings:** the **Settings** tile on the Tools page, right-click the rail, or **Settings** in the tray menu, for the look (dark, light, glass, custom, Starfall), accent color, edge, screens, notification pills, the island, fullscreen lyrics, the status pill, pages, tools tiles, media, display, power, weather city, the volume pill and backups.
 - **Shelf:** drag files or text onto the top of the screen. Drag a card out to use it, tap it to copy it, or press **×** to take it off the shelf.
 - **Tray menu:** click the tray icon to open the dashboard; right-click it for config, start with Windows, check for updates, restart and exit.
 

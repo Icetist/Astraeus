@@ -7,6 +7,7 @@
 #include "anim.h"
 #include "glyphs.h"
 #include "page_sheet.h"
+#include "starfall.h"
 #include "version.h"
 
 using namespace sheet;
@@ -24,6 +25,7 @@ constexpr float kNoteLines = 44; // three short lines of a note beside a small p
 constexpr float kDndW = 44; // the do not disturb pill in the notifications card
 constexpr float kDeskRowH = 30; // the island card's desktop switch
 constexpr int kSwatchCols = 3; // material swatches per row
+constexpr float kSwatchStars = 6; // star density in the starfall swatch, the panel's is 1
 constexpr double kWheelHold = 0.4; // seconds the page keeps the wheel after it scrolled
 constexpr float kSwatchGap = 10;
 float Rad(float deg) { return deg * kPi / 180; }
@@ -375,6 +377,7 @@ void Swatch(Canvas& c, const Theme& look, D2D1_RECT_F q, bool glassy, float hue,
         return;
     }
     c.FillV(q, 12, look.cardHi, look.bg.Alpha(1));
+    if (look.stars) starfall::Sky(c, q, 12, look, 0, 1, 0, nullptr, kSwatchStars); // the real sky, a denser field so a swatch shows it
     float u = (std::min)(1.0f, sh / 60); // the little page inside scales with the swatch
     c.Fill(Rect(q.left + 10, q.top + 10 * u, sw * 0.5f, 5), 2.5f, look.text.Alpha(0.85f)); // a line of "text"
     c.Fill(Rect(q.left + 10, q.top + 20 * u, sw * 0.32f, 4), 2, look.textDim.Alpha(0.8f));
@@ -382,7 +385,7 @@ void Swatch(Canvas& c, const Theme& look, D2D1_RECT_F q, bool glassy, float hue,
     c.StrokeV(q, 12, look.hairTop, look.hairBot, 1);
 }
 
-void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // five swatches drawn in the actual materials, halobar's in whatever it wears
+void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // six swatches drawn in the actual materials, halobar's in whatever it wears
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.shell;
@@ -392,10 +395,13 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // five swatches dr
     Seed s = Base(m, t);
     constexpr float extra = kSlideH + 6; // room for the blur slider, or the opacity slider on the solid looks
     float sw = (Width(in) - 2 * kSwatchGap) / kSwatchCols, sh = (std::min)((Height(in) - extra - 2 * 18 - 6) / 2, sw * 0.62f); // three, then the rest, a label under each
-    static const wchar_t* const kNames[] = {L"Dark", L"Light", L"Glass", L"Custom", L"HaloBar"};
-    int looks = m.halo.FollowsUs() && !m.Following() ? Model::kLookHalo : Model::kLookHalo + 1; // halobar following us: no swatch to follow it back, unless already picked
-    for (int i = 0; i < looks; ++i) {
-        int row = i / kSwatchCols, col = i % kSwatchCols, inRow = (std::min)(kSwatchCols, looks - row * kSwatchCols);
+    static const wchar_t* const kNames[] = {L"Dark", L"Light", L"Glass", L"Custom", L"HaloBar", L"Starfall"};
+    int order[Model::kLookStarfall + 1], looks = 0;
+    for (int k = 0; k <= Model::kLookStarfall; ++k)
+        if (k != Model::kLookHalo || !m.halo.FollowsUs() || m.Following()) order[looks++] = k; // halobar following us: no swatch to follow it back, unless already picked
+    for (int at = 0; at < looks; ++at) {
+        int i = order[at];
+        int row = at / kSwatchCols, col = at % kSwatchCols, inRow = (std::min)(kSwatchCols, looks - row * kSwatchCols);
         float x0 = in.left + (kSwatchCols - inRow) * (sw + kSwatchGap) / 2; // a shorter second row sits centered
         D2D1_RECT_F q = Rect(x0 + col * (sw + kSwatchGap), in.top + 2 + row * (sh + 24), sw, sh);
         uint32_t id = Ui::Id("set.mat", i);

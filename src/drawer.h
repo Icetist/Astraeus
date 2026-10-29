@@ -271,6 +271,15 @@ private:
     int page = 0, prevPage = 0;
     float pageT = 1; // page slide progress 0..1
     float railTop = 0, railBot = 0;
+    static constexpr int kRailShown = 5; // more pages than this: the rail shows five and scrolls
+    float railScroll = 0, railScrollTo = 0; // first shown slot, eased toward where the wheel or the page puts it
+    int railSlotSeen = -1; // the active slot last frame: a new one is scrolled into view once
+    float RailScroll(int n, int slot); // steps the scroll, keeps a newly picked page in view; 0 with five or fewer
+    float RailFade(float pos, float lo, float hi, float n) const; // icon alpha near a clipped end, 1 elsewhere
+    bool railHot = false; // this frame the mouse rests on the rail and nothing of ours wants the arrows
+    bool railKeys = false; // the arrows are ours while it does
+    static constexpr int kRailKeyPrev = 0x52A1, kRailKeyNext = 0x52A2; // hotkey ids, apart from the app's own shortcut
+    void SyncRailKeys(bool want); // takes the arrow keys while the rail is hovered, hands them straight back after
 
     double lastFrame = 0;
     int framesSeen = 0, framesLate = 0; // the governor's window of animation frames

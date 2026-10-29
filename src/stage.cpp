@@ -22,6 +22,66 @@ constexpr float kWordsW = 0.64f; // and the words take this much of the screen's
 constexpr float kSwapSec = 0.45f; // the pair trading halves dips through dark this long
 constexpr double kHintSec = 1.6; // a key's word stays this long, then fades
 
+constexpr double kFastFps = 60, kAmbientFps = 30, kQuietFps = 20; // ui motion and glides, music-driven light only, paused drift
+constexpr UINT kMaxSync = 4; // dxgi's longest present interval
+constexpr double kGameCheckSec = 1; // how often the foreground is looked at for a fullscreen game
+int liveStages = 0; // the pair counts as two: throttling lifts when the last goes
+
+UINT SyncFor(double hz, double fps) { return (UINT)std::clamp<long>(std::lround(hz / fps), 1, kMaxSync); } // vsyncs per frame for a target rate
+
+double RefreshOf(HMONITOR mon) { // the screen's refresh rate, cached per monitor
+    static HMONITOR seen[4] = {};
+    static double hz[4] = {};
+    for (int i = 0; i < 4; ++i)
+        if (seen[i] == mon) return hz[i];
+    MONITORINFOEXW mi = {};
+    mi.cbSize = sizeof(mi);
+    DEVMODEW dm = {};
+    dm.dmSize = sizeof(dm);
+    double r = GetMonitorInfoW(mon, &mi) && EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency > 1 ? dm.dmDisplayFrequency : 60.0;
+    static int next = 0;
+    seen[next] = mon, hz[next] = r;
+    next = (next + 1) % 4;
+    return r;
+}
+
+bool GameInFront() { // a fullscreen window of another app in front, on any screen: someone is playing
+    HWND fg = GetForegroundWindow();
+    DWORD pid = 0;
+    if (!fg || (GetWindowThreadProcessId(fg, &pid), pid == GetCurrentProcessId())) return false;
+    LONG style = GetWindowLongW(fg, GWL_STYLE);
+    if ((style & WS_CAPTION) == WS_CAPTION || (IsZoomed(fg) && (style & WS_THICKFRAME))) return false; // maximized, not fullscreen
+    wchar_t cls[40] = {};
+    GetClassNameW(fg, cls, 40);
+    for (const wchar_t* shell : {L"Progman", L"WorkerW", L"Shell_TrayWnd", L"Shell_SecondaryTrayWnd", L"XamlExplorerHostIslandWindow", L"MultitaskingViewFrame",
+                                 L"ForegroundStaging", L"Windows.UI.Core.CoreWindow"})
+        if (!wcsncmp(cls, shell, wcslen(shell))) return false; // desktop and shell surfaces cover screens too
+    RECT r;
+    MONITORINFO mi = {sizeof(mi)};
+    if (!GetWindowRect(fg, &r) || !GetMonitorInfoW(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST), &mi)) return false;
+    return r.left <= mi.rcMonitor.left && r.top <= mi.rcMonitor.top && r.right >= mi.rcMonitor.right && r.bottom >= mi.rcMonitor.bottom;
+}
+
+bool gameMode = false;
+void GameMode(bool on) { // a game in front: efficiency cores and a lower priority, so the player never competes with it
+    if (on == gameMode) return;
+    gameMode = on;
+    PROCESS_POWER_THROTTLING_STATE pt = {PROCESS_POWER_THROTTLING_CURRENT_VERSION};
+    pt.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+    pt.StateMask = on ? PROCESS_POWER_THROTTLING_EXECUTION_SPEED : 0;
+    SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &pt, sizeof(pt));
+    SetThreadPriority(GetCurrentThread(), on ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_ABOVE_NORMAL); // back to the startup priority after
+}
+
+bool GameNow(double now) { // checked about once a second, shared by both halves of a pair
+    static double at = -10;
+    if (now - at >= kGameCheckSec) {
+        at = now;
+        GameMode(GameInFront());
+    }
+    return gameMode;
+}
+
 double Seconds() {
     static LARGE_INTEGER freq = [] {
         LARGE_INTEGER f;
@@ -45,6 +105,7 @@ Stage::Stage(Model& m, HMONITOR mon, bool focus) : model(m), mode(m.Look()) {
         wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         return RegisterClassExW(&wc) != 0;
     }();
+    ++liveStages; // paired with the destructor, even when building fails
     if (!registered) return;
     MONITORINFO mi = {sizeof(mi)};
     if (!mon) mon = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
@@ -79,6 +140,7 @@ Stage::~Stage() {
     if (frameWait) CloseHandle(frameWait);
     if (leaveTick) CloseHandle(leaveTick);
     if (hwnd) DestroyWindow(hwnd);
+    if (--liveStages <= 0) GameMode(false); // the last of the pair: full speed again
 }
 
 bool Stage::MakeDev(UINT pxW, UINT pxH) {
@@ -317,8 +379,9 @@ void Stage::Seek(const D2D1_RECT_F& r, float show) { // the media page's wave, s
 }
 
 float Stage::LyricSize() const {
-    if (role == kLyrics) return std::clamp((std::min)(H * 0.084f, W * 0.052f), 30.0f, 160.0f); // a screen of its own: big enough to read across the room
-    return std::clamp(H * 0.06f, 26.0f, 78.0f); // bold: the sung line is the room's headline
+    float pick = model.lyricScale / 100.0f; // the settings' lyric size; a new size re-lays the lines, the blur bakes again
+    if (role == kLyrics) return std::clamp((std::min)(H * 0.084f, W * 0.052f), 30.0f, 160.0f) * pick; // a screen of its own: big enough to read across the room
+    return std::clamp(H * 0.06f, 26.0f, 78.0f) * pick; // bold: the sung line is the room's headline
 }
 
 D2D1_RECT_F Stage::LyricRect() const {
@@ -608,7 +671,10 @@ void Stage::Frame(const Theme& media) {
     HRESULT hr = ctx->EndDraw();
     input.pressed = input.released = input.rclick = false;
     input.wheel = 0;
-    bool lively = left + right > 0.03f || beat > 0.02f || ui.Busy() || ui.Captured() || (show > 0.01f && show < 0.99f) || tip > 0.001f || lyrMoving || lyrics.Busy() || swapDim > 0.001f;
-    UINT sync = lively ? 1 : 2; // paused or silent: half rate, the slow drift doesn't need every refresh
+    bool fast = ui.Busy() || ui.Captured() || (show > 0.01f && show < 0.99f) || tip > 0.001f || lyrMoving || lyrics.Busy() || swapDim > 0.001f;
+    bool ambient = left + right > 0.03f || beat > 0.02f; // only the music-driven light moves
+    double hz = RefreshOf(screen);
+    bool game = GameNow(now); // a game in front elsewhere: nothing needs more than the ambient rate
+    UINT sync = SyncFor(hz, fast && !game ? kFastFps : fast || ambient ? kAmbientFps : kQuietFps); // capped at 60 on fast screens; the slow drift needs far less
     if (FAILED(hr) || FAILED(swap->Present(sync, 0))) done = true; // device lost: just leave, the panel is one hover away
 }

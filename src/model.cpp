@@ -23,7 +23,7 @@ unsigned long long Ticks(const FILETIME& f) { // filetime -> 100ns count
 
 namespace {
 constexpr wchar_t kLookVal[] = L"Appearance";
-constexpr int kLooks = Model::kLookHalo + 1;
+constexpr int kLooks = Model::kLookStarfall + 1; // dark, light, glass, custom, halobar's, starfall
 constexpr wchar_t kQuietVal[] = L"Quiet"; // do not disturb: halobar reads and writes the same value
 constexpr wchar_t kHaloKey[] = L"Software\\HaloBar"; // halobar's own settings, never written from here
 constexpr wchar_t kHaloClass[] = L"HaloBar"; // its window: there means it's running
@@ -91,9 +91,10 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     tiles = tl.empty() ? std::vector<int>{kTlSnip, kTlColor, kTlAwake, kTlDnd, kTlSettings} : ParseList(tl, kTileKeys, kToolTiles); // the tiles the tools page always had
     stageHide = flag(L"StageHide", 1);
     uiScale = (std::clamp)(sys::ReadNum(L"UiScale", 100), 80, 130);
+    lyricScale = (std::clamp)(sys::ReadNum(L"LyricScale", 100), kLyricMin, kLyricMax);
     bgOpacity = (std::clamp)(sys::ReadNum(L"BgOpacity", kMaxOpacity), kMinOpacity, kMaxOpacity);
     pillAlways = flag(L"PillAlways", 0);
-    pillDesk = flag(L"PillDesktop", 0);
+    pillDesk = flag(L"PillDesktop", 1); // on out of the box: the island stays in sight on an empty desktop
     pillLeft = (std::clamp)(sys::ReadNum(L"PillLeft", kWWeather), 0, kWidgets - 1);
     pillRight = (std::clamp)(sys::ReadNum(L"PillRight", kWCpu), 0, kWidgets - 1);
     mediaCompact = flag(L"MediaCompact", 0);

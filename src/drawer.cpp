@@ -2,6 +2,7 @@
 #include "entry.h"
 
 #include "glyphs.h"
+#include "starfall.h"
 
 #include <dwmapi.h>
 #include <shellscalingapi.h>
@@ -37,6 +38,8 @@ constexpr int kShadeSecs = 30; // glass: how often what's behind it is looked at
 constexpr float kShadeBand = 8, kShadeGap = 4; // the band read just past the open panel, dips
 constexpr float kShadeStep = 0.04f; // smaller changes keep the tint as it is
 constexpr float kShadeRate = 5; // the tint eases over in about a second
+constexpr double kSkyWrap = 100000; // seconds before the sky's clock wraps: float keeps ~10 ms precision that far
+constexpr float kOrbFps = 20; // starfall's drifting orb: frames per second while it's the only thing moving
 
 double Seconds() {
     static LARGE_INTEGER freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
@@ -305,6 +308,7 @@ void Drawer::KeyOpen() {
 }
 
 void Drawer::Close() {
+    SyncRailKeys(false);
     if (keys) { // the keyboard goes back where it was
         keys = false;
         if (GetForegroundWindow() == hwnd && keysFrom && IsWindow(keysFrom)) SetForegroundWindow(keysFrom);
@@ -588,6 +592,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         armed = false;
         islandHot = false;
         input.mouse = {-1e6f, -1e6f}; // park offscreen to clear hover
+        SyncRailKeys(false); // off the panel: the arrows go back at once, not on the next frame
         if ((opened || island) && !dragging && GetCapture() != hwnd) {
             bool pill = island && !opened;
             if (!(pill && Stays())) // always: the pill stays put
@@ -937,6 +942,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         break;
+    case WM_HOTKEY: // the arrows, held only while the mouse rests on the rail: the next or previous page, scrolled into view
+        if ((int)wp != kRailKeyPrev && (int)wp != kRailKeyNext) break;
+        if (opened) SetPage(model.PageAt(model.SlotOf(page) + ((int)wp == kRailKeyNext ? 1 : -1)));
+        Redraw();
+        return 0;
     case WM_RBUTTONDOWN:
         return 0;
     case WM_RBUTTONUP:
@@ -973,6 +983,12 @@ void Drawer::PaintShape(ID2D1Geometry* shape, float h) {
     Color body = shellNow.bg;
     if (!shellNow.glass) body.a *= model.BgOpacity() / 100.0f; // the solid looks can let the desktop through a little
     canvas->FillGeometry(shape, body); // dark mode: black, blends with screen bezel
+    D2D1_RECT_F sky{};
+    if (shellNow.stars && SUCCEEDED(shape->GetBounds(nullptr, &sky))) { // starfall: the pill and the panel both wear the sky; a resting pill bakes it once into its layer
+        bool alive = opened && !islandLook && !model.reduceMotion; // the open panel's orb drifts and its dust breathes; the pill and calm motion hold still
+        float t = alive ? (float)std::fmod(lastFrame, kSkyWrap) + 0.001f : 0;
+        starfall::Sky(*canvas, {sky.left + cfg.fillet, sky.top, sky.right - cfg.fillet, sky.bottom}, 0, shellNow, t, body.a, 0, shape, 1, alive);
+    }
     if (shellNow.glass && glassShadeNow > 0.01f) // over a white page: neutral smoked glass under the highlights, the blur still shows through
         canvas->FillGeometry(shape, Color{0, 0, 0, 0.42f * glassShadeNow});
     if (shellNow.glass) { // liquid glass: glossy light from above and a bright specular rim
@@ -1060,6 +1076,7 @@ void Drawer::Frame() {
     ctx->PushAxisAlignedClip(vis, D2D1_ANTIALIAS_MODE_ALIASED); // the surface is panel-sized, the window shows only this corner: work only there
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0)); // transparent, desktop shows through via dcomp
     bool uiBusy = false, ambient = false;
+    railHot = false; // the body sets it again while the mouse stays on the rail
     ComPtr<ID2D1Geometry> outline; // this frame's shape, the glass blur is cut to it
     if (h > 0.5f) {
         float shapeWide = Span();
@@ -1103,6 +1120,7 @@ void Drawer::Frame() {
     HRESULT hr = ctx->EndDraw();
     input.pressed = input.released = input.rclick = false;
     input.wheel = 0;
+    SyncRailKeys(railHot);
     if (hr == D2DERR_RECREATE_TARGET) { // device lost, rebuild next frame
         FreeDev();
         needsFrame = true;
@@ -1119,7 +1137,9 @@ void Drawer::Frame() {
         Perf(Seconds() - drawT0);
     }
     Govern(fast, gap);
-    UINT calm = islandLook && !opened ? pillSync : ambientSync; // ambient motion at ~30 fps, the resting pill's little bars at ~15
+    bool orb = shellNow.stars && opened && !islandLook && !model.reduceMotion && h > 24; // starfall's orb drifts only while the open panel shows
+    UINT orbSync = (UINT)(std::clamp)((int)std::lround(hz / kOrbFps), 1, 4); // ~20 fps; dxgi caps the interval at 4
+    UINT calm = islandLook && !opened ? pillSync : orb && !ambient ? (std::max)(ambientSync, orbSync) : ambientSync; // ambient motion at ~30 fps, the orb alone ~20, the resting pill's little bars ~15
     if (glass) { // no swapchain: the frame lands with the blur outline, a timer paces the next one
         GlassPresent();
         LARGE_INTEGER due;
@@ -1134,7 +1154,7 @@ void Drawer::Frame() {
         needsFrame = true;
         return;
     }
-    needsFrame = fast || (ambient && h > 0.5f && !Unseen()); // otherwise go idle until next input; locked or dark: ambient motion waits too
+    needsFrame = fast || ((ambient || orb) && h > 0.5f && !Unseen()); // otherwise go idle until next input; locked or dark: ambient motion waits too
     if (pillCached && islandLook && pillKey != trimKey) { // a new resting pill: tidy up once it has settled
         trimKey = pillKey;
         SetTimer(hwnd, kTrimTimer, kTrimMs, nullptr);
