@@ -40,6 +40,7 @@ IDWriteFactory5* DWrite();
 IWICImagingFactory* Wic();
 
 IDWriteTextFormat* TextFmt(Weight weight, float size, Align align); // cached, pointer stays valid until Shutdown
+IDWriteTextFormat* LyricFmt(float size); // the lyrics' rounder face, left aligned
 IDWriteTextFormat* IconFmt(float size, bool filled); // outline or filled symbol font
 
 ComPtr<IWICBitmapSource> Decode(const uint8_t* data, size_t size, UINT maxPx); // downscaled to maxPx, pbgra out

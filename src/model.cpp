@@ -3,6 +3,8 @@
 #include <iphlpapi.h>
 #include <icmpapi.h>
 #include "glyphs.h"
+#include "live.h"
+#include "live_page.h"
 #include "pages.h"
 #include "picker.h"
 #include <shellapi.h>
@@ -29,7 +31,7 @@ constexpr wchar_t kHaloKey[] = L"Software\\HaloBar"; // halobar's own settings, 
 constexpr wchar_t kHaloClass[] = L"HaloBar"; // its window: there means it's running
 
 constexpr wchar_t kPagesVal[] = L"PageOrder", kTilesVal[] = L"ToolTiles"; // saved by name: a new page or tile later never shifts the old ones
-const wchar_t* const kPageKeys[Model::kPageIds] = {L"home", L"media", L"system", L"network", L"tools", L"shelf"};
+const wchar_t* const kPageKeys[Model::kPageIds] = {L"home", L"media", L"system", L"network", L"tools", L"shelf", L"live"};
 const wchar_t* const kTileKeys[Model::kToolTiles] = {L"screenshot", L"color", L"awake", L"notifications", L"dnd", L"saver", L"airplane", L"settings"};
 constexpr wchar_t kNoneVal[] = L"none"; // every tile taken off: an empty text would read as never set
 
@@ -413,6 +415,7 @@ int Model::OpenPage() const {
 
 void Model::SetPages(const std::vector<int>& order) {
     if (order.empty()) return; // one page always stays
+    LivePagesChanged(pages, order, kPgLive); // the live page's first time on: its setup opens
     pages = order;
     sys::SaveText(kPagesVal, JoinList(pages, kPageKeys));
 }
@@ -423,12 +426,12 @@ void Model::SetTiles(const std::vector<int>& order) {
 }
 
 const wchar_t* Model::PageName(int id) {
-    static const wchar_t* const kNames[kPageIds] = {L"Home", L"Media", L"System", L"Network", L"Tools", L"Shelf"};
+    static const wchar_t* const kNames[kPageIds] = {L"Home", L"Media", L"System", L"Network", L"Tools", L"Shelf", L"Live"};
     return kNames[(std::clamp)(id, 0, kPageIds - 1)];
 }
 
 int Model::PageGlyph(int id) {
-    static const int kGlyphs[kPageIds] = {glyph::Overview, glyph::Music, glyph::System, glyph::Network, glyph::Tools, glyph::Shelf};
+    static const int kGlyphs[kPageIds] = {glyph::Overview, glyph::Music, glyph::System, glyph::Network, glyph::Tools, glyph::Shelf, glyph::Live};
     return kGlyphs[(std::clamp)(id, 0, kPageIds - 1)];
 }
 

@@ -35,9 +35,11 @@ bool Act(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const wchar_
 void Head(Ui& ui, const Theme& t, const D2D1_RECT_F& r, const wchar_t* label, bool spin); // list section header
 void Empty(Canvas& c, const Theme& t, const D2D1_RECT_F& v, int glyph, const wchar_t* title, const wchar_t* sub);
 void Bars(Canvas& c, const Theme& t, float x, float bottom, int quality, Color lit); // 4-step signal meter
-float Scroll(Ui& ui, const char* id, float& target, const D2D1_RECT_F& view, float content); // wheel -> eased offset
+float Scroll(Ui& ui, const char* id, float& target, const D2D1_RECT_F& view, float content, bool wheel = true); // wheel -> eased offset; wheel false: left to a widget
 bool Knob(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const wchar_t* label, const std::wstring& value, float& v, bool live,
-          bool& released); // label, slider, value text; true while dragging, released on let go
+          bool& released, float step = 0.05f); // label and value over a roomy track; true when v changed, released on let go or a wheel notch
+constexpr float kSlideH = 46; // a Knob's row: its label line and the track under it
+bool OverSlider(const Ui& ui); // the mouse rests on a slider: the page leaves the wheel to it
 void Fades(Canvas& c, const Theme& t, const D2D1_RECT_F& view, float scroll, float content); // hint more above/below
 D2D1_RECT_F Box(Canvas& c, const Theme& t, const D2D1_RECT_F& r, const wchar_t* title); // a settings card, returns its inner area
 int Segmented(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, const wchar_t* const* labels, int n, int cur, bool live); // picked index, -1 none

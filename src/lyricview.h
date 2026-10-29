@@ -19,6 +19,16 @@ public:
     // Draws into r at song time t (seconds); returns the time of a line that was clicked, or -1.
     double Draw(ID2D1DeviceContext* ctx, Canvas& c, Ui& ui, const D2D1_RECT_F& r, double t, float alpha, const Theme& look, bool playing);
     void Waiting(Canvas& c, const D2D1_RECT_F& r, float alpha, const Theme& look, double now); // the next song's lyrics are on their way
+    struct Look { // the full player's look by default; the lyrics half of a two screen pair sets its own
+        float anchor = 0.30f; // the sung line sits this far down the column
+        float shrink = 0.045f; // lines out of turn this much smaller
+        float gap = 0.62f; // air between lines, a share of the type size
+        float stiff = 150, stiffStep = 11, damp = 0.9f; // the glide: the farther a line, the later it lands
+        float dim = 0.34f, dimLit = 0.42f; // lines out of turn, and the unsung words of the sung line
+        float haze = 1; // how far out of focus the lines away from the sung one go
+        float dimStep = 0.04f; // each line further out this much dimmer, up to four
+    };
+    void Style(const Look& l); // relays the sweep's colors if they change
 
 private:
     struct Span { // one visual line of a wrapped lyric
@@ -64,4 +74,5 @@ private:
     float gap = 0; // interlude spacer height, eased
     int focus = 0; // the sung line, where baking starts
     bool placed = false, moving = false;
+    Look style;
 };

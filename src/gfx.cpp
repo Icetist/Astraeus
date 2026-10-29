@@ -22,6 +22,8 @@ struct State {
     ComPtr<IDWriteFactory5> dw;
     ComPtr<IWICImagingFactory> wic;
     ComPtr<IDWriteFontCollection1> textFonts, iconLine, iconFill; // private bundled fonts, not installed
+    ComPtr<IDWriteFontCollection1> lyricFonts; // the rounder lyrics face, loaded the first time lyrics show
+    std::wstring lyricFam;
     std::wstring textFam = L"Segoe UI Variable Text"; // fallback if outfit fails to load
     std::wstring lineFam, fillFam;
     std::vector<FmtEntry> formats; // few entries, linear scan is fine
@@ -205,6 +207,13 @@ IWICImagingFactory* Wic() { return g->wic.Get(); }
 IDWriteTextFormat* TextFmt(Weight weight, float size, Align align) {
     uint64_t key = (uint64_t)weight << 40 | (uint64_t)(size * 10) << 8 | (uint64_t)align << 1; // size in 0.1 steps
     return Cached(key, g->textFonts.Get(), g->textFam, (DWRITE_FONT_WEIGHT)weight, size, ToDw(align));
+}
+
+IDWriteTextFormat* LyricFmt(float size) {
+    if (!g->lyricFonts && (g->lyricFonts = LoadRes({208}))) g->lyricFam = FirstFam(g->lyricFonts.Get(), L"Nunito"); // only once a song's words are up
+    if (!g->lyricFonts) return TextFmt(Weight::Semi, size, Align::Left);
+    uint64_t key = (1ull << 61) | (uint64_t)(size * 10) << 8; // bit 61 keeps lyrics apart from text and icon keys
+    return Cached(key, g->lyricFonts.Get(), g->lyricFam, DWRITE_FONT_WEIGHT_EXTRA_BOLD, size, DWRITE_TEXT_ALIGNMENT_LEADING);
 }
 
 IDWriteTextFormat* IconFmt(float size, bool filled) {

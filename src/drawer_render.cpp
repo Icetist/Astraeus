@@ -3,7 +3,9 @@
 #include <d2d1effects.h>
 
 #include "drawer.h"
+#include "entry.h"
 #include "glyphs.h"
+#include "live_page.h"
 #include "pages.h"
 
 namespace {
@@ -286,8 +288,9 @@ void Drawer::SyncAccent() {
 }
 
 void Drawer::SyncTyping() {
-    if (model.Typing() == typing) return;
-    typing = model.Typing();
+    bool want = model.Typing() || StagePrefs::Get().capture || Entry::Get().focus; // a text field, or settings waiting for a fullscreen key
+    if (want == typing) return;
+    typing = want;
     if (typing) { // the panel never takes focus normally, its text fields are the exception
         typingFrom = GetForegroundWindow();
         SetForegroundWindow(hwnd);
@@ -395,7 +398,8 @@ void Drawer::DrawBody(float h, float dt, double now) {
     float ssheet = ui.Smooth(Ui::Id("set.sheet"), model.settingsOpen ? 1.0f : 0, 14); // settings open anim
     float csheet = ui.Smooth(Ui::Id("cal.sheet"), model.calOpen ? 1.0f : 0, 14); // calendar open anim
     float msheet = ui.Smooth(Ui::Id("mix.sheet"), model.mixerOpen ? 1.0f : 0, 14); // volume mixer open anim
-    float under = 1 - anim::Clamp01((std::max)((std::max)((std::max)(sheet, wsheet), (std::max)(ssheet, csheet)), msheet) * 1.6f); // the page fades out as a sheet fades in, a crossfade, not a stack
+    float lsheet = LiveSheetK(ui); // the live page's setup, over everything
+    float under = 1 - anim::Clamp01((std::max)((std::max)((std::max)(sheet, wsheet), (std::max)(ssheet, csheet)), (std::max)(msheet, lsheet)) * 1.6f); // the page fades out as a sheet fades in, a crossfade, not a stack
     float pageAlpha = e * under;
     bool fading = pageAlpha < 0.999f;
     ctx->SetTransform(D2D1::Matrix3x2F::Translation(0, slide) * base);
@@ -408,7 +412,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
     pc.flip = coverPrev ? ui.SmoothFrom(Ui::Id("cover.flip", (int)coverId), 1, 0, kFlipRate) : 1;
     pc.coverPrev = art && pc.flip < 0.5f ? coverPrev.Get() : nullptr;
     if (pc.flip > 0.999f) coverPrev.Reset(); // turned: the old one can go
-    ui.Block(sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f || csheet > 0.01f || msheet > 0.01f); // page under a sheet takes no input
+    ui.Block(sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f || csheet > 0.01f || msheet > 0.01f || lsheet > 0.01f); // page under a sheet takes no input
     if (under > 0.001f) { // a sheet that has taken over hides the page, skip drawing it
         switch (page) {
         case Model::kPgHome: DrawHome(pc); break;
@@ -416,12 +420,13 @@ void Drawer::DrawBody(float h, float dt, double now) {
         case Model::kPgSystem: DrawSys(pc); break;
         case Model::kPgNetwork: DrawNet(pc); break;
         case Model::kPgTools: DrawTools(pc); break;
+        case Model::kPgLive: DrawLive(pc); break;
         default: DrawShelf(pc); break;
         }
     }
     if (fading) ctx->PopLayer();
     ctx->SetTransform(base);
-    ui.Block(false);
+    ui.Block(lsheet > 0.01f); // the sheets under the live setup take no input either
     if (sheet > 0.001f) {
         PageCtx bc{ui, model, shellNow, mediaNow, nullptr, nullptr, 1, area};
         DrawBt(bc, sheet);
@@ -447,6 +452,12 @@ void Drawer::DrawBody(float h, float dt, double now) {
         PageCtx mc{ui, model, shellNow, mediaNow, nullptr, nullptr, 1, area};
         DrawMixer(mc, msheet);
         pc.wantClose = pc.wantClose || mc.wantClose;
+    }
+    ui.Block(false);
+    if (lsheet > 0.001f) {
+        PageCtx lc{ui, model, shellNow, mediaNow, nullptr, nullptr, 1, area};
+        DrawLiveSetup(lc, lsheet);
+        if (lc.wantPage >= 0) pc.wantPage = lc.wantPage; // saved: the live page shows
     }
     DrawRailTip(shellNow); // over the page and its sheets
 
@@ -474,8 +485,70 @@ void Drawer::PlayFull() {
 void Drawer::OpenStage() {
     if (opened) stageAway = false; // asked from the panel: it comes back when the stage leaves; a resting pill or a notice isn't the panel
     Close(); // the panel steps aside, the stage covers this screen
-    stage = std::make_unique<Stage>(model, MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY));
+    stageHome = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
+    stage = std::make_unique<Stage>(model, stageHome);
     if (!stage->Ok()) stage.reset();
+    twinSplit = -1; // the first frame decides whether a second screen joins
+    twinFailed = false;
+}
+
+HMONITOR Drawer::TwinScreen() const { // the nearest other screen
+    if (GetSystemMetrics(SM_CMONITORS) < 2) return nullptr; // one screen: the split does nothing
+    struct Near {
+        HMONITOR home, best;
+        RECT at;
+        double d;
+    } n{stageHome, nullptr, {}, 1e300};
+    MONITORINFO mi = {sizeof(mi)};
+    if (GetMonitorInfoW(stageHome, &mi)) n.at = mi.rcMonitor;
+    EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR m, HDC, LPRECT r, LPARAM lp) -> BOOL { // the closest by centre: the one beside it, not across the room
+        auto* n = reinterpret_cast<Near*>(lp);
+        if (m == n->home) return TRUE;
+        double dx = (r->left + r->right - n->at.left - n->at.right) / 2.0, dy = (r->top + r->bottom - n->at.top - n->at.bottom) / 2.0;
+        if (dx * dx + dy * dy < n->d) n->d = dx * dx + dy * dy, n->best = m;
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&n));
+    return n.best;
+}
+
+void Drawer::SyncTwin() {
+    if (stage->Leaving()) return;
+    const StagePrefs& p = StagePrefs::Get();
+    if (p.split != twinSplit) { // the setting moved, or the screens did: where does the other half go
+        twinSplit = p.split;
+        HMONITOR want = p.split ? TwinScreen() : nullptr;
+        if (twin && twin->Screen() != want) twin.reset(); // off, or that screen went: its window goes
+        if (want && !twin && !twinFailed) {
+            twin = std::make_unique<Stage>(model, want, false); // the keyboard stays with the first
+            if (!twin->Ok()) twin.reset(), twinFailed = true;
+        }
+    }
+    Stage::Role mine = !twin ? Stage::kWhole : p.swap ? Stage::kLyrics : Stage::kCover;
+    stage->SetRole(mine);
+    if (twin) twin->SetRole(mine == Stage::kCover ? Stage::kLyrics : Stage::kCover);
+}
+
+void Drawer::StageFrame() {
+    constexpr WPARAM kHaloPlayer = 120; // halobar opens its player panel on this command: the fullscreen player it asked for has closed
+    SyncTwin();
+    stage->Frame(mediaNow);
+    if (twin && WaitForSingleObject(twin->Wait(), 0) == WAIT_OBJECT_0) twin->Frame(mediaNow); // its own screen's pace: drawn when that screen is ready, never waited on
+    if (twin && twin->Leaving() != stage->Leaving()) stage->Leave(), twin->Leave(); // closing either half closes both
+    if (stage->Leaving() && !stageBack) { // fullscreen fades out over the panel dropping open on the media page, where it came from
+        stageBack = true; // once, for the pair
+        if (stageHalo) {
+            if (HWND halo = FindWindowW(L"HaloBar", nullptr)) PostMessageW(halo, WM_COMMAND, kHaloPlayer, 0); // where it came from: halobar's player panel
+        } else if (!stageAway) {
+            if (page != Model::kPgMedia) SetPage(Model::kPgMedia); // the media page
+            pageSet = true; // even with a fixed opening page picked in settings
+            Open();
+        }
+    }
+    if (stage->Done() && (!twin || twin->Done())) { // their windows, devices and audio capture all go with them
+        twin.reset();
+        stage.reset();
+        stageBack = stageAway = stageHalo = false;
+    }
 }
 
 void Drawer::DrawHint(float h) {

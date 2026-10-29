@@ -22,8 +22,9 @@ constexpr float kMinRow = 196; // cards never squeeze below this: the page scrol
 constexpr float kLyricsRow = 112; // the lyrics card is a single switch, a shorter row
 constexpr float kNoteLines = 44; // three short lines of a note beside a small picture
 constexpr float kDndW = 44; // the do not disturb pill in the notifications card
-constexpr float kDeskRowH = 30, kDeskLift = 24; // the island card's desktop switch, and how far the slider rises to make room for it
+constexpr float kDeskRowH = 30; // the island card's desktop switch
 constexpr int kSwatchCols = 3; // material swatches per row
+constexpr double kWheelHold = 0.4; // seconds the page keeps the wheel after it scrolled
 constexpr float kSwatchGap = 10;
 float Rad(float deg) { return deg * kPi / 180; }
 
@@ -389,7 +390,7 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // five swatches dr
     D2D1_RECT_F in = Box(c, t, r, L"MATERIAL");
     bool glass = m.look == 2;
     Seed s = Base(m, t);
-    constexpr float extra = 40; // room for the frost bar, or the opacity bar on the solid looks
+    constexpr float extra = kSlideH + 6; // room for the blur slider, or the opacity slider on the solid looks
     float sw = (Width(in) - 2 * kSwatchGap) / kSwatchCols, sh = (std::min)((Height(in) - extra - 2 * 18 - 6) / 2, sw * 0.62f); // three, then the rest, a label under each
     static const wchar_t* const kNames[] = {L"Dark", L"Light", L"Glass", L"Custom", L"HaloBar"};
     int looks = m.halo.FollowsUs() && !m.Following() ? Model::kLookHalo : Model::kLookHalo + 1; // halobar following us: no swatch to follow it back, unless already picked
@@ -426,21 +427,11 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // five swatches dr
         int& field = glass ? m.glassBlur : m.bgOpacity;
         int lo = glass ? 0 : Model::kMinOpacity;
         float v = (field - lo) / (float)(100 - lo);
-        uint32_t id = Ui::Id(glass ? "set.blur" : "set.opacity");
-        c.TextSp(glass ? L"BLUR" : L"OPACITY", Rect(in.left + 2, in.bottom - 38, 80, 12), Weight::Medium, 9.5f, t.textLow, 1.6f);
-        c.Text(std::to_wstring(field) + L"%", Rect(in.right - 60, in.bottom - 41, 58, 16), Weight::Semi, 12, t.accentHi, Align::Right);
-        D2D1_RECT_F bar = {in.left + 2, in.bottom - 20, in.right - 2, in.bottom - 6}; // clear on the left, frosted or solid on the right
-        D2D1_RECT_F track = Inset(bar, 7, -6); // the knob stays inside the ends; a taller grab zone
-        if (live && ui.Slider(id, track, v, false)) field = lo + (int)(v * (100 - lo) + 0.5f); // live preview
-        if (ui.IsActive(id) && ui.In().released) m.SetPref(field, glass ? L"GlassBlur" : L"BgOpacity", field);
-        float hot = ui.Smooth(id + 1, ui.IsActive(id) || (live && Inside(track, ui.In().mouse)) ? 1.0f : 0, 16);
-        float rad = Height(bar) / 2, cy = (bar.top + bar.bottom) / 2, x = track.left + Width(track) * ((field - lo) / (float)(100 - lo));
-        c.FillH(bar, rad, Color{1, 1, 1, 0.04f}, Color{1, 1, 1, 0.55f}); // the frost or the body itself, thicker as it goes
-        c.Stroke(bar, rad, t.hairTop, 1);
-        c.FillH({bar.left, bar.top, x + rad, bar.bottom}, rad, t.accent.Alpha(0.35f), t.accentHi.Alpha(0.55f));
-        if (hot > 0.01f) c.Glow({x, cy}, 22, 18, t.accent.Alpha(0.35f * hot));
-        c.Dot({x, cy}, rad + 4 + 2 * hot, Color{1, 1, 1, 1});
-        c.Ring({x, cy}, rad + 4 + 2 * hot, t.accent, 2);
+        bool done = false;
+        if (Knob(ui, t, Ui::Id(glass ? "set.blur" : "set.opacity"), {in.left, in.bottom - kSlideH, in.right, in.bottom}, glass ? L"Blur" : L"Opacity",
+                 std::to_wstring(field) + L"%", v, live, done))
+            field = lo + (int)(v * (100 - lo) + 0.5f); // live preview
+        if (done) m.SetPref(field, glass ? L"GlassBlur" : L"BgOpacity", field);
     }
 }
 
@@ -606,15 +597,16 @@ void Island(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the pill over a ma
     c.Fill(pill, ph / 2, Color{0.02f, 0.02f, 0.03f, 0.95f});
     c.Dot({pill.right - ph * 0.9f, (pill.top + pill.bottom) / 2}, ph * 0.22f, t.accent.Alpha(0.5f + 0.5f * always)); // its little visualizer, lit when it stays
 
-    float x0 = scr.right + 18, cy = (in.top + in.bottom) / 2 - kDeskLift, rw = in.right - x0 - 2; // the desktop switch sits under the slider
+    float x0 = scr.right + 18, rw = in.right - x0 - 2; // slider, note, then the desktop switch, as one block in the middle
+    float y = (in.top + in.bottom) / 2 - (kSlideH + 8 + 30 + 6 + kDeskRowH) / 2;
     float v = StayToSlider(m.islandSecs);
     bool done = false;
-    if (Knob(ui, t, Ui::Id("set.stay"), Rect(x0, cy - 22, rw, 22), L"Stays", StayText(m.islandSecs), v, live, done))
+    if (Knob(ui, t, Ui::Id("set.stay"), Rect(x0, y, rw, kSlideH), L"Stays", StayText(m.islandSecs), v, live, done, 0.04f))
         m.islandSecs = SliderToStay(v); // any time from a moment to five minutes, or always at the end
     if (done) m.SetPref(m.islandSecs, L"IslandSecs", m.islandSecs);
-    c.Text(m.IslandAlways() ? L"Up whenever music plays" : L"Over maximized windows,\nafter you move away",
-           Rect(x0, cy + 6, rw, 30), Weight::Light, 10.5f, t.textLow);
-    D2D1_RECT_F desk = Rect(x0, cy + 40, rw, kDeskRowH); // off: on the desktop a hover drops the whole panel, as before
+    y += kSlideH + 8;
+    c.Text(m.IslandAlways() ? L"Up whenever music plays" : L"Over maximized windows,\nafter you move away", Rect(x0, y, rw, 30), Weight::Light, 10.5f, t.textLow);
+    D2D1_RECT_F desk = Rect(x0, y + 36, rw, kDeskRowH); // off: on the desktop a hover drops the whole panel, as before
     Ui::Hit h = live ? ui.Button(Ui::Id("set.desk", 1), {desk.left, desk.top, desk.right - 52, desk.bottom}) : Ui::Hit{}; // the words flip it too
     c.Text(L"Pill on the desktop", {desk.left, desk.top, desk.right - 56, desk.bottom}, Weight::Regular, 11.5f, h.hover ? t.text : t.text.Mix(t.textDim, 0.25f));
     if ((w::Switch(ui, t, Ui::Id("set.desk"), {desk.right - 24, (desk.top + desk.bottom) / 2}, m.pillDesk != 0, live) || h.clicked) && live)
@@ -686,7 +678,10 @@ void DrawSettings(PageCtx& p, float k) {
     float ch = (std::max)(kMinRow, (Height(grid) - rows * kGap - kLyricsRow) / rows); // short page: cards keep their size and the page scrolls
     static float prefsH = 0; // the newer cards' height, as they measured last frame
     float content = rows * (ch + kGap) + kLyricsRow + (frame.tall ? kLyricsRow + kGap : 0) + kGap + prefsH; // the sidebar stacks lyrics and motion
-    float scroll = Scroll(ui, "set.scroll", settingsScroll, grid, content);
+    static double scrolledAt = -10; // a scroll in flight keeps the wheel even as a slider passes under the mouse
+    bool pageWheel = !OverSlider(ui) || ui.Now() - scrolledAt < kWheelHold;
+    if (pageWheel && ui.In().wheel != 0 && Inside(grid, ui.In().mouse)) scrolledAt = ui.Now();
+    float scroll = Scroll(ui, "set.scroll", settingsScroll, grid, content, pageWheel);
     D2D1_RECT_F view = grid;
     live = live && (Inside(view, ui.In().mouse) || ui.Captured()); // cards scrolled out of view can't be hit through the header; a slider being dragged keeps following past it
     c.PushClip(view);

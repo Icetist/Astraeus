@@ -45,7 +45,7 @@ public:
     void Frame();
 
 private:
-    enum : UINT_PTR { kHoverTimer = 1, kCloseTimer, kReleaseTimer, kPeekTimer, kDevTimer, kFollowTimer, kTrimTimer = 8, kFullTimer, kGreetTimer, kDeskTimer }; // all one-shot; 7 is the model's
+    enum : UINT_PTR { kHoverTimer = 1, kCloseTimer, kReleaseTimer, kPeekTimer, kDevTimer, kFollowTimer, kTrimTimer = 8, kFullTimer, kGreetTimer, kDeskTimer, kAdoptTimer }; // all one-shot; 7 is the model's
     static constexpr UINT kAdoptMsg = WM_APP + 60; // a hover strip on another screen asks the panel to come over
     static constexpr float kStrip = 3; // idle bezel height in dips, just enough to catch the mouse
     static constexpr UINT kShelfMsg = WM_APP + 61; // the shelf page asked for a drag out, run after the frame: it's modal
@@ -174,6 +174,9 @@ private:
     void Perf(double drawSec);
     void Log(const wchar_t* what) const; // with perflog on: one line about where the panel is, for multi screen reports
     bool FullOn(HMONITOR m) const; // another app fills that screen
+    HMONITOR Refuge() const; // every screen mode: where the pill goes when a game takes its screen
+    void Hop(HMONITOR to); // move there now
+    void Retract(); // panel and hover state dropped instantly
     static bool Overlay(HWND w); // screen sized but never a fullscreen app: an overlay, a click-through layer, a tool window, halobar
     int fullChecks = 0; // the shell said fullscreen: looks left to confirm it, on a short timer
     void OnFullTimer(); // one of those looks
@@ -203,6 +206,13 @@ private:
     void SetMedia(const Theme& t);
     void OpenStage(); // fullscreen ambient player, replaces the panel until it's left
     std::unique_ptr<Stage> stage;
+    std::unique_ptr<Stage> twin; // two screens: the other half of the pair, paced by the first
+    HMONITOR stageHome = nullptr; // the screen fullscreen was opened on
+    int twinSplit = -1; // the two screen setting the pair was last built for
+    bool twinFailed = false; // the second window couldn't be made: not tried again every frame
+    void SyncTwin(); // the second half comes, goes or moves to follow the setting
+    HMONITOR TwinScreen() const; // the nearest other screen; null with one screen
+    void StageFrame(); // both halves: the second draws when its own screen is ready for it
     bool stageBack = false; // the panel already reopened under a leaving stage
     bool greeting = false; // the sign-in greeting is up: the first move of the mouse puts it away
     int greetTries = 0;
@@ -279,6 +289,9 @@ private:
     Seed shellSeed, mediaSeed; // what the palettes were built from, rebuilt on appearance change
     int lookNow = 0;
     HMONITOR followTo = nullptr; // every screen mode: the screen the open panel is moving to
+    bool followCall = false; // a resting pill was called from that screen: once there, it answers like a hover
+    HMONITOR adoptTo = nullptr; // a strip on another screen was touched while the pill rests here: moves after a moment's dwell
+    void Answer(); // just moved to the screen that called: the panel or the pill, as a hover would
     int railTip = -1, railTipShown = -1; // rail icon under the mouse, and the one whose label is showing or fading
     D2D1_POINT_2F railTipAt{};
     void DrawRailTip(const Theme& t);

@@ -6,6 +6,9 @@
 #include "anim.h"
 #include "glyphs.h"
 #include "page_sheet.h"
+#include "entry.h"
+#include "live_settings.h"
+#include "stageprefs.h"
 #include "tray.h"
 
 using namespace sheet;
@@ -51,10 +54,11 @@ void Power(PageCtx& p, const D2D1_RECT_F& r, bool live) { // battery pills: plug
         Flip(m, m.powerPills, L"PowerPills");
     float v = (m.batLow - kBatLowMin) / (float)(kBatLowMax - kBatLowMin);
     bool done = false;
-    if (Knob(ui, t, Ui::Id("set.pwr.low"), Rect(in.left, in.top + kRowH + 6, Width(in), kKnobH), L"Low at", std::to_wstring(m.batLow) + L"%", v, live, done))
+    if (Knob(ui, t, Ui::Id("set.pwr.low"), Rect(in.left, in.top + kRowH + 6, Width(in), kSlideH), L"Low at", std::to_wstring(m.batLow) + L"%", v, live, done,
+             1.0f / (kBatLowMax - kBatLowMin)))
         m.batLow = kBatLowMin + (int)std::lround(v * (kBatLowMax - kBatLowMin));
     if (done) m.SetPref(m.batLow, L"BatteryLow", m.batLow);
-    Note(c, t, in, in.top + 2 * kRowH + 10, L"The low pill shows even in do not disturb");
+    Note(c, t, in, in.top + kRowH + kSlideH + 12, L"The low pill shows even in do not disturb");
 }
 
 const wchar_t* WidgetName(int w) {
@@ -163,6 +167,27 @@ void Media(PageCtx& p, const D2D1_RECT_F& r, bool live) { // what the player is 
         Flip(m, m.stageHide, L"StageHide"); // off: the fullscreen player keeps its buttons up
 }
 
+constexpr float kKeyW = 128; // a fullscreen key's capture chip
+
+void Fullscreen(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the keys that split the fullscreen player across two screens, and swap its halves
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    StagePrefs& sp = StagePrefs::Get();
+    D2D1_RECT_F in = Box(c, t, r, L"FULLSCREEN KEYS");
+    const wchar_t* labels[2] = {L"Two screens", L"Swap screens"};
+    UINT keys[2] = {sp.keySplit, sp.keySwap};
+    for (int i = 0; i < 2; ++i) { // label left, the key on the right: click it, then press the new one
+        D2D1_RECT_F row = Rect(in.left, in.top + i * (kRowH + 4), Width(in), kRowH);
+        bool waiting = sp.capture == i + 1;
+        c.Text(labels[i], {row.left, row.top, row.right - kKeyW - 8, row.bottom}, Weight::Regular, 11.5f, t.text.Mix(t.textDim, 0.25f));
+        D2D1_RECT_F chip = {row.right - kKeyW, row.top + 1, row.right, row.bottom - 1};
+        if (w::Chip(ui, t, Ui::Id("set.fullkey", i), chip, waiting ? std::wstring(L"Press a key") : StagePrefs::Name(keys[i]), waiting) && live) sp.capture = waiting ? 0 : i + 1;
+    }
+    if (sp.capture && ui.In().pressed && !Inside({in.right - kKeyW, in.top, in.right, in.top + 2 * (kRowH + 4)}, ui.In().mouse)) sp.capture = 0; // clicked away: the key stays as it was
+    Note(c, t, in, in.top + 2 * (kRowH + 4) + 2, sp.capture ? L"Esc keeps the key it had" : L"While fullscreen is open, with a second screen");
+}
+
 void Display(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how big everything is
     Ui& ui = p.ui;
     Canvas& c = ui.C();
@@ -173,15 +198,15 @@ void Display(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how big everythin
     if (!ui.IsActive(Ui::Id("set.scale"))) scaleDrag = -1; // let go anywhere, or the panel closed: back to what's saved
     float sv = ((scaleDrag >= 0 ? scaleDrag : m.uiScale) - kScaleMin) / (float)(kScaleMax - kScaleMin);
     bool sdone = false;
-    if (Knob(ui, t, Ui::Id("set.scale"), Rect(in.left, in.top + 4, Width(in), kKnobH), L"Size",
-             std::to_wstring(scaleDrag >= 0 ? scaleDrag : m.uiScale) + L"%", sv, live, sdone))
+    if (Knob(ui, t, Ui::Id("set.scale"), Rect(in.left, in.top + 2, Width(in), kSlideH), L"Size",
+             std::to_wstring(scaleDrag >= 0 ? scaleDrag : m.uiScale) + L"%", sv, live, sdone, 5.0f / (kScaleMax - kScaleMin)))
         scaleDrag = kScaleMin + (int)std::lround(sv * (kScaleMax - kScaleMin) / 5) * 5; // 5% steps
     if (sdone && scaleDrag >= 0) {
         m.SetPref(m.uiScale, L"UiScale", scaleDrag);
         scaleDrag = -1;
     }
-    Note(c, t, in, in.top + kKnobH + 16, L"The panel, the pill and their text, 80 to 130%");
-    Note(c, t, in, in.top + kKnobH + 34, L"Applied when you let go of the slider");
+    Note(c, t, in, in.top + kSlideH + 8, L"The panel, the pill and their text, 80 to 130%");
+    Note(c, t, in, in.top + kSlideH + 26, L"Applied when you let go of the slider");
 }
 
 void Weather(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a city typed in, instead of finding you by your ip address
@@ -271,6 +296,86 @@ void Backup(PageCtx& p, const D2D1_RECT_F& r, bool live) { // export, import, st
     if (fire && host) PostMessageW(host, WM_COMMAND, tray::kReset, 0); // astraeus restarts on its defaults
 }
 
+constexpr float kFieldH = 30; // the code card's field
+constexpr double kShakeSec = 0.32; // a wrong code: a short shake, then still
+constexpr float kShakeAmp = 5, kShakeHz = 4.5f;
+
+void Code(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a plain field: enter checks it, and it clears either way
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Entry& e = Entry::Get();
+    D2D1_RECT_F in = Box(c, t, r, L"CODE");
+    if (e.Settle(ui.Now())) ui.KeepAlive(); // a check running: frames enough to see it land
+    float since = (float)(ui.Now() - e.wrongAt), shake = 0;
+    if (since < kShakeSec) {
+        shake = kShakeAmp * std::sin(since * kShakeHz * 2 * kPi) * (1 - since / (float)kShakeSec);
+        ui.Wake();
+    }
+    D2D1_RECT_F home = Rect(in.left, in.top + 2, Width(in), kFieldH), field = Rect(in.left + shake, in.top + 2, Width(in), kFieldH);
+    Ui::Hit h = live ? ui.Button(Ui::Id("set.code"), home) : Ui::Hit{};
+    c.Fill(field, kFieldH / 2, t.track.Alpha(0.7f));
+    c.Stroke(field, kFieldH / 2, e.focus ? t.accent : h.hover ? t.text.Alpha(0.4f) : t.hairTop, e.focus ? 1.5f : 1);
+    D2D1_RECT_F text = {field.left + 14, field.top, field.right - 30, field.bottom};
+    if (e.focus) {
+        std::wstring dots(e.text.size(), L'•'); // never drawn as typed, never cached
+        float wdt = dots.empty() ? 0 : c.TextOnce(dots, text, Weight::Regular, 12, t.text);
+        if (std::fmod(ui.Now(), 1.0) < 0.55) c.Line({text.left + wdt + 1.5f, field.top + 8}, {text.left + wdt + 1.5f, field.bottom - 8}, t.text, 1.5f); // caret
+        ui.KeepAlive();
+        if (ui.In().pressed && !Inside(home, ui.In().mouse)) e.Drop(); // clicked away: nothing kept
+    }
+    if (e.Working()) Spinner(c, {field.right - 16, (field.top + field.bottom) / 2}, 6, t.textDim, ui.Now());
+    if (h.clicked && !e.focus) e.focus = true;
+}
+
+constexpr float kAdvHeadH = 56; // the advanced section's bar
+constexpr float kAdvRow = 150; // its cards: room for a slider and its notes
+constexpr float kCodeRow = 76;
+bool advOpen = false; // folded each launch: the everyday settings come first
+
+void AdvancedHead(PageCtx& p, const D2D1_RECT_F& r, bool live, float open) { // a bar that unfolds the rest
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    uint32_t id = Ui::Id("set.adv");
+    Ui::Hit h = live ? ui.Button(id, r) : Ui::Hit{};
+    float hover = ui.Smooth(id + 1, h.hover ? 1.0f : 0, 16);
+    c.Fill(r, 16, t.cardHi.Alpha(0.55f).Mix(t.track, 0.4f * hover));
+    c.StrokeV(r, 16, t.hairTop.Mix(t.accent.Alpha(0.6f), open), t.hairBot, 1);
+    D2D1_POINT_2F badge = {r.left + 30, (r.top + r.bottom) / 2};
+    c.Dot(badge, 16, t.track.Mix(t.accent.Alpha(0.3f), open));
+    c.Icon(glyph::Settings, badge, 19, t.textDim.Mix(t.accentHi, open), open > 0.5f);
+    c.Text(L"Advanced", Rect(r.left + 56, r.top + 9, Width(r) - 110, 20), Weight::Medium, 13, t.text);
+    c.Text(L"Power, weather, volume keys, backup and more", Rect(r.left + 56, r.top + 29, Width(r) - 110, 16), Weight::Light, 10.5f, t.textLow);
+    D2D1_POINT_2F o = {r.right - 26, (r.top + r.bottom) / 2}; // a chevron that turns over as it opens
+    float a = open * kPi, s = 5, cs = std::cos(a), sn = std::sin(a);
+    auto turn = [&](float x, float y) { return D2D1_POINT_2F{o.x + x * cs - y * sn, o.y + x * sn + y * cs}; };
+    Color ink = t.textDim.Mix(t.text, hover);
+    c.Line(turn(-s, -s * 0.5f), turn(0, s * 0.5f), ink, 2);
+    c.Line(turn(0, s * 0.5f), turn(s, -s * 0.5f), ink, 2);
+    if (h.clicked) advOpen = !advOpen;
+}
+
+float Advanced(PageCtx& p, const D2D1_RECT_F& area, bool live, int cols) { // power, weather, volume keys, backup, the live page's options, the code; returns its full height
+    float cw = (Width(area) - (cols - 1) * kPrefGap) / cols, y = area.top;
+    int n = 0;
+    auto next = [&] {
+        D2D1_RECT_F r = Rect(area.left + (n % cols) * (cw + kPrefGap), y + (n / cols) * (kAdvRow + kPrefGap), cw, kAdvRow);
+        ++n;
+        return r;
+    };
+    Power(p, next(), live);
+    Weather(p, next(), live);
+    Hud(p, next(), live);
+    Backup(p, next(), live);
+    y += ((n + cols - 1) / cols) * (kAdvRow + kPrefGap);
+    float lh = LiveSettings(p, {area.left, y, area.right, area.bottom}, live); // the live page's sports and news options
+    if (lh > 0) y += lh + kPrefGap;
+    Code(p, Rect(area.left, y, Width(area), kCodeRow), live); // always last
+    y += kCodeRow + kPrefGap;
+    return y - area.top;
+}
+
 }
 
 float DrawPrefs(PageCtx& p, const D2D1_RECT_F& area, bool live, bool tall) {
@@ -290,10 +395,21 @@ float DrawPrefs(PageCtx& p, const D2D1_RECT_F& area, bool live, bool tall) {
     Pill(p, next(), live);
     Media(p, next(), live);
     Display(p, next(), live);
-    Power(p, next(), live);
-    Weather(p, next(), live);
-    Hud(p, next(), live);
-    Backup(p, next(), live);
-    int rows = (n + cols - 1) / cols;
-    return y - area.top + rows * (kPrefRow + kPrefGap);
+    Fullscreen(p, next(), live);
+    y += ((n + cols - 1) / cols) * (kPrefRow + kPrefGap);
+
+    Ui& ui = p.ui;
+    float open = ui.Smooth(Ui::Id("set.adv", 2), advOpen ? 1.0f : 0, 11);
+    if (!advOpen && Entry::Get().focus) Entry::Get().Drop(); // folded away: nothing left typed
+    AdvancedHead(p, Rect(area.left, y, Width(area), kAdvHeadH), live, open);
+    y += kAdvHeadH + kPrefGap;
+    static float advH = 0; // its height as it measured last frame
+    if (open > 0.001f) { // unfolds downward, the cards revealed as it goes
+        float shown = advH * open;
+        ui.C().PushClip({area.left - 4, y - 4, area.right + 4, y + shown});
+        advH = Advanced(p, {area.left, y - (1 - open) * 24, area.right, area.bottom}, live && open > 0.99f, cols); // and rises into place
+        ui.C().PopClip();
+        y += shown;
+    }
+    return y - area.top;
 }

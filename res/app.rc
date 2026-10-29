@@ -11,6 +11,7 @@
 205 RCDATA "fonts\\Outfit-600.ttf"
 206 RCDATA "fonts\\SymbolsOutline.ttf"
 207 RCDATA "fonts\\SymbolsFilled.ttf"
+208 RCDATA "fonts\\Nunito-800.ttf"
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION APP_VER_MAJOR,APP_VER_MINOR,APP_VER_PATCH,0

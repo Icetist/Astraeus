@@ -1,6 +1,8 @@
 #include "drawer.h"
+#include "entry.h"
 
 #include "glyphs.h"
+#include "live.h"
 
 #include <dwmapi.h>
 #include <shellscalingapi.h>
@@ -18,7 +20,6 @@ namespace {
 constexpr UINT kGreetDelayMs = 1500, kGreetPollMs = 100; // the desktop settles before the greeting drops; then a cheap look at the cursor while it's up
 constexpr int kGreetTries = 20; // the gpu or the shell not ready yet: a few more seconds of tries
 constexpr LONG kGreetSlack = 2; // pixels the cursor may drift (a touchpad's jitter) before it counts as moving
-constexpr WPARAM kHaloPlayer = 120; // halobar opens its player panel on this command: the fullscreen player it asked for has closed
 constexpr UINT kTrimMs = 3000; // a resting pill this long after its last whole frame: hand back what startup and the drop left behind
 constexpr UINT kFollowMs = 120; // every screen mode, open: how often to look which screen the cursor is on
 constexpr int kDevTries = 30; // windows lets go of an old composition target a moment later: ~3 seconds of retries, 100 ms apart
@@ -317,6 +318,9 @@ void Drawer::Close() {
     opened = false;
     island = false; // the island retracts with the same spring, its shape stays until it's gone
     model.hexFocus = model.cityFocus = model.tilesEdit = false;
+    live::Sheet().typing = false;
+    Entry::Get().Drop(); // whatever was typed goes with the panel
+    StagePrefs::Get().capture = 0; // a fullscreen key half picked is dropped with the panel
     model.CancelPass();
     SyncTyping(); // hand the keyboard back right away
     if (model.rememberPage && page != model.lastPage) model.SetPref(model.lastPage, L"LastPage", page); // the next launch opens here too
@@ -348,6 +352,18 @@ void Drawer::SyncStay() {
     if (always && !island && !peeking && !dragging && !hidden && !stage && spring.value <= 0.5f) ShowIsland(); // the pill comes back by itself
     else if (!always && stayWasAlways && island && !MouseIn()) Close(); // always was just turned off, or an app came under it
     stayWasAlways = always;
+}
+
+void Drawer::Answer() {
+    if (hidden) return; // a game has this screen
+    if (MouseIn()) { // still at the edge: what a hover there brings
+        islandNext = AppBelow();
+        if (islandNext) ShowIsland();
+        else Open();
+        return;
+    }
+    stayWasAlways = false; // the mouse moved on: the pill comes back here if something holds it up, without closing anything
+    SyncStay();
 }
 
 void Drawer::OnSecond() {
@@ -596,6 +612,24 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             }
             return 0;
         }
+        if (wp == kAdoptTimer) { // the strip on another screen was held: is the mouse still at that screen's edge
+            HMONITOR m = adoptTo;
+            adoptTo = nullptr;
+            POINT pt;
+            GetCursorPos(&pt);
+            bool there = false;
+            for (HWND s : strips) {
+                RECT r;
+                if (GetWindowRect(s, &r) && MonitorFromWindow(s, MONITOR_DEFAULTTONULL) == m && (InflateRect(&r, 2, 2), PtInRect(&r, pt))) there = true; // brushed past and gone: stays put
+            }
+            if (there && island && !opened && !dragging && !peeking && !stage) {
+                followTo = m;
+                followCall = true;
+                Close(); // up on this screen, then it answers on that one
+                Log(L"pill called from another screen");
+            }
+            return 0;
+        }
         if (wp == Model::kCalWaitTimer) { // the calendar link never came
             model.StopCalWait();
             Redraw();
@@ -702,6 +736,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_DPICHANGED:
     case WM_DISPLAYCHANGE:
         FreeDev(); // swapchain size/dpi stale, rebuild lazily
+        twinSplit = -1; // a fullscreen pair looks again for its other screen
         if (!screensNow) mon = sys::FindScreen(screenNow); // the picked screen may have just been plugged back in
         model.screenList.clear(); // settings re-reads the monitors next frame
         Place();
@@ -741,7 +776,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case kAdoptMsg: { // hovered the strip on another screen
         HMONITOR m = (HMONITOR)wp;
-        if (!opened && !dragging && !peeking && spring.value <= 0.5f && m != mon) {
+        if (island && !opened && !dragging && !peeking && !stage && m != mon) { // a resting pill here: after a moment's dwell it goes up and comes down there
+            if (adoptTo != m) adoptTo = m, SetTimer(hwnd, kAdoptTimer, (UINT)cfg.hoverMs, nullptr);
+            return 0;
+        }
+        if (!opened && !dragging && !peeking && !followTo && spring.value <= 0.5f && m != mon) { // a pill already on its way over moves itself
             mon = m;
             FreeDev(); // other screen, maybe other dpi
             Place();
@@ -785,6 +824,9 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_VOLKEY:
         OnVolumeKey((UINT)wp);
         return 0;
+    case live::kMsg: // new scores: drawn if the live page shows
+        if (opened && page == Model::kPgLive) Redraw();
+        return 0;
     case WM_APP_SHELF: // a preview came in
         model.shelf.OnPreview();
         Redraw();
@@ -793,6 +835,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         ShelfOut();
         return 0;
     case WM_CHAR: // only reaches us while a field holds the keyboard
+        if (live::Typing()) {
+            live::OnChar((wchar_t)wp);
+            Redraw();
+            return 0;
+        }
         if (model.passFocus) {
             wchar_t ch = (wchar_t)wp;
             if (ch == 22) { // ctrl+v, first line only, appended in place
@@ -808,6 +855,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 model.passEdit += ch;
             }
             model.passWrong = false;
+            Redraw();
+            return 0;
+        }
+        if (Entry::Get().focus) {
+            Entry::Get().Type((wchar_t)wp);
             Redraw();
             return 0;
         }
@@ -845,13 +897,24 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         break;
     case WM_ACTIVATE:
-        if (LOWORD(wp) == WA_INACTIVE && keys && opened && !model.Typing()) { // clicked away from a panel opened by the keyboard: it goes too
+        if (LOWORD(wp) == WA_INACTIVE && keys && opened && !model.Typing() && !Entry::Get().focus) { // clicked away from a panel opened by the keyboard: it goes too
             keys = false;
             Close();
         }
         return 0;
+    case WM_SYSKEYDOWN: // alt held: only a fullscreen key being picked in settings wants it
+        if (!StagePrefs::Get().capture) break;
+        [[fallthrough]];
     case WM_KEYDOWN:
-        if (keys && !model.Typing()) { // a panel opened from the shortcut: move with the keys
+        if (int which = StagePrefs::Get().capture) { // settings is waiting for a fullscreen key: the next real key is it, esc keeps the old one
+            StagePrefs& sp = StagePrefs::Get();
+            if (wp == VK_SHIFT || wp == VK_CONTROL || wp == VK_MENU || wp == VK_LWIN || wp == VK_RWIN) return 0; // a modifier alone: wait for the key with it
+            if (wp != VK_ESCAPE) sp.SetKey(which == 1 ? sp.keySplit : sp.keySwap, which == 1 ? L"StageSplitKey" : L"StageSwapKey", StagePrefs::Combo((UINT)wp));
+            sp.capture = 0;
+            Redraw();
+            return 0;
+        }
+        if (keys && !model.Typing() && !Entry::Get().focus) { // a panel opened from the shortcut: move with the keys
             if (wp == VK_ESCAPE) Close();
             else if (wp == VK_RIGHT || wp == VK_DOWN) SetPage(model.PageAt(model.SlotOf(page) + 1)); // the rail's order, not the pages' numbers
             else if (wp == VK_LEFT || wp == VK_UP) SetPage(model.PageAt(model.SlotOf(page) - 1));
@@ -859,9 +922,20 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             Redraw();
             return 0;
         }
+        if (live::Typing()) {
+            live::OnKey(wp);
+            Redraw();
+            return 0;
+        }
         if (model.passFocus) {
             if (wp == VK_RETURN) model.SubmitPass();
             else if (wp == VK_ESCAPE) model.CancelPass();
+            Redraw();
+            return 0;
+        }
+        if (Entry::Get().focus) {
+            if (wp == VK_RETURN) Entry::Get().Submit();
+            else if (wp == VK_ESCAPE) Entry::Get().Drop();
             Redraw();
             return 0;
         }
@@ -925,21 +999,7 @@ void Drawer::PaintShape(ID2D1Geometry* shape, float h) {
 
 void Drawer::Frame() {
     if (stage) { // stage paces the loop while it's up, the panel only draws if it's still retracting
-        stage->Frame(mediaNow);
-        if (stage->Leaving() && !stageBack) { // fullscreen fades out over the panel dropping open on the media page, where it came from
-            stageBack = true;
-            if (stageHalo) {
-                if (HWND halo = FindWindowW(L"HaloBar", nullptr)) PostMessageW(halo, WM_COMMAND, kHaloPlayer, 0); // where it came from: halobar's player panel
-            } else if (!stageAway) {
-                if (page != Model::kPgMedia) SetPage(Model::kPgMedia); // the media page
-                pageSet = true; // even with a fixed opening page picked in settings
-                Open();
-            }
-        }
-        if (stage->Done()) { // its window, device and audio capture all go with it
-            stage.reset();
-            stageBack = stageAway = stageHalo = false;
-        }
+        StageFrame();
         if (!needsFrame) return;
     }
     double now = Seconds();
@@ -967,7 +1027,9 @@ void Drawer::Frame() {
                 BuildStrips();
                 SyncHide();
                 Log(L"followed the mouse");
-                Open();
+                if (followCall) Answer(); // called from there: the pill or the panel, as a hover would bring
+                else Open();
+                followCall = false;
                 return;
             }
             if (cfg.gpuIdleSec > 0) SetTimer(hwnd, kReleaseTimer, (UINT)cfg.gpuIdleSec * 1000, nullptr); // schedule gpu release

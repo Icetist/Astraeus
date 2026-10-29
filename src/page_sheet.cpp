@@ -158,9 +158,9 @@ void Bars(Canvas& c, const Theme& t, float x, float bottom, int quality, Color l
     }
 }
 
-float Scroll(Ui& ui, const char* id, float& target, const D2D1_RECT_F& view, float content) {
+float Scroll(Ui& ui, const char* id, float& target, const D2D1_RECT_F& view, float content, bool wheel) {
     float maxS = (std::max)(0.0f, content - Height(view));
-    target = (std::clamp)(target - ui.Wheel(view) * 60, 0.0f, maxS); // 60 dips per notch
+    target = (std::clamp)(target - (wheel ? ui.Wheel(view) : 0.0f) * 60, 0.0f, maxS); // 60 dips per notch
     return ui.Smooth(Ui::Id(id), target, 18);
 }
 
@@ -193,21 +193,73 @@ int Segmented(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, cons
     return picked;
 }
 
+namespace {
+
+constexpr float kSlideLabelH = 16; // the label and value line over the track
+constexpr float kThumbR = 8, kThumbGrow = 2.5f; // the thumb at rest, and how much it swells under the mouse
+constexpr float kTrackH = 6, kTrackGrow = 2; // the same for the track
+constexpr float kBubbleH = 22; // the value riding over the thumb while dragging
+constexpr int kSliderCap = 24; // more sliders than settings has
+uint32_t sliderIds[kSliderCap] = {}; // every slider seen, so the page can leave the wheel to the one under the mouse
+int sliderCount = 0;
+
+void Seen(uint32_t id) {
+    for (int i = 0; i < sliderCount; ++i)
+        if (sliderIds[i] == id) return;
+    if (sliderCount < kSliderCap) sliderIds[sliderCount++] = id;
+}
+
+}
+
+bool OverSlider(const Ui& ui) {
+    uint32_t h = ui.Hovered();
+    for (int i = 0; h && i < sliderCount; ++i)
+        if (sliderIds[i] == h) return true;
+    return false;
+}
+
 bool Knob(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const wchar_t* label, const std::wstring& value, float& v, bool live,
-          bool& released) { // label, track, value text; true while dragging
+          bool& released, float step) { // label and value over a roomy track; true when v changed
     Canvas& c = ui.C();
-    float cy = (r.top + r.bottom) / 2;
-    D2D1_RECT_F track = {r.left + 62, r.top, r.right - 70, r.bottom};
-    bool changed = live && ui.Slider(id, track, v, false);
-    released = ui.IsActive(id) && ui.In().released;
-    float glow = ui.Smooth(id + 1, ui.IsActive(id) || (live && Inside(r, ui.In().mouse)) ? 1.0f : 0, 14);
-    c.Text(label, {r.left, r.top, track.left - 8, r.bottom}, Weight::Regular, 11.5f, t.textDim);
-    float th = 4 + 2 * glow;
-    c.Fill({track.left, cy - th / 2, track.right, cy + th / 2}, th / 2, t.track);
-    float x = track.left + Width(track) * anim::Clamp01(v);
-    if (x > track.left + th) c.FillH({track.left, cy - th / 2, x, cy + th / 2}, th / 2, t.accent, t.accentHi);
-    c.Dot({x, cy}, 6 + 1.5f * glow, t.accentHi);
-    c.Text(value, {track.right + 8, r.top, r.right, r.bottom}, Weight::Medium, 11.5f, t.text, Align::Right);
+    const Input& in = ui.In();
+    Seen(id);
+    D2D1_RECT_F grab = {r.left, r.top + kSlideLabelH - 2, r.right, r.bottom + 4}; // the whole lower band takes a press, not just the line
+    float pad = kThumbR + kThumbGrow + 1, cy = (grab.top + r.bottom) / 2 + 1;
+    float x0 = r.left + pad, x1 = r.right - pad; // the thumb stays inside the row
+    Ui::Hit h = live ? ui.Button(id, grab) : Ui::Hit{};
+    bool dragging = ui.IsActive(id) && (in.down || in.released);
+    bool changed = false;
+    if (dragging && x1 > x0) { // a press jumps there, a drag follows
+        float f = anim::Clamp01((in.mouse.x - x0) / (x1 - x0));
+        if (std::fabs(f - v) >= 0.0005f) v = f, changed = true;
+    }
+    released = ui.IsActive(id) && in.released;
+    if (live && !ui.Captured()) {
+        if (float notches = ui.Wheel(grab)) { // a notch is a step, saved at once
+            float was = v;
+            v = anim::Clamp01(v + notches * step);
+            changed = released = v != was;
+        }
+    }
+    bool held = ui.IsActive(id) && in.down;
+    float hot = ui.Smooth(id + 1, held || h.hover ? 1.0f : 0, 16);
+    float drag = ui.Smooth(id + 2, held ? 1.0f : 0, 18);
+    float shown = ui.Smooth(id + 3, anim::Clamp01(v), 13 + 19 * drag); // a jump glides there, then a drag stays under the finger
+    c.Text(label, {r.left, r.top, r.right - 70, r.top + kSlideLabelH}, Weight::Regular, 11.5f, t.textDim.Mix(t.text, 0.5f * hot));
+    c.Text(value, {r.right - 90, r.top, r.right, r.top + kSlideLabelH}, Weight::Semi, 11.5f, t.textDim.Mix(t.accentHi, 0.4f + 0.6f * hot), Align::Right);
+    float th = kTrackH + kTrackGrow * hot, x = x0 + (x1 - x0) * shown;
+    c.Fill({r.left, cy - th / 2, r.right, cy + th / 2}, th / 2, t.track);
+    c.Fill({r.left, cy - th / 2, (std::max)(x, r.left + th), cy + th / 2}, th / 2, t.accent); // solid, the song's or the shell's accent
+    float tr = kThumbR + kThumbGrow * hot + drag;
+    if (hot > 0.01f) c.Dot({x, cy}, tr + 6 * hot, t.accent.Alpha(0.16f * hot)); // a soft halo under the mouse
+    c.Dot({x, cy}, tr, t.text);
+    c.Ring({x, cy}, tr - 1, t.accent, 2.5f);
+    if (drag > 0.01f) { // the value rides over the thumb while it moves
+        float bw = (std::max)(kBubbleH * 1.6f, c.Measure(value, Weight::Semi, 11.5f) + 18), lift = 6 * drag;
+        D2D1_RECT_F b = Rect(x - bw / 2, cy - tr - kBubbleH - lift, bw, kBubbleH);
+        c.Fill(b, kBubbleH / 2, t.accent.Alpha(drag));
+        c.Text(value, b, Weight::Semi, 11.5f, t.onAccent.Alpha(drag), Align::Center);
+    }
     return changed;
 }
 
@@ -284,9 +336,8 @@ bool Arranger(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, int 
     for (int k = 0; k < n; ++k) {
         int item = order[(size_t)k];
         D2D1_RECT_F home = cell(k);
-        float x = ui.Smooth(Ui::Id(id, 400 + item), home.left, 20), y = ui.Smooth(Ui::Id(id, 500 + item), home.top, 20); // the others slide to make room
         bool carried = item == carry.item;
-        D2D1_RECT_F q = carried ? Rect(in.mouse.x - carry.grab.x, in.mouse.y - carry.grab.y, cw, cellH) : Rect(x, y, cw, cellH);
+        D2D1_RECT_F q = carried ? Rect(in.mouse.x - carry.grab.x, in.mouse.y - carry.grab.y, cw, cellH) : home; // cells sit still: an eased place lagged the page's scroll
         D2D1_POINT_2F bo = {q.right - 3, q.top + 3};
         D2D1_RECT_F br = {bo.x - kBadgeR - 2, bo.y - kBadgeR - 2, bo.x + kBadgeR + 2, bo.y + kBadgeR + 2};
         Ui::Hit xh = live && canDrop && carry.item < 0 ? ui.Button(Ui::Id(id, 200 + item), br) : Ui::Hit{}; // before the cell's: the first button under a press takes it

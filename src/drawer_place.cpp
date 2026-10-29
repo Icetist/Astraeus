@@ -253,10 +253,48 @@ void Drawer::SyncHide() {
     // windows sends its fullscreen notice for the main screen only: it hides the panel there, any other screen is checked directly
     bool onMain = mon == MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
     bool hide = cfg.hideFull && ((fullApp && onMain) || FullOn(mon));
+    if (hide && !hidden && !stage)
+        if (HMONITOR to = Refuge()) return Hop(to); // every screen: a game took this one, the pill carries on next door
     if (hide == hidden) return;
     hidden = hide;
     Log(hide ? L"hide, fullscreen app" : L"show again");
     if (hide) {
+        Retract();
+        ShowWindow(hwnd, SW_HIDE);
+        needsFrame = false;
+        FreeDev(); // a game is fullscreen, give the gpu back now
+    } else {
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    }
+}
+
+HMONITOR Drawer::Refuge() const { // every screen mode: a screen with astraeus on it and no game in front, the main one first
+    if (screensNow != 1) return nullptr;
+    HMONITOR main = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY), best = nullptr;
+    for (HWND s : strips) {
+        HMONITOR m = MonitorFromWindow(s, MONITOR_DEFAULTTONULL);
+        if (!m || m == mon || FullOn(m) || (fullApp && m == main)) continue;
+        if (m == main) return m;
+        if (!best) best = m;
+    }
+    return best;
+}
+
+void Drawer::Hop(HMONITOR to) { // straight over, no mouse needed: the panel closes, a showing pill shows again there
+    bool pill = island;
+    Retract();
+    mon = to;
+    FreeDev(); // other screen, maybe other dpi
+    Place();
+    BuildStrips();
+    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    if (pill) ShowIsland(); // the pill was up: it is up on the new screen too
+    Redraw();
+    Log(L"moved over, a game took the screen");
+}
+
+void Drawer::Retract() { // the open panel and every hover state gone at once, no animation
+    {
         model.CancelPass(); // a password being typed never outlives the panel
         KillTimer(hwnd, kHoverTimer);
         KillTimer(hwnd, kCloseTimer);
@@ -275,11 +313,6 @@ void Drawer::SyncHide() {
         spring = anim::Spring{}; // reset instantly, no close anim
         Resize(kStrip, false);
         ui.Forget();
-        ShowWindow(hwnd, SW_HIDE);
-        needsFrame = false;
-        FreeDev(); // a game is fullscreen, give the gpu back now
-    } else {
-        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     }
 }
 

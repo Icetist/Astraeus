@@ -9,8 +9,6 @@ namespace {
 
 constexpr double kInterlude = 4.0; // a gap this long between lines gets the breathing dots
 constexpr double kManualSec = 2.5; // after a wheel scroll the lines wait this long, then glide back to the song
-constexpr float kAnchor = 0.30f; // the sung line sits this far down the column
-constexpr float kDim = 0.34f, kDimLit = 0.42f; // lines out of turn, and the unsung words of the sung line
 constexpr float kHazeSigma = 0.11f; // blur of out-of-focus lines, as a share of the type size
 constexpr float kHazeRes = 0.5f; // baked at half resolution: it's a blur, nobody can tell, a quarter of the memory
 constexpr int kBakesPerFrame = 3; // spreads a new song's baking over a few frames
@@ -69,7 +67,7 @@ void LyricView::Sync(ID2D1DeviceContext* ctx, const std::shared_ptr<const sys::L
         focus = 0;
     }
     if (!doc || doc->lines.empty() || width < 40) return;
-    IDWriteTextFormat* f = gfx::TextFmt(Weight::Semi, size, Align::Left);
+    IDWriteTextFormat* f = gfx::LyricFmt(size);
     if (!f) return;
     rows.reserve(doc->lines.size());
     for (const auto& l : doc->lines) {
@@ -80,6 +78,11 @@ void LyricView::Sync(ID2D1DeviceContext* ctx, const std::shared_ptr<const sys::L
         row.h = row.lead.h;
         if (row.h > 0) rows.push_back(std::move(row));
     }
+}
+
+void LyricView::Style(const Look& l) {
+    if (l.dimLit != style.dimLit) stopsFor = {-1, -1, -1, -1}; // the sweep's soft edge is made again in the new shade
+    style = l;
 }
 
 void LyricView::Ink(ID2D1DeviceContext* ctx, const Row& row, D2D1_POINT_2F at, ID2D1Brush* brush) {
@@ -176,7 +179,7 @@ void LyricView::Text(ID2D1DeviceContext* ctx, const Row& row, D2D1_POINT_2F at, 
 void LyricView::Sweeping(ID2D1DeviceContext* ctx, Piece& pc, D2D1_POINT_2F at, float chars, float a, Color text, size_t& e) { // one piece, lit up to chars
     if (!pc.lay) return;
     sung->SetColor(text.Alpha(a).D2D());
-    unsung->SetColor(text.Alpha(kDimLit * a).D2D());
+    unsung->SetColor(text.Alpha(style.dimLit * a).D2D());
     float feather = (pc.spans.empty() ? size : pc.spans[0].height) * 0.7f; // soft edge scales with the type
     for (const Span& s : pc.spans) {
         float f = s.len ? anim::Clamp01((chars - s.first) / s.len) : 1;
@@ -202,7 +205,7 @@ void LyricView::Sweeping(ID2D1DeviceContext* ctx, Piece& pc, D2D1_POINT_2F at, f
 
 void LyricView::Lit(ID2D1DeviceContext* ctx, Row& row, D2D1_POINT_2F at, float scale, double t, const Theme& look, float a) {
     if (!(stopsFor.r == look.text.r && stopsFor.g == look.text.g && stopsFor.b == look.text.b)) { // the song's colors changed
-        D2D1_GRADIENT_STOP gs[2] = {{0, look.text.Alpha(1).D2D()}, {1, look.text.Alpha(kDimLit).D2D()}};
+        D2D1_GRADIENT_STOP gs[2] = {{0, look.text.Alpha(1).D2D()}, {1, look.text.Alpha(style.dimLit).D2D()}};
         stops.Reset();
         edges.clear();
         ctx->CreateGradientStopCollection(gs, 2, &stops);
@@ -227,7 +230,7 @@ void LyricView::Dots(Canvas& c, D2D1_POINT_2F at, float progress, float appear, 
 void LyricView::Waiting(Canvas& c, const D2D1_RECT_F& r, float alpha, const Theme& look, double now) {
     if (size <= 0) return;
     float p = (float)std::fmod(now * 0.7, 1.4); // fill, hold a beat, start over
-    Dots(c, {r.left + size * 0.05f, r.top + Height(r) * kAnchor + size * 0.5f}, (std::min)(p, 1.0f), 1, look, alpha * 0.8f, now);
+    Dots(c, {r.left + size * 0.05f, r.top + Height(r) * style.anchor + size * 0.5f}, (std::min)(p, 1.0f), 1, look, alpha * 0.8f, now);
 }
 
 double LyricView::Draw(ID2D1DeviceContext* ctx, Canvas& c, Ui& ui, const D2D1_RECT_F& r, double t, float alpha, const Theme& look, bool playing) {
@@ -251,7 +254,7 @@ double LyricView::Draw(ID2D1DeviceContext* ctx, Canvas& c, Ui& ui, const D2D1_RE
     bool browsing = now - manualAt < kManualSec;
     if (!browsing) moving |= anim::Approach(manual, 0, 5, dt, 0.5f);
 
-    float rowGap = size * 0.62f, anchor = r.top + Height(r) * kAnchor, y = 0, gapTop = 0;
+    float rowGap = size * style.gap, rest = r.top + Height(r) * style.anchor, y = 0, gapTop = 0;
     tops.resize(n);
     for (int i = 0; i < n; ++i) {
         if (i == next) {
@@ -268,13 +271,14 @@ double LyricView::Draw(ID2D1DeviceContext* ctx, Canvas& c, Ui& ui, const D2D1_RE
     for (int i = 0; i < n; ++i) { // every line chases its place; the farther from the sung one, the later it arrives: a ripple
         Row& row = rows[i];
         int d = std::abs(i - focus);
-        row.y.target = anchor + tops[i] - focusY + manual;
-        row.y.stiff = 150.0f - 11.0f * (std::min)(d, 8);
-        row.y.damp = 0.9f;
+        row.y.target = rest + tops[i] - focusY + manual;
+        row.y.stiff = style.stiff - style.stiffStep * (std::min)(d, 8);
+        row.y.damp = style.damp;
         if (!placed) row.y.value = row.y.target;
         moving |= row.y.Step(dt);
         moving |= anim::Approach(row.lit, i == live ? 1.0f : 0, i == live ? 12.0f : 2.6f, dt, 0.002f);
         float soft = browsing || row.hover > 0.3f ? 0.0f : d == 0 ? 0.0f : d == 1 ? 0.45f : d == 2 ? 0.75f : 1.0f; // focus falls off with distance
+        soft *= style.haze;
         moving |= anim::Approach(row.blur, soft, 6, dt, 0.005f);
     }
     placed = true;
@@ -296,7 +300,7 @@ double LyricView::Draw(ID2D1DeviceContext* ctx, Canvas& c, Ui& ui, const D2D1_RE
         if (h.clicked) seek = row.src->start; // tap a line to jump there
         if (row.hover > 0.01f) c.Fill(hit, 16, look.text.Alpha(0.07f * row.hover * al));
         if (al < 0.01f) continue;
-        float scale = 0.955f + 0.045f * row.lit;
+        float scale = 1 - style.shrink * (1 - row.lit);
         D2D1_POINT_2F at = {r.left, y0};
         if (i == live) {
             Haze(ctx, row, at, scale, look.accentHi.Alpha(0.55f * al * row.lit)); // the blur in the song's color: a soft bloom behind the sung line
@@ -304,7 +308,7 @@ double LyricView::Draw(ID2D1DeviceContext* ctx, Canvas& c, Ui& ui, const D2D1_RE
             continue;
         }
         int d = std::abs(i - focus);
-        float dim = browsing || row.hover > 0.3f ? 0.55f : kDim - 0.04f * (std::min)(d, 4);
+        float dim = browsing || row.hover > 0.3f ? 0.55f : style.dim - style.dimStep * (std::min)(d, 4);
         float op = (dim + (1 - dim) * row.lit) * al;
         float b = row.haze ? (std::max)(row.blur * (1 - row.lit), 1 - fade) : 0; // out of focus by distance, and more so as it dissolves at the edges; not baked yet: crisp
         if (b < 0.99f) Text(ctx, row, at, scale, look.text.Alpha(op * (1 - b)));

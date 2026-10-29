@@ -10,13 +10,16 @@
 #include "model.h"
 #include "theme.h"
 #include "pages.h"
+#include "stageprefs.h"
 #include "ui.h"
 
 // Fullscreen ambient player: the album art big over drifting audio-reactive light, controls that fade out when the mouse rests.
 // Built when opened from the media page and torn down on exit, so it costs nothing the rest of the time.
+// With two screens a pair of them: one shows the song, the other its lyrics.
 class Stage {
 public:
-    Stage(Model& model, HMONITOR mon);
+    enum Role { kWhole, kCover, kLyrics }; // one screen, or one half of the pair
+    Stage(Model& model, HMONITOR mon, bool focus = true);
     ~Stage();
     Stage(const Stage&) = delete;
     Stage& operator=(const Stage&) = delete;
@@ -26,6 +29,9 @@ public:
     bool Leaving() const { return leaving; } // on its way out: the panel can come back under it
     HANDLE Wait() const { return leaving && leaveTick ? leaveTick : frameWait; } // vsync waitable, the main loop sleeps on it; a timer while leaving
     void Frame(const Theme& media);
+    HMONITOR Screen() const { return screen; }
+    void SetRole(Role r); // the pair split or swapped: a breath of dark over the change
+    void Leave(); // the user is done: shrink back into the bezel, then go; one of a pair takes the other along
 
 private:
     static LRESULT CALLBACK Proc(HWND, UINT, WPARAM, LPARAM);
@@ -35,7 +41,6 @@ private:
     Glass* glass = nullptr;
     bool OpenGlass(UINT pxW, UINT pxH);
     void FreeGlass();
-    void Leave(); // the user is done: shrink back into the bezel, then go
     bool GlassLeave(float seconds, float cx, float cy); // the same, run by windows' compositor in the glass look
     bool leaving = false;
     double leaveAt = 0;
@@ -47,7 +52,16 @@ private:
     void Player(float show, float lyr);
     void SyncLyrics(double now);
     D2D1_RECT_F LyricRect() const; // the column the lyrics scroll in, right of the cover
-    float LyricSize() const { return std::clamp(H * 0.05f, 24.0f, 64.0f); }
+    float LyricSize() const;
+    void Words(); // the lyrics half of a pair: only the words, the whole screen theirs
+    void Keys(UINT vk); // the two screen keys
+    float K() const { return std::clamp(H / 900.0f, 0.8f, 1.6f); }
+    HMONITOR screen = nullptr;
+    Role role = kWhole;
+    Role styled = kWhole; // the role the words were styled for
+    double roleAt = -10; // when the halves last changed
+    const wchar_t* hint = nullptr; // a word about what a key just did, fading
+    double hintAt = -10;
     void Seek(const D2D1_RECT_F& r, float show);
 
     Model& model;
