@@ -11,6 +11,7 @@
 [![Build](https://img.shields.io/github/actions/workflow/status/Icetist/Astraeus/release.yml?style=flat-square&label=build)](https://github.com/Icetist/Astraeus/actions/workflows/release.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4?style=flat-square&logo=windows)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square&logo=cplusplus)
+![License](https://img.shields.io/badge/license-GPL--3.0-9F8CFF?style=flat-square)
 
 [Features](#-features) •
 [Screenshots](#-screenshots) •
@@ -169,7 +170,7 @@ That's light enough for 2 GB machines and entry-level Celeron and Pentium laptop
 | **Download** | One 1.9 MB file | Often 80 MB or more |
 | **Account or sign-in** | Never | Sometimes required |
 | **Telemetry** | None | Varies |
-| **Source code** | Open | Often closed |
+| **Source code** | Open, GPL-3.0 | Often closed |
 
 How it stays this light:
 
@@ -296,7 +297,12 @@ Yes. Set `AutoUpdate = false` in `astraeus.ini` and restart.
 
 - [Outfit](https://github.com/Outfitio/Outfit-Fonts) by the Outfit Project Authors, licensed under the [SIL Open Font License 1.1](./LICENSES/Outfit-OFL.txt).
 - [Material Symbols](https://github.com/google/material-design-icons) by Google, licensed under the [Apache License 2.0](./LICENSES/MaterialSymbols-Apache-2.0.txt).
+- [Nunito](https://github.com/googlefonts/nunito) by the Nunito Project Authors, licensed under the [SIL Open Font License 1.1](./LICENSES/Nunito-OFL.txt).
 - Synced lyrics from [LRCLIB](https://lrclib.net), NetEase Cloud Music and Kugou.
 
 ### 🧪 The testers
 **[Abrar Awwal](https://www.instagram.com/abrarr.png)**, **[ATK](https://github.com/atkftw)**, and **[Raisah Tazmeen Ahad](https://medium.com/@rtaix15)** ran every alpha and beta build before anyone else did. They hit the crashes, found the glitches and broke what could break, so that what reaches you doesn't.
+
+## 📄 License
+
+Copyright (C) 2026 Icetist. Licensed under the [GNU General Public License v3.0](./LICENSE): you may use, change and share it, and anything you share that is built on it must stay open under the same license.
