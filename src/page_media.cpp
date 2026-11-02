@@ -49,7 +49,6 @@ void DrawViz(PageCtx& p, const D2D1_RECT_F& r) { // soft light swelling up from 
 }
 
 constexpr float kCardVeil = 0.22f; // over the album art backdrop: only a faint card, the cover shows through
-constexpr float kVizOverBack = 0.6f; // and the music's glow sits on it faintly: the art is the show
 
 void Backing(PageCtx& p, const D2D1_RECT_F& r, float radius) { // the card under everything: its fill, the blurred cover, the glow, the rim
     Canvas& c = p.ui.C();
@@ -63,7 +62,7 @@ void Backing(PageCtx& p, const D2D1_RECT_F& r, float radius) { // the card under
     }
     bool soft = k > 0.001f;
     if (soft) c.Target()->PushLayer(D2D1::LayerParameters(r, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), // bounded to the card: the glow never leaves it, and the layer costs only its pixels
-                                                         1 - (1 - kVizOverBack) * k), nullptr);
+                                                         1 - (1 - p.m.vizAlpha / 100.0f) * k), nullptr);
     DrawViz(p, r); // under border + art, over backdrop
     if (soft) c.Target()->PopLayer();
     c.StrokeV(r, radius, t.hairTop, t.hairBot, 1);

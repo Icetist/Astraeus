@@ -26,14 +26,22 @@ constexpr wchar_t kLookVal[] = L"Appearance";
 constexpr int kLooks = Model::kLookStarfall + 1; // dark, light, glass, custom, halobar's, starfall
 constexpr wchar_t kQuietVal[] = L"Quiet"; // do not disturb: halobar reads and writes the same value
 constexpr wchar_t kArtBackVal[] = L"MediaArtBg"; // the album art background, shared with halobar the same way
-constexpr wchar_t kArtAlphaVal[] = L"MediaArtAlpha", kVizGainVal[] = L"VizGain"; // its strength and the visualizer's sensitivity, shared too
+constexpr wchar_t kVizAlphaVal[] = L"VizAlpha", kVizGainVal[] = L"VizGain"; // the visualizer's opacity over the art and its sensitivity, shared too
 constexpr wchar_t kHaloKey[] = L"Software\\HaloBar"; // halobar's own settings, never written from here
 constexpr wchar_t kHaloClass[] = L"HaloBar"; // its window: there means it's running
 constexpr int kMaxDockReach = 400; // pixels: past this the value is junk, not a dock
 
 constexpr wchar_t kPagesVal[] = L"PageOrder", kTilesVal[] = L"ToolTiles"; // saved by name: a new page or tile later never shifts the old ones
+std::vector<std::wstring> SplitLines(const std::wstring& s) {
+    std::vector<std::wstring> out;
+    size_t a = 0;
+    for (size_t b; (b = s.find(L'\n', a)) != std::wstring::npos; a = b + 1) out.push_back(s.substr(a, b - a));
+    if (a < s.size()) out.push_back(s.substr(a));
+    return out;
+}
+
 const wchar_t* const kPageKeys[Model::kPageIds] = {L"home", L"media", L"system", L"network", L"tools", L"shelf"};
-const wchar_t* const kTileKeys[Model::kToolTiles] = {L"screenshot", L"color", L"awake", L"notifications", L"dnd", L"saver", L"airplane", L"settings"};
+const wchar_t* const kTileKeys[Model::kToolTiles] = {L"screenshot", L"color", L"awake", L"notifications", L"dnd", L"saver", L"airplane", L"settings", L"workspaces", L"language", L"bin", L"updates"};
 constexpr wchar_t kNoneVal[] = L"none"; // every tile taken off: an empty text would read as never set
 
 std::vector<int> ParseList(const std::wstring& s, const wchar_t* const* keys, int n) { // comma separated names; unknown and repeated ones dropped
@@ -122,10 +130,15 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     mediaCompact = flag(L"MediaCompact", 0);
     pillMusic = flag(L"PillMusic", 1);
     showArt = flag(L"ShowArt", 1);
+    desk = sys::LoadDesk();
+    for (const auto& line : SplitLines(sys::ReadText(L"Todos"))) // "1|text": done, then the words
+        if (line.size() > 2 && line[1] == L'|' && (int)todos.size() < kMaxTodos) todos.push_back({line.substr(2), line[0] == L'1'});
+    for (const auto& line : SplitLines(sys::ReadText(L"Servers")))
+        if (!line.empty() && (int)hosts.size() < kMaxHosts) hosts.push_back(line);
     vizOn = flag(L"Visualizer", cfg.viz ? 1 : 0); // the ini's choice until the switch in settings is used
     artBack = flag(kArtBackVal, 0);
     stageArt = flag(L"StageArtBg", 0);
-    artAlpha = (std::clamp)(sys::ReadNum(kArtAlphaVal, 100), kArtAlphaMin, 100);
+    vizAlpha = (std::clamp)(sys::ReadNum(kVizAlphaVal, 60), kVizAlphaMin, 100);
     vizGain = (std::clamp)(sys::ReadNum(kVizGainVal, 100), kVizGainMin, kVizGainMax);
     keyOnly = flag(L"KeyOnly", 0);
     appKeyOnly = flag(L"AppKeyOnly", 0);
@@ -167,6 +180,11 @@ void Model::Start(HWND hwnd) {
     shelf.Start(hwnd, WM_APP_SHELF); // a kept shelf comes back
     if (accentMode == kAccentWindows) winAccent.Watch(hwnd, WM_APP_ACCENT);
     if (portable) ReadBattery();
+    tiler = sys::FindTiler(); // a tiling manager here: its workspaces tile comes on, unless taken off since
+    if (tiler != sys::Tiler::kNone && std::find(tiles.begin(), tiles.end(), (int)kTlWork) == tiles.end() && !sys::ReadNum(L"WorkTileOff", 0)) {
+        tiles.insert(tiles.begin(), kTlWork);
+        SetTiles(tiles);
+    }
     Sample(0); // seed cpu/net baselines, pushes nothing
     worker = std::thread([this] { Worker(); });
 }
@@ -237,7 +255,8 @@ void Model::Tick() {
         timerOn = false;
         timerDone = true; // ui consumes via TimerDone()
     }
-    if (mixerOpen) mixer.Refresh(); // apps come and go while it's shown
+    DeskTick(1, false); // apps come and go; groups keep their levels
+    SyncExtras();
     if (fullLyrics && hasTrack && track.music && track.duration > 0) // the song's lyrics, fetched while it plays: ready long before fullscreen opens; a cache check once known
         lyrics.Want(track.title, track.artist, track.album, track.duration / 1e7);
     if (focusOn && GetTickCount64() >= focusEnd) { // a block ends: focus hands over to a break, a break to the next round
@@ -477,12 +496,12 @@ int Model::PageGlyph(int id) {
 }
 
 const wchar_t* Model::TileName(int id) {
-    static const wchar_t* const kNames[kToolTiles] = {L"Screenshot", L"Color picker", L"Awake", L"Notifications", L"Do not disturb", L"Energy saver", L"Airplane", L"Settings"};
+    static const wchar_t* const kNames[kToolTiles] = {L"Screenshot", L"Color picker", L"Awake", L"Notifications", L"Do not disturb", L"Energy saver", L"Airplane", L"Settings", L"Workspaces", L"Keyboard language", L"Recycle bin", L"Updates"};
     return kNames[(std::clamp)(id, 0, kToolTiles - 1)];
 }
 
 int Model::TileGlyph(int id) {
-    static const int kGlyphs[kToolTiles] = {glyph::Snip, glyph::Edit, glyph::Coffee, glyph::Bell, glyph::Dnd, glyph::Saver, glyph::Airplane, glyph::Settings};
+    static const int kGlyphs[kToolTiles] = {glyph::Snip, glyph::Edit, glyph::Coffee, glyph::Bell, glyph::Dnd, glyph::Saver, glyph::Airplane, glyph::Settings, glyph::Workspaces, glyph::Translate, glyph::Delete, glyph::Update};
     return kGlyphs[(std::clamp)(id, 0, kToolTiles - 1)];
 }
 
@@ -563,12 +582,108 @@ void Model::OpenMixer() {
     CloseSettings();
     CloseCal();
     mixerOpen = true;
+    ReadAudio(); // the master and microphone faders start where windows has them
+    mics = sys::ListIns(micId);
+    if (!portable) outs = sys::ListOuts(outId);
+    else if (outs.empty()) outs = sys::ListOuts(outId); // the mixer offers outputs per app on laptops too
     mixer.Open();
 }
 
 void Model::CloseMixer() {
     mixerOpen = false;
-    mixer.Close(); // the sessions and icons go with it
+    deskEdit = nameFor = -1;
+    if (!deskEngine.Owner() || desk.groups.empty()) mixer.Close(); // the sessions and icons go with it, unless groups still need them
+}
+
+void Model::DeskTick(float dt, bool fast) {
+    if (!fast && sys::DeskChanged()) desk = sys::LoadDesk(), deskEngine.Forget(); // halobar edited it
+    bool engine = !desk.groups.empty() && deskEngine.Claim();
+    bool want = mixerOpen || engine;
+    if (want && !mixer.IsOpen()) mixer.Open();
+    else if (!want && mixer.IsOpen()) mixer.Close();
+    if (!mixer.IsOpen()) return;
+    if (!fast) mixer.Refresh();
+    if (fast || deskEngine.NeedsMeter(desk)) mixer.Meter();
+    if (engine) deskEngine.Tick(mixer, desk, dt);
+    if (!fast && engine) sys::SaveDesk(desk); // the engine learns of levels moved elsewhere; written only when something changed
+}
+
+void Model::DeskSave() {
+    sys::SaveDesk(desk);
+    if (deskEngine.Owner()) deskEngine.Tick(mixer, desk, 0); // halobar applies it otherwise, within a second
+}
+
+void Model::DeskKey(int k) {
+    std::wstring say;
+    int groups = (int)desk.groups.size();
+    if (k == 0) {
+        ToggleMic();
+        say = micMuted ? L"Microphone muted" : L"Microphone on";
+    } else if (k == 1 && !desk.profiles.empty()) {
+        desk.Recall((desk.profile + 1) % (int)desk.profiles.size());
+        say = desk.profiles[desk.profile].name;
+    } else if ((k == 2 || k == 3) && desk.Chatting()) {
+        constexpr float kChatStep = 0.1f;
+        desk.chatMix = (std::clamp)(desk.chatMix + (k == 3 ? kChatStep : -kChatStep), -1.0f, 1.0f);
+        int pct = (int)std::lround(std::fabs(desk.chatMix) * 100);
+        say = pct == 0 ? L"Chat mix even" : L"Chat mix " + std::to_wstring(pct) + L"% " + desk.groups[desk.chatMix > 0 ? desk.game : desk.chat].name;
+    } else if (k >= 4 && k - 4 < groups) {
+        auto& g = desk.groups[k - 4];
+        g.muted = !g.muted;
+        say = g.name + (g.muted ? L" muted" : L" on");
+    } else {
+        return;
+    }
+    DeskSave();
+    if (desk.osd) deskSay = say;
+}
+
+bool Model::WantsWs() const {
+    if (pillLeft == kWWork || pillRight == kWWork) return true;
+    return std::find(tiles.begin(), tiles.end(), (int)kTlWork) != tiles.end();
+}
+
+void Model::SyncExtras() {
+    bool want = WantsWs();
+    if (want && !ws.On()) ws.Start(notify, WM_APP_WS);
+    else if (!want && ws.On()) ws.Stop(), wsNow = {};
+    if (!hosts.empty() && !pinger.On()) pinger.Start(notify, WM_APP_PING, hosts); // a minute between looks: nothing to save by stopping it
+    constexpr int kUpdateFirst = 60, kUpdateEvery = 6 * 3600; // a minute after start, then every six hours
+    bool tile = std::find(tiles.begin(), tiles.end(), (int)kTlUpdates) != tiles.end();
+    if (tile && (++updateTick == kUpdateFirst || updateTick % kUpdateEvery == 0)) updates.Check(notify, WM_APP_UPDATES);
+}
+
+void Model::SaveTodos() {
+    std::wstring s;
+    for (const auto& t : todos) s += (t.done ? L"1|" : L"0|") + t.text + L"\n";
+    sys::SaveText(L"Todos", s);
+}
+
+void Model::SaveHosts() {
+    std::wstring s;
+    for (const auto& h : hosts) s += h + L"\n";
+    sys::SaveText(L"Servers", s);
+    pinger.Stop();
+    hostNow.clear();
+    if (!hosts.empty()) pinger.Start(notify, WM_APP_PING, hosts);
+}
+
+void Model::CommitField() {
+    std::wstring s = fieldEdit;
+    size_t a = s.find_first_not_of(L" \t"), b = s.find_last_not_of(L" \t");
+    s = a == std::wstring::npos ? L"" : s.substr(a, b - a + 1);
+    for (auto& c : s)
+        if (c == L'\n' || c == L'\n') c = L' ';
+    if (!s.empty() && field == kFieldTodo && (int)todos.size() < kMaxTodos) todos.push_back({s}), SaveTodos();
+    if (!s.empty() && field == kFieldHost && (int)hosts.size() < kMaxHosts) hosts.push_back(s), SaveHosts();
+    fieldEdit.clear(); // the field stays: the next one can be typed straight away
+}
+
+void Model::CommitName() {
+    std::wstring s = nameEdit;
+    while (!s.empty() && s.back() == L' ') s.pop_back();
+    if (nameFor >= 0 && nameFor < (int)desk.groups.size() && !s.empty()) desk.groups[nameFor].name = s, DeskSave();
+    nameFor = -1;
 }
 
 void Model::CloseCal() { calOpen = false; }
@@ -637,7 +752,7 @@ bool Model::PollShared() {
     if (ourWatch.Changed(kOurKey)) { // only after a write to our key
         quiet = sys::ReadNum(kQuietVal, 0) ? 1 : 0; // halobar may have flipped it
         artBack = sys::ReadNum(kArtBackVal, 0) ? 1 : 0; // and this one
-        artAlpha = (std::clamp)(sys::ReadNum(kArtAlphaVal, 100), kArtAlphaMin, 100); // and the two sliders
+        vizAlpha = (std::clamp)(sys::ReadNum(kVizAlphaVal, 60), kVizAlphaMin, 100); // and the two sliders
         vizGain = (std::clamp)(sys::ReadNum(kVizGainVal, 100), kVizGainMin, kVizGainMax);
     }
     bool runs = FindWindowW(kHaloClass, nullptr) != nullptr;
@@ -871,6 +986,8 @@ void Model::CommitCity() {
     weather.SetCity(city, notify, WM_APP_WEATHER); // empty: back to finding you by ip
 }
 
+constexpr size_t kPillWordMax = 10, kPillTitleMax = 18; // the pill has room for a short word beside its clock
+
 std::wstring Model::PillWidget(int which, int& icon) const {
     switch (which) {
     case kWWeather:
@@ -887,6 +1004,30 @@ std::wstring Model::PillWidget(int which, int& icon) const {
     case kWRam:
         icon = glyph::Ram;
         return std::to_wstring((int)std::lround(ramHist.Last() * 100)) + L"%";
+    case kWWork: {
+        if (wsNow.current < 0 || wsNow.current >= (int)wsNow.list.size()) return L"";
+        icon = glyph::Workspaces;
+        const std::wstring& name = wsNow.list[wsNow.current].name;
+        return name.size() > kPillWordMax ? name.substr(0, kPillWordMax - 1) + L"…" : name;
+    }
+    case kWLang:
+        icon = glyph::Translate;
+        return sys::extras::Language();
+    case kWTitle: {
+        std::wstring s = sys::extras::ActiveTitle();
+        if (s.empty()) return L"";
+        icon = glyph::Window;
+        size_t cut = s.find(L" - "); // "page - app": the part that changes
+        if (cut != std::wstring::npos && cut > 0) s = s.substr(0, cut);
+        return s.size() > kPillTitleMax ? s.substr(0, kPillTitleMax - 1) + L"…" : s;
+    }
+    case kWDisk: {
+        float used = 0;
+        double free = 0;
+        if (!sys::extras::SystemDrive(used, free)) return L"";
+        icon = glyph::Disk;
+        return std::to_wstring((int)std::lround(used * 100)) + L"%";
+    }
     case kWNet: {
         icon = glyph::Down;
         double k = downHist.Last() / 1024; // short: the pill has room for four or five characters

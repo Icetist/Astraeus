@@ -388,7 +388,7 @@ bool Arranger(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, int 
 }
 
 const wchar_t* TileShort(int id) {
-    static const wchar_t* const kShort[Model::kToolTiles] = {L"Snip", L"Color", L"Awake", L"Alerts", L"Quiet", L"Saver", L"Airplane", L"Settings"};
+    static const wchar_t* const kShort[Model::kToolTiles] = {L"Snip", L"Color", L"Awake", L"Alerts", L"Quiet", L"Saver", L"Airplane", L"Settings", L"Spaces", L"Language", L"Bin", L"Updates"};
     return kShort[(std::clamp)(id, 0, Model::kToolTiles - 1)];
 }
 
@@ -408,6 +408,9 @@ void KeepTiles(Model& m, const Ids& set) {
     std::vector<int> shown = set.Vec();
     for (int id : m.tiles)
         if (!m.TileHere(id)) shown.push_back(id); // a laptop's tile stays saved on a desktop
+    bool had = std::find(m.tiles.begin(), m.tiles.end(), (int)Model::kTlWork) != m.tiles.end();
+    bool has = std::find(shown.begin(), shown.end(), (int)Model::kTlWork) != shown.end();
+    if (had != has) sys::SaveNum(L"WorkTileOff", has ? 0 : 1); // taken off by hand: start-up doesn't put it back
     m.SetTiles(shown);
 }
 

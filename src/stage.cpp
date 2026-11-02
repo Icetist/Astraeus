@@ -16,7 +16,6 @@ constexpr float kPi = 3.14159265f;
 constexpr float kStageArtSigma = 6; // the album art background at 1024 px: softened, the cover clearly itself
 constexpr float kStageArtGlass = 0.6f; // glass keeps some of the desktop showing through it
 constexpr float kStageArtWash = 0.32f, kStageArtWashLight = 0.30f; // over the art: enough for white or dark type to read
-constexpr float kStageVizOverArt = 0.6f; // the music's light over the art, as the media page's
 constexpr double kLyrWaitSec = 12; // how long the lyrics layout waits for a new song's lines before giving way
 constexpr float kLeaveSec = 0.26f; // easing back toward the bezel as it fades
 constexpr double kIdleSec = 2.5; // controls and cursor fade after the mouse rests this long
@@ -346,17 +345,17 @@ void Stage::Backdrop(double now) { // the media page's glow, scaled to the room:
     bool art = coverArt != nullptr; // the album art background: the cover itself, not a color wash
     float gw = W * (zoom - 1) / 2, gh = H * (zoom - 1) / 2;
     if (art) {
-        float strength = model.artAlpha / 100.0f; // the shared strength slider
-        c.Image(coverArt.Get(), {-gw, -gh, W + gw, H + gh}, 0, (glassy ? kStageArtGlass : 1.0f) * strength);
+        c.Image(coverArt.Get(), {-gw, -gh, W + gw, H + gh}, 0, glassy ? kStageArtGlass : 1.0f);
         c.Fill(full, 0, light ? Color{1, 1, 1, kStageArtWashLight} : Color{0, 0, 0, kStageArtWash}); // lighter than the blur's wash: the art shows, the type still reads
     } else {
         if (coverBlur) c.Image(coverBlur.Get(), {-gw, -gh, W + gw, H + gh}, 0, glassy ? 0.30f : light ? 0.55f : 0.7f); // glass keeps the desktop showing
         c.Fill(full, 0, light ? Color{1, 1, 1, 0.38f} : Color{0, 0, 0, glassy ? 0.12f : 0.30f}); // wash so the type reads
     }
     StepSwell(swell, model, frameDt, model.hasTrack && model.track.playing, kBlobs);
-    if (art) c.Target()->PushLayer(D2D1::LayerParameters(full, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), kStageVizOverArt), nullptr); // the music's light sits softer on the art
+    if (art) c.Target()->PushLayer(D2D1::LayerParameters(full, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), 1 - std::pow(1 - model.vizAlpha / 100.0f, 4.0f)), nullptr); // the opacity slider, eased well up: the whole screen of bright art washes it out more than the page
     if (beat > 0.01f) c.Glow({W / 2, H}, W * (0.45f + 0.15f * beat), H * 0.35f * beat, look.accent.Alpha(0.18f * beat)); // the kick blooms from the floor
     DrawSwell(c, swell, kBlobs, {0, H * 0.25f, W, H}, look, now); // soft light swelling up from the floor
+    if (art) DrawSwell(c, swell, kBlobs, {0, H * 0.25f, W, H}, look, now); // twice over the art: one pass of soft light disappears into a bright cover
     if (art) c.Target()->PopLayer();
     Color floor = light ? Color{1, 1, 1, 1} : Color{0, 0, 0, 1};
     c.FillV(full, 0, floor.Alpha(light ? 0.05f : 0.10f), floor.Alpha(light ? 0.35f : glassy ? 0.30f : 0.45f)); // settles the bottom so the room doesn't feel lopsided

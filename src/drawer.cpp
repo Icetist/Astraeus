@@ -330,6 +330,8 @@ void Drawer::Close() {
     opened = false;
     island = false; // the island retracts with the same spring, its shape stays until it's gone
     model.hexFocus = model.cityFocus = model.tilesEdit = false;
+    model.nameFor = -1;
+    model.field = Model::kFieldNone;
     if (model.shelfField == Model::kShelfNote) model.CommitShelfNote(); // a note half typed is kept, like a city
     model.shelfField = Model::kShelfNone; // the search text stays for next time, the keyboard goes back
     ShelfClosed();
@@ -804,6 +806,18 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         model.OnWx();
         Redraw();
         return 0;
+    case WM_APP_WS: // the workspaces changed: the pill shows it even closed
+        model.wsNow = model.ws.Snap();
+        Redraw();
+        return 0;
+    case WM_APP_UPDATES:
+        model.updateNow = model.updates.Get();
+        Redraw();
+        return 0;
+    case WM_APP_PING:
+        model.hostNow = model.pinger.Results();
+        if (opened) Redraw();
+        return 0;
     case WM_APP_STATS:
         model.OnStats();
         Redraw();
@@ -904,6 +918,31 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             Redraw();
             return 0;
         }
+        if (model.field != Model::kFieldNone) { // a to-do or a server being typed
+            wchar_t ch = (wchar_t)wp;
+            if (ch == 22) { // ctrl+v, the first line
+                for (wchar_t c : sys::ClipText()) {
+                    if (c == L'\n' || c == L'\n') break;
+                    if (c >= 32 && model.fieldEdit.size() < Model::kFieldMax) model.fieldEdit += c;
+                }
+            } else if (ch == 8) {
+                if (!model.fieldEdit.empty()) model.fieldEdit.pop_back();
+            } else if (ch >= 32 && ch != 127 && model.fieldEdit.size() < Model::kFieldMax) {
+                model.fieldEdit += ch;
+            }
+            Redraw();
+            return 0;
+        }
+        if (model.nameFor >= 0) { // a mixer group's name
+            wchar_t ch = (wchar_t)wp;
+            if (ch == 8) {
+                if (!model.nameEdit.empty()) model.nameEdit.pop_back();
+            } else if (ch >= 32 && ch != 127 && model.nameEdit.size() < Model::kNameMax) {
+                model.nameEdit += ch;
+            }
+            Redraw();
+            return 0;
+        }
         if (model.cityFocus) {
             wchar_t ch = (wchar_t)wp;
             if (ch == 22) { // ctrl+v, the first line
@@ -982,6 +1021,18 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 if (wp == VK_ESCAPE && !model.shelfQuery.empty()) model.shelfQuery.clear();
                 else model.shelfField = Model::kShelfNone;
             }
+            Redraw();
+            return 0;
+        }
+        if (model.field != Model::kFieldNone) {
+            if (wp == VK_RETURN) model.CommitField();
+            else if (wp == VK_ESCAPE) model.field = Model::kFieldNone, model.fieldEdit.clear();
+            Redraw();
+            return 0;
+        }
+        if (model.nameFor >= 0) {
+            if (wp == VK_RETURN) model.CommitName();
+            else if (wp == VK_ESCAPE) model.nameFor = -1;
             Redraw();
             return 0;
         }

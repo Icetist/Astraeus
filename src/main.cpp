@@ -31,6 +31,10 @@ constexpr DWORD kBootWaitMs = 3000;
 constexpr unsigned kShellFastTicks = 120; // tray icon and fullscreen notices: retried every second for two minutes, then every half minute
 constexpr unsigned kShellSlowTicks = 30;
 constexpr LONGLONG kLogMax = 256 << 10; // astraeus.log starts over past this
+constexpr UINT_PTR kMixTimer = 3; // the mixer's meters and ducking, only while they need it
+constexpr UINT kMixMs = 100;
+constexpr int kMixIcon = 0xE429; // the banner's mark: tune
+constexpr int kMixKeyId = 0x4D00; // the mixer's shortcuts, Model::kMixKeys ids from here
 constexpr UINT_PTR kIniTimer = 2; // astraeus.ini changed: read it once the editor is done writing
 constexpr UINT kIniSettleMs = 300;
 constexpr int kIniTries = 20; // ~6 s of a file that can't be opened, then it waits for the next change
@@ -273,6 +277,23 @@ void AddAppbar() { // only for the shell's fullscreen notices; a restarted explo
     app->appbar = SHAppBarMessage(ABM_NEW, &abd) != FALSE;
 }
 
+void SyncMix() { // the mixer's fast timer and shortcuts, only while something needs them
+    static bool fast = false, keys = false;
+    Model& m = *app->model;
+    if (m.DeskFast() != fast) {
+        fast = !fast;
+        if (fast) SetTimer(app->host, kMixTimer, kMixMs, nullptr);
+        else KillTimer(app->host, kMixTimer);
+    }
+    bool want = m.desk.keys && m.deskEngine.Owner(); // one app takes the keys: the one applying the mix
+    if (want == keys) return;
+    keys = want;
+    static constexpr UINT kVk[Model::kMixKeys] = {'M', 'P', VK_OEM_4, VK_OEM_6, '1', '2', '3', '4', '5', '6', '7', '8'}; // ctrl+alt+: mic, profile, [ chat, ] game, groups
+    for (int k = 0; k < Model::kMixKeys; ++k)
+        if (want) RegisterHotKey(app->host, kMixKeyId + k, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, kVk[k]); // a key another app holds is skipped
+        else UnregisterHotKey(app->host, kMixKeyId + k);
+}
+
 void RetryShell() { // early at sign-in explorer may not take the icon or the appbar yet: asked again until it does
     if (app->trayOn && app->appbar) return;
     if (app->ticks > kShellFastTicks && app->ticks % kShellSlowTicks) return; // a shell that never comes: a calm retry
@@ -363,6 +384,11 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ReloadIni();
             return 0;
         }
+        if (wp == kMixTimer && app->model) {
+            app->model->DeskTick(kMixMs / 1000.0f, true);
+            if (app->model->mixerOpen) app->drawer->Repaint(); // the meters move
+            return 0;
+        }
         if (wp == kSecTimer && app->model) {
             app->model->Tick(); // refresh stats, clock, timer
             ++app->ticks;
@@ -372,6 +398,7 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 app->updater.Check(app->host, WM_APP_UPDATE);
             if (app->restartPending && !app->drawer->Busy()) Restart(app->exePath); // never yank the panel away mid-use
             app->drawer->OnSecond();
+            SyncMix();
             if (int ev = app->model->focusEvent) { // a focus block or a break just ended
                 app->model->focusEvent = 0;
                 const wchar_t* title = ev == 1 ? L"Focus done" : L"Break's over";
@@ -402,6 +429,10 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_HOTKEY:
         if (wp == kHotId && app->drawer) app->drawer->KeyOpen(); // the shortcut
+        if (wp >= kMixKeyId && wp < kMixKeyId + Model::kMixKeys && app->model) { // a mixer shortcut
+            app->model->DeskKey((int)wp - kMixKeyId);
+            if (!app->model->deskSay.empty()) app->drawer->Peek(L"Mixer", app->model->deskSay, kMixIcon), app->model->deskSay.clear();
+        }
         return 0;
     case WM_APP_TRAY:
         if (LOWORD(lp) == WM_LBUTTONUP) app->drawer->Toggle(); // left click opens/closes

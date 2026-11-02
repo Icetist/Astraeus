@@ -3,11 +3,17 @@
 #include <cwctype>
 #include <vector>
 
+#include <windows.h>
+#include <shellapi.h>
+
 #include "anim.h"
 #include "glyphs.h"
 #include "page_sheet.h"
 #include "pages.h"
 #include "saver.h"
+
+void TodoList(PageCtx& p, const D2D1_RECT_F& r); // page_lists.cpp
+void HostList(PageCtx& p, const D2D1_RECT_F& r);
 
 namespace {
 
@@ -240,6 +246,44 @@ void Focus(PageCtx& p, const D2D1_RECT_F& r, bool tall) {
     if (w::IconBtn(ui, t, Ui::Id("tl.focus.stop"), {r.right - 44, rc.y}, 44, glyph::Stop, 26, true, true)) m.StopFocus();
 }
 
+void WorkTile(PageCtx& p, const D2D1_RECT_F& r) { // every workspace as a chip: the current one lit, busy ones with a dot; a tap switches
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    const sys::WsState& s = m.wsNow;
+    float hov = ui.Smooth(Ui::Id("tl.ws.hov"), Inside(r, ui.In().mouse) ? 1.0f : 0, 14);
+    c.Fill(r, 18, t.cardHi.Alpha(0.35f).Mix(t.cardHi, 0.25f * hov));
+    c.StrokeV(r, 18, t.hairTop, t.hairBot, 1);
+    c.Icon(glyph::Workspaces, {r.left + 22, r.top + 22}, 18, t.textDim);
+    sys::Tiler from = s.source == sys::WsState::kTiling ? sys::Tiler::kPipe : s.source == sys::WsState::kTilingWs ? sys::Tiler::kSocket : s.source == sys::WsState::kDesktops ? sys::Tiler::kNone : m.tiler;
+    std::wstring head = hov > 0.5f ? std::wstring(L"For ") + sys::TilerName(from) : L"Workspaces"; // the hover says whose workspaces these are
+    c.Text(head, Rect(r.left + 40, r.top + 12, Width(r) - 50, 20), Weight::Medium, 12.5f, hov > 0.5f ? t.accentHi : t.text);
+    if (s.list.empty()) {
+        c.Text(L"Looking…", Rect(r.left + 16, r.top + 40, Width(r) - 32, 18), Weight::Light, 11.5f, t.textDim);
+        return;
+    }
+    constexpr float kChip = 28, kChipGap = 6;
+    int n = (int)s.list.size();
+    float avail = Width(r) - 24, x = r.left + 12, y = r.top + 40;
+    int perRow = (std::max)(1, (int)((avail + kChipGap) / (kChip + kChipGap)));
+    for (int i = 0; i < n; ++i) {
+        if (i > 0 && i % perRow == 0) x = r.left + 12, y += kChip + kChipGap;
+        if (y + kChip > r.bottom - 6) break; // more than fit: the pill and the wheel still reach them
+        D2D1_RECT_F chip = Rect(x, y, kChip, kChip);
+        bool on = i == s.current;
+        Ui::Hit h = ui.Button(Ui::Id("tl.ws", i), chip);
+        float hov = ui.Smooth(Ui::Id("tl.ws", i + 100), h.hover ? 1.0f : 0, 16);
+        c.Fill(chip, 9, on ? t.accent : t.track.Mix(t.cardHi, 0.5f * hov));
+        std::wstring label = s.list[i].name.size() <= 2 ? s.list[i].name : std::to_wstring(i + 1); // long names show their number here, in full on the pill
+        c.Text(label, chip, Weight::Semi, 11.5f, on ? t.onAccent : t.text, Align::Center);
+        if (s.list[i].busy && !on) c.Dot({(chip.left + chip.right) / 2, chip.bottom - 4}, 1.8f, t.accentHi);
+        if (h.clicked) m.ws.Focus(i);
+        x += kChip + kChipGap;
+    }
+    if (float notch = ui.Wheel(r)) m.ws.Step(notch > 0 ? -1 : 1); // the wheel walks through them
+}
+
 void Tile(PageCtx& p, int id, const D2D1_RECT_F& r) { // one quick tile: its state, the words that fit its width, what a tap does
     Ui& ui = p.ui;
     Canvas& c = ui.C();
@@ -292,6 +336,37 @@ void Tile(PageCtx& p, int id, const D2D1_RECT_F& r) { // one quick tile: its sta
             bool any = (hasW && wasW) || (hasB && wasB); // all were off when it began: off means every radio back
             if (hasW) m.radios.SetWifi(air && (wasW || !any)); // on: all of them down
             if (hasB) m.radios.SetBt(air && (wasB || !any));
+        }
+        break;
+    }
+    case Model::kTlWork:
+        WorkTile(p, r);
+        break;
+    case Model::kTlLang: {
+        std::wstring lang = sys::extras::Language();
+        if (w::Tile(ui, t, uid, r, glyph::Translate, label(L"Language", L"Keys"), lang.empty() ? L"Switch" : lang, false)) sys::extras::NextLanguage(); // the app in front changes keyboard
+        break;
+    }
+    case Model::kTlBin: {
+        static sys::extras::BinInfo bin;
+        static double at = -10;
+        constexpr double kBinEvery = 5; // the bin is walked on disk: seconds between looks
+        if (ui.Now() - at > kBinEvery) bin = sys::extras::Bin(), at = ui.Now();
+        std::wstring size = bin.items == 0 ? std::wstring(L"Empty") : fmt::Gb(bin.bytes / (1024.0 * 1024 * 1024));
+        if (w::Tile(ui, t, uid, r, glyph::Delete, label(L"Recycle bin", L"Bin"), size, false) && bin.items > 0) {
+            sys::extras::EmptyBin(nullptr); // windows asks first
+            at = -10;
+        }
+        break;
+    }
+    case Model::kTlUpdates: {
+        const auto& u = m.updateNow;
+        int waiting = (std::max)(0, u.system) + (std::max)(0, u.apps);
+        std::wstring state = u.busy ? L"Checking…" : u.system < 0 && u.apps < 0 ? detail(L"Tap to check", L"Check") : waiting == 0 ? detail(L"Up to date", L"None") : std::to_wstring(waiting) + L" waiting";
+        if (w::Tile(ui, t, uid, r, glyph::Update, L"Updates", state, waiting > 0)) {
+            if (u.system > 0) p.wantClose = true, sys::OpenUri(L"ms-settings:windowsupdate");
+            else if (u.apps > 0) p.wantClose = true, ShellExecuteW(nullptr, L"open", L"cmd.exe", L"/k winget upgrade --all", nullptr, SW_SHOWNORMAL); // asked for: shown in a console, nothing hidden
+            else m.updates.Check(m.notify, WM_APP_UPDATES), m.updateNow.busy = true;
         }
         break;
     }
@@ -376,18 +451,25 @@ void DrawTools(PageCtx& p) {
     bool tall = Height(a) > Width(a); // sidebar: timer and tiles stack under the power row
     D2D1_RECT_F timer = tall ? Rect(a.left, power.bottom + 12, Width(a), 190) : Rect(a.left, power.bottom + 12, kTimerW, a.bottom - power.bottom - 12);
     w::Card(ui, t, timer);
-    static const wchar_t* kTabs[] = {L"TIMER", L"STOPWATCH", L"FOCUS"};
-    float tx = timer.left + 20;
-    for (int i = 0; i < 3; ++i) { // three tools in one card, a slim marker under the one showing
+    static const wchar_t* kTabs[Model::kToolTabs] = {L"TIMER", L"STOPWATCH", L"FOCUS", L"TO-DO", L"SERVERS"};
+    float tx = timer.left + 20, tabW = 0, tabGap = 14;
+    for (const wchar_t* tab : kTabs) tabW += 13 + 7.4f * std::wcslen(tab);
+    if (tabW + tabGap * (Model::kToolTabs - 1) > Width(timer) - 40) tabGap = (std::max)(4.0f, (Width(timer) - 40 - tabW) / (Model::kToolTabs - 1)); // a narrow sidebar: the tabs close up
+    for (int i = 0; i < Model::kToolTabs; ++i) { // the tools in one card, a slim marker under the one showing
         float tw = 13 + 7.4f * std::wcslen(kTabs[i]);
         Ui::Hit th = ui.Button(Ui::Id("tl.tab", i), Rect(tx - 4, timer.top + 8, tw + 8, 28));
         float on = ui.Smooth(Ui::Id("tl.tab", 10 + i), m.toolTab == i ? 1.0f : 0, 14);
         c.TextSp(kTabs[i], Rect(tx, timer.top + 16, tw, 14), Weight::Medium, 10, t.textLow.Mix(t.text, th.hover ? 0.5f : 0).Mix(t.accent, on), 1.4f);
         if (on > 0.02f) c.Fill(Rect(tx, timer.top + 34, (tw - 13) * on, 2), 1, t.accent);
-        if (th.clicked) m.toolTab = i;
-        tx += tw + 14;
+        if (th.clicked) m.toolTab = i, m.field = Model::kFieldNone;
+        tx += tw + tabGap;
     }
-    if (m.toolTab == 1) {
+    D2D1_RECT_F listArea = {timer.left + 20, timer.top + 48, timer.right - 20, timer.bottom - 14};
+    if (m.toolTab == Model::kTabTodo) {
+        TodoList(p, listArea);
+    } else if (m.toolTab == Model::kTabHosts) {
+        HostList(p, listArea);
+    } else if (m.toolTab == 1) {
         Stopwatch(p, timer, tall);
     } else if (m.toolTab == 2) {
         Focus(p, timer, tall);

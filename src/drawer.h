@@ -33,6 +33,7 @@ public:
     void SetFull(bool on); // fullscreen app present, stay out of the way
     void SyncHide();
     void OnSecond();
+    void Repaint() { if (opened) Redraw(); } // the mixer's meters moved
     void ShowSettings(); // the tray's settings item: the panel opens with its settings sheet up
     void Wake(); // launched again while running: whatever kept it hidden is dropped and it shows itself
     void Greet(); // at sign-in: the home page drops down and stays until the mouse moves

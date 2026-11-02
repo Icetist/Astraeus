@@ -1,19 +1,24 @@
-## Astraeus 2.3.0
+## Astraeus 2.4.0
 
 ### New
-- **A new Shelf.** Cards for text, links, images, files, colors and code, with search, filters, pins, notes and stacks. Preview anything at full size, drag items in and back out, and paste straight into the app you were in. Saved history is encrypted.
-- **Everything you copy can land on the Shelf.** Off by default: Advanced settings → **Shelf**, with how many cards to keep and when to delete them.
-- **Album art background.** The cover behind the Media page, the fullscreen player, or both, each on its own switch, with a **Strength** slider. The Media page switch and the strength are shared with HaloBar.
-- **Visualizer sensitivity.** One slider for how strongly the bars and the glow react to the music, shared with HaloBar.
-- **Open only with the shortcut.** Hovering or clicking the closed island does nothing; only the keyboard shortcut opens it. There's also an option for this only when an app window is under the edge, with its own hover delay.
-- **Check for updates** right in settings, under Advanced.
+- **A full audio mixer.** Every app on every output, with live level meters, its own output device, and the microphone's volume and mute. No virtual audio devices needed.
+- **Mixer groups.** Up to 8, each with a name, color and icon. Set volume, mute and output for the whole group, with each app still adjustable inside it.
+- **Chat mix.** One slider balances your game group against your chat group.
+- **Ducking.** Chosen groups lower automatically while another group plays.
+- **Mixer profiles.** Save the whole mix and switch between profiles from the Mixer or with a shortcut.
+- **Mixer shortcuts** with an on-screen note: Ctrl+Alt+M mutes the mic, Ctrl+Alt+P picks the next profile, Ctrl+Alt+[ and ] move the chat mix, and Ctrl+Alt+1 to 8 mute a group. Turn them on in the Mixer's options.
+- **Workspaces (experimental).** A Tools tile and a pill widget that show your workspaces and switch between them, from a tiling window manager when one is running, otherwise Windows' own virtual desktops. When a supported tiling manager is installed, the tile is added on its own.
+- **To-do list and server monitor** as new tabs on the Tools page. Servers are checked once a minute.
+- **More tiles:** keyboard language, recycle bin, and pending Windows and app updates.
+- **More pill widgets:** workspace, keyboard language, the window in front, and free disk space.
+- **Visualizer opacity.** One slider for how see-through the bars are, on the Media page and in the fullscreen player, shared with HaloBar. It replaces the album art strength slider; the art now shows at full strength.
 
 ### Better
-- **A lighter Astraeus.** Starfall, the Home cards and the fullscreen player draw with less work, and a closed panel no longer keeps redrawing after a quick page switch.
-- **The sidebar fits around your taskbar**, Windows' or HaloBar's, at any size, and refits when it changes.
-- **Sidebar layouts fixed**: the calendar, the forecast, the weather card and the page row no longer overlap or cut off.
-- **Every settings control is a solid accent**, no more gradients.
-- **Smoother picker and sidebar.** The color picker catches every click, and the sidebar no longer flickers when clicked.
+- **The mixer is lighter.** It reads levels only while it's open or while a group, ducking or a shortcut needs it.
+- **Mixer sliders stay visible on every theme**, Starfall included.
+
+> [!NOTE]
+> Workspaces is experimental. Tell us if it misses a workspace change or shows the wrong one.
 
 > [!NOTE]
 > The executable is not code-signed yet, so Windows SmartScreen may show an "unknown publisher" warning the first time. Click **More info → Run anyway**.

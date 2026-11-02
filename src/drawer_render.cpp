@@ -488,7 +488,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
                                                                                          : D2D1_RECT_F{0, 0, panelW + cfg.corner, panelH}; // the docked side runs past the clip: square there
         Color scrim = theme::Luma(mediaNow.text) < 0.5f ? Color{1, 1, 1, 1} : Color{0, 0, 0, 1}; // a light look's dark ink wants a light wash
         float fadeIn = ui.SmoothFrom(Ui::Id("md.back.in", (int)coverId), 1, 0, kBackRate); // a new cover's backdrop fades in
-        canvas->Image(coverBack.Get(), bleed, cfg.corner, backA * fadeIn * model.artAlpha / 100.0f); // the strength slider, shared with halobar
+        canvas->Image(coverBack.Get(), bleed, cfg.corner, backA * fadeIn);
         canvas->FillV(bleed, cfg.corner, scrim.Alpha(kScrimTop * backA), scrim.Alpha(kScrimBottom * backA)); // contrast stays high wherever the text sits
     }
     auto divider = [&](D2D1_POINT_2F a, D2D1_POINT_2F b) { // starfall: a seam of starlight instead of a plain rule

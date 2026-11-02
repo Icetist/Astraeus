@@ -14,6 +14,9 @@
 #include "sys.h"
 #include "bt.h"
 #include "wifi.h"
+#include "desk.h"
+#include "extras.h"
+#include "workspaces.h"
 #include "mixer.h"
 #include "share.h"
 #include "notify.h"
@@ -44,6 +47,9 @@ enum : UINT { // posted to ui thread by services/worker
     WM_APP_HUDVOL, // the speakers' level or mute changed: wparam level 0..1000, lparam muted
     WM_APP_HUDBRIGHT, // the panel's brightness changed: wparam percent
     WM_APP_VOLKEY, // a volume key, taken from windows: wparam the key
+    WM_APP_WS, // the workspaces changed
+    WM_APP_UPDATES, // the update count is in
+    WM_APP_PING, // a host answered, or didn't
 };
 
 class Hist { // fixed-size rolling graph history
@@ -144,7 +150,32 @@ public:
     float pingMs = -2, jitterMs = 0; // latency to the internet while the network page shows; -1 no answer, -2 not measured
     Hist pingHist{60};
     // stopwatch and focus sessions, on the timer's own once-a-second tick
-    int toolTab = 0; // 0 timer, 1 stopwatch, 2 focus
+    int toolTab = 0; // 0 timer, 1 stopwatch, 2 focus, 3 to-do, 4 servers
+    enum ToolTab { kTabTimer, kTabWatch, kTabFocus, kTabTodo, kTabHosts, kToolTabs };
+    struct Todo {
+        std::wstring text;
+        bool done = false;
+    };
+    std::vector<Todo> todos; // the tools page's to-do list, kept in the registry
+    std::vector<std::wstring> hosts; // the servers it watches
+    enum Field { kFieldNone, kFieldTodo, kFieldHost };
+    int field = kFieldNone; // the list field taking keystrokes
+    std::wstring fieldEdit;
+    static constexpr size_t kFieldMax = 120;
+    static constexpr int kMaxTodos = 50, kMaxHosts = 12;
+    void CommitField(); // enter: the typed line joins its list
+    void SaveTodos();
+    void SaveHosts(); // and the monitor restarts with them
+    sys::Workspaces ws; // a tiling manager's workspaces or windows' desktops, only while a widget or tile shows them
+    sys::WsState wsNow;
+    sys::extras::Updates updates;
+    sys::extras::UpdateCount updateNow;
+    sys::extras::Pinger pinger;
+    std::vector<sys::extras::HostHealth> hostNow;
+    void SyncExtras(); // once a second: the workspaces and the monitor run only while something shows them
+    bool WantsWs() const;
+    int updateTick = 0;
+    sys::Tiler tiler = sys::Tiler::kNone; // found at start: its workspaces tile turns on by itself
     bool swOn = false;
     ULONGLONG swStart = 0, swAccum = 0; // running since, and time banked before it
     std::vector<ULONGLONG> laps;
@@ -191,8 +222,23 @@ public:
     std::vector<sys::ShareOut> shareOuts; // ui copy for the shared-audio tab
     bool shareTab = false; // bluetooth sheet shows the shared-audio tab
     sys::Wifi wifi;
-    sys::Mixer mixer; // holds nothing unless the mixer sheet is open
+    sys::Mixer mixer; // holds nothing unless the mixer sheet is open or a mixer group needs it
     bool mixerOpen = false;
+    sys::Desk desk; // the mixer's groups, chat mix, ducking and profiles, shared with halobar
+    sys::DeskEngine deskEngine; // applies them, in whichever app claimed it first
+    std::vector<sys::OutDev> mics; // input choices, read while the mixer shows
+    std::wstring micId;
+    int deskEdit = -1; // the group whose editor is open, -1 none
+    int nameFor = -1; // a group's name is being typed
+    std::wstring nameEdit;
+    std::wstring deskSay; // what a mixer shortcut did, for the banner; taken once
+    static constexpr int kMixKeys = 12; // mic, next profile, chat mix both ways, eight groups
+    static constexpr size_t kNameMax = 24;
+    void DeskTick(float dt, bool fast); // once a second, and several times a second while ducking or metering
+    bool DeskFast() const { return mixerOpen || deskEngine.NeedsMeter(desk); }
+    void DeskSave(); // an edit: stored for halobar and applied at once
+    void DeskKey(int k); // a mixer shortcut
+    void CommitName();
     std::vector<sys::WifiNet> wifiNets; // ui copy, empty while closed
     bool wifiOpen = false, wifiScan = false;
     sys::WifiState wifiState = sys::WifiState::Ok;
@@ -239,7 +285,7 @@ public:
     bool passFocus = false, passShow = false, passWrong = false; // the wi-fi password field: taking keystrokes, shown in clear, last try failed
     std::string passFor; // raw ssid of the network being joined
     std::wstring passEdit; // what's typed so far, wiped once used
-    bool Typing() const { return hexFocus || passFocus || cityFocus || shelfField != kShelfNone; } // the panel holds the keyboard
+    bool Typing() const { return hexFocus || passFocus || cityFocus || nameFor >= 0 || field != kFieldNone || shelfField != kShelfNone; } // the panel holds the keyboard
     void AskPass(const sys::WifiNet& n); // a new secured network: type its password in the panel
     void SubmitPass();
     void CancelPass();
@@ -296,7 +342,7 @@ public:
     void SetPages(const std::vector<int>& order); // persisted by name; an empty list is refused
     static const wchar_t* PageName(int id);
     static int PageGlyph(int id);
-    enum ToolTile { kTlSnip, kTlColor, kTlAwake, kTlAlerts, kTlDnd, kTlSaver, kTlAir, kTlSettings, kToolTiles }; // the tools page's quick tiles
+    enum ToolTile { kTlSnip, kTlColor, kTlAwake, kTlAlerts, kTlDnd, kTlSaver, kTlAir, kTlSettings, kTlWork, kTlLang, kTlBin, kTlUpdates, kToolTiles }; // new ones go last: saved lists keep their meaning // the tools page's quick tiles
     std::vector<int> tiles; // the ones shown, in order, may be empty
     bool TileHere(int id) const { return id != kTlAwake || portable; } // keeping the screen awake is for laptops
     void SetTiles(const std::vector<int>& order);
@@ -317,14 +363,14 @@ public:
     void CommitCity(); // empty goes back to finding you by ip
     int pillAlways = 0; // the resting pill stays up with the clock
     int pillDesk = 0; // the pill stays up while the desktop is what's under it, always or not
-    enum Widget { kWNone, kWWeather, kWBattery, kWCpu, kWRam, kWNet, kWidgets };
+    enum Widget { kWNone, kWWeather, kWBattery, kWCpu, kWRam, kWNet, kWWork, kWLang, kWTitle, kWDisk, kWidgets };
     int pillLeft = kWWeather, pillRight = kWCpu; // its two status widgets
     std::wstring PillWidget(int which, int& icon) const; // what a widget shows now, empty when it has nothing
     int mediaCompact = 0, pillMusic = 1, showArt = 1, vizOn = 1; // media modules
     int artBack = 0; // the media page sits on its cover, blurred across the whole panel
     int stageArt = 0; // the fullscreen player on its cover too, switched apart from the media page
-    static constexpr int kArtAlphaMin = 20, kVizGainMin = 50, kVizGainMax = 200, kSlideStep = 5; // percent ranges of the two shared sliders
-    int artAlpha = 100; // percent: how strongly the cover shows behind, shared with halobar
+    static constexpr int kVizAlphaMin = 10, kVizGainMin = 50, kVizGainMax = 200, kSlideStep = 5; // percent ranges of the two shared sliders
+    int vizAlpha = 60; // percent: how opaque the visualizer sits over the album art, shared with halobar
     int vizGain = 100; // percent: how hard the visualizer answers the music, shared with halobar
     float VizGain() const { return vizGain / 100.0f; }
     bool Levels(float& left, float& right); // the meter's peaks, scaled by the sensitivity

@@ -96,6 +96,8 @@ struct OutDev {
 
 std::vector<OutDev> ListOuts(std::wstring& defaultId);
 bool SetOut(const std::wstring& id);
+std::vector<OutDev> ListIns(std::wstring& defaultId); // microphones, the same shape
+bool SetIn(const std::wstring& id);
 
 bool IsPortable();
 

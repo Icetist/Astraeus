@@ -28,5 +28,8 @@ constexpr int Dnd = 0xF08F; // do not disturb, the same mark halobar uses
 constexpr int Battery = 0xE1A4, BatteryCharging = 0xE1A3, BatteryLow = 0xE19C, Plug = 0xE63C; // power pills
 constexpr int Airplane = 0xE53D, AirplaneOff = 0xE194, Saver = 0xEA35, Bell = 0xE7F4, Disk = 0xF80E, Place = 0xE55F; // quick tiles, the same marks halobar uses
 constexpr int VolumeDown = 0xE04D; // hud
+constexpr int Translate = 0xE8E2, Update = 0xE923, Box = 0xE835, BoxOn = 0xE834, Server = 0xE875, Window = 0xE069, Workspaces = 0xE9B0, Clear = 0xE14C; // the tools tiles and lists
+constexpr int Chat = 0xE311, Movie = 0xE02C, Web = 0xE80B, Work = 0xE8F9, More = 0xE5CF, Less = 0xE5CE, Tune = 0xE429; // the mixer's groups
+inline constexpr int kGroupIcons[8] = {Pad, Chat, Music, Movie, Web, Bell, Work, Speaker}; // by DeskGroup::icon
 constexpr int Shelf = 0xE1A1, File = 0xE873, Note = 0xF1FC, Image = 0xE3F4, Folder = 0xE2C7, Drop = 0xF090; // the shelf
 }

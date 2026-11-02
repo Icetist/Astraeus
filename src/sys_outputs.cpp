@@ -57,18 +57,20 @@ bool IsPhones(const std::wstring& full) { // name heuristic, form factor prop is
 
 namespace sys {
 
-std::vector<OutDev> ListOuts(std::wstring& defaultId) {
+namespace {
+
+std::vector<OutDev> ListFlow(EDataFlow flow, std::wstring& defaultId) { // outputs or microphones, the same way
     std::vector<OutDev> out;
     defaultId.clear();
     ComPtr<IMMDeviceEnumerator> devEnum;
     ComPtr<IMMDeviceCollection> devices;
     if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&devEnum))) ||
-        FAILED(devEnum->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &devices))) // active only, skip unplugged/disabled
+        FAILED(devEnum->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE, &devices))) // active only, skip unplugged/disabled
         return out;
 
     ComPtr<IMMDevice> def;
     LPWSTR defId = nullptr;
-    if (SUCCEEDED(devEnum->GetDefaultAudioEndpoint(eRender, eConsole, &def)) && SUCCEEDED(def->GetId(&defId))) {
+    if (SUCCEEDED(devEnum->GetDefaultAudioEndpoint(flow, eConsole, &def)) && SUCCEEDED(def->GetId(&defId))) {
         defaultId = defId;
         CoTaskMemFree(defId); // GetId allocates with CoTaskMemAlloc
     }
@@ -91,11 +93,17 @@ std::vector<OutDev> ListOuts(std::wstring& defaultId) {
             d.headphones = IsPhones(name.pwszVal); // test full name, suffix has the hints
         }
         PropVariantClear(&name); // frees the string
-        if (d.name.empty()) d.name = L"Output " + std::to_wstring(i + 1); // fallback label, 1-based
+        if (d.name.empty()) d.name = (flow == eRender ? L"Output " : L"Microphone ") + std::to_wstring(i + 1); // fallback label, 1-based
         out.push_back(std::move(d));
     }
     return out;
 }
+
+}
+
+std::vector<OutDev> ListOuts(std::wstring& defaultId) { return ListFlow(eRender, defaultId); }
+std::vector<OutDev> ListIns(std::wstring& defaultId) { return ListFlow(eCapture, defaultId); }
+bool SetIn(const std::wstring& id) { return SetOut(id); } // the policy picks the flow from the endpoint itself
 
 bool SetOut(const std::wstring& id) {
     ComPtr<IPolicyConfig> policy;

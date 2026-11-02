@@ -64,7 +64,7 @@ void Power(PageCtx& p, const D2D1_RECT_F& r, bool live) { // battery pills: plug
 }
 
 const wchar_t* WidgetName(int w) {
-    static const wchar_t* const kNames[Model::kWidgets] = {L"Nothing", L"Weather", L"Battery", L"CPU", L"Memory", L"Network"};
+    static const wchar_t* const kNames[Model::kWidgets] = {L"Nothing", L"Weather", L"Battery", L"CPU", L"Memory", L"Network", L"Workspace", L"Language", L"Window", L"Disk"};
     return kNames[(w >= 0 && w < Model::kWidgets) ? w : 0];
 }
 
@@ -184,13 +184,13 @@ void ArtBack(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the cover behind 
     float dim = ui.Smooth(Ui::Id("set.art.dim"), any ? 1.0f : kOffAlpha, 14);
     bool layered = dim < 0.999f;
     if (layered) c.Target()->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), dim), nullptr);
-    constexpr int lo = Model::kArtAlphaMin, hi = 100, step = Model::kSlideStep;
-    float v = (m.artAlpha - lo) / (float)(hi - lo);
+    constexpr int lo = Model::kVizAlphaMin, hi = 100, step = Model::kSlideStep;
+    float v = (m.vizAlpha - lo) / (float)(hi - lo);
     bool done = false;
-    if (Knob(ui, t, Ui::Id("set.art.alpha"), Rect(in.left, in.top + 2 * kRowH + 4, Width(in), kSlideH), L"Strength", std::to_wstring(m.artAlpha) + L"%", v, live && any, done,
+    if (Knob(ui, t, Ui::Id("set.viz.alpha"), Rect(in.left, in.top + 2 * kRowH + 4, Width(in), kSlideH), L"Visualizer opacity", std::to_wstring(m.vizAlpha) + L"%", v, live && any, done,
              (float)step / (hi - lo)))
-        m.artAlpha = lo + (int)std::lround(v * (hi - lo) / step) * step; // live: the page behind shows it as it moves
-    if (done) m.SetPref(m.artAlpha, L"MediaArtAlpha", m.artAlpha); // shared: halobar's player follows
+        m.vizAlpha = lo + (int)std::lround(v * (hi - lo) / step) * step; // live: the page behind shows it as it moves
+    if (done) m.SetPref(m.vizAlpha, L"VizAlpha", m.vizAlpha); // shared: halobar's player follows
     if (layered) c.Target()->PopLayer();
 }
 
