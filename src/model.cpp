@@ -306,7 +306,7 @@ void Model::OnOpen() {
     if (vizOn) meter.Refresh();
     bright.ReadAsync(notify, WM_APP_BRIGHT); // ddc/wmi is slow, result posted back
     if (cfg.weather) weather.Refresh(notify, WM_APP_WEATHER);
-    netSrc.FetchWan(notify, WM_APP_WANIP); // async public ip lookup
+    if (cfg.publicIp) netSrc.FetchWan(notify, WM_APP_WANIP); // async public ip lookup
     radios.Recheck(); // a bluetooth or wi-fi radio that wasn't ready at start shows up now, not "unavailable" all session
 }
 

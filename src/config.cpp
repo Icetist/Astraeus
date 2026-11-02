@@ -38,6 +38,8 @@ const char* kDefault = // written on first run, utf-8 ini
     "# --- Tools --------------------------------------------------------------\n"
     "Weather = true\n"
     "Fahrenheit = false\n"
+    "# Look up your public IP for the Network page\n"
+    "PublicIp = true\n"
     "\n"
     "# Download and install new versions automatically\n"
     "AutoUpdate = true\n";
@@ -160,6 +162,7 @@ Config Config::Load(const std::wstring& path) {
         else if (key == L"albumcolors") ok = ParseBool(val, c.albumCol);
         else if (key == L"visualizer") ok = ParseBool(val, c.viz);
         else if (key == L"weather") ok = ParseBool(val, c.weather);
+        else if (key == L"publicip") ok = ParseBool(val, c.publicIp);
         else if (key == L"fahrenheit") ok = ParseBool(val, c.fahr);
         else if (key == L"autoupdate") ok = ParseBool(val, c.autoUpdate);
         else c.warns.push_back(L"Unknown config key: " + key); // typo guard, keep parsing

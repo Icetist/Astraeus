@@ -22,6 +22,7 @@
 [Performance](#-performance) •
 [Installation](#-installation) •
 [Privacy](#-privacy) •
+[Code signing policy](#%EF%B8%8F-code-signing-policy) •
 [Configuration](#%EF%B8%8F-configuration) •
 [Building](#%EF%B8%8F-building-from-source) •
 [FAQ](#-faq)
@@ -248,11 +249,13 @@ Astraeus has no accounts, no analytics and no telemetry. It talks to the network
 | Weather location | `ip-api.com` (plain HTTP; its free tier has no HTTPS) | Your IP address, as any request does | Only when no city is typed in, about every 6 hours | Type a city under **Advanced → Weather**, or `Weather = false` |
 | City search | `geocoding-api.open-meteo.com` | The city you typed | When you enter a city | `Weather = false` |
 | Forecast | `api.open-meteo.com` | The coordinates of your city or IP location | Shortly after launch and when the panel opens, at most every 30 minutes | `Weather = false` |
-| Public IP on the Network page | `api.ipify.org` | Nothing beyond the request | When the panel opens, at most every 10 minutes | Not switchable |
+| Public IP on the Network page | `api.ipify.org` | Nothing beyond the request | When the panel opens, at most every 10 minutes | `PublicIp = false` |
 | Latency on the Network page | Cloudflare's public DNS resolver | One small ping a second | Only while the Network page shows | Leave the page |
 | Synced lyrics | LRCLIB (`lrclib.net`), NetEase Cloud Music (`music.163.com`) and Kugou (`kugou.com`) | Title, artist, album and length of the song | When a song from a music app or site starts, unless it's already cached | Turn off **Fullscreen lyrics** in Settings |
 | Calendar | The private calendar links you added | Nothing beyond the request | At launch and when you open the calendar; nothing runs on a timer | Remove the calendar |
 | Updates | `api.github.com` and this repository's release downloads | Nothing beyond the request | 30 seconds after launch, then every 3 hours | `AutoUpdate = false` |
+| Server monitor on the Tools page | Only the servers you add | One ping, or a plain request for web addresses | Once a minute while any server is listed | Remove the servers |
+| Updates tile on the Tools page | winget's own package source, through winget itself; Windows updates are read from what Windows already knows, with no download | Nothing beyond the request | A minute after launch, then every 6 hours, only while the tile is on the Tools page | Remove the tile |
 
 What stays on your PC:
 
@@ -260,6 +263,19 @@ What stays on your PC:
 - **`astraeus.ini`** and **`astraeus.log`** sit next to the executable (`perf.log` too, if `PerfLog` is on). If Astraeus crashes, the reason is written to `astraeus.log`; nothing is sent anywhere.
 - **`%LOCALAPPDATA%\Astraeus`** holds the lyrics cache (`lyrics`, the last 300 songs), your calendar links (`accounts`, encrypted with Windows so only your Windows user can read them, and shared with HaloBar), and `shelf.txt` only if **Keep after restart** is on the Shelf page.
 - **Notification pills** read Windows' own notification list on your PC while they're switched on. Nothing from it leaves the machine.
+- **Workspaces** talk only to a tiling window manager running on your own PC, over a local pipe or `localhost`, or read Windows' own virtual desktops.
+- **The mixer's groups and profiles, your to-dos and your server list** live in the registry under `HKCU\Software\Astraeus`.
+
+## ✍️ Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+Every release is built from this repository's source by the [release workflow](./.github/workflows/release.yml) on GitHub Actions, and each signing request is approved by hand before the signed executable is published.
+
+- **Committers and reviewers:** [Icetist](https://github.com/Icetist)
+- **Approvers:** [Icetist](https://github.com/Icetist)
+
+**Privacy:** see [Privacy](#-privacy). Astraeus only connects to the services listed there, each for the feature named, and every one of them can be turned off.
 
 ## ⚙️ Configuration
 
@@ -280,6 +296,7 @@ Everything below lives in `astraeus.ini` next to the executable. Open it from th
 | `Visualizer` | `true` | Let the glow behind the player react to the music. The **Visualizer** switch in Settings takes over once used. |
 | `Weather` / `Fahrenheit` | `true` / `false` | Show the weather card and choose its unit. |
 | `AutoUpdate` | `true` | Download and install new versions automatically. |
+| `PublicIp` | `true` | Look up your public IP for the Network page. |
 | `PerfLog` | `false` | Write render timings to `perf.log`, handy for performance testing. |
 
 ## 🛠️ Building from source

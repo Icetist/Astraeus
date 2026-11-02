@@ -157,7 +157,7 @@ void DrawNet(PageCtx& p) {
     }
     float x = info.left + 20, wdt = 276;
     InfoRow(c, t, x, info.top + 134, wdt, L"LOCAL IP", n.lanIp);
-    InfoRow(c, t, x, info.top + 184, wdt - 40, L"PUBLIC IP", n.wanIp.empty() ? L"Looking up…" : n.wanIp); // narrower to fit copy button
+    InfoRow(c, t, x, info.top + 184, wdt - 40, L"PUBLIC IP", !p.m.cfg.publicIp ? L"Off" : n.wanIp.empty() ? L"Looking up…" : n.wanIp); // narrower to fit copy button
     bool copied = ui.Now() - copiedAt < 1.6; // check icon shows 1.6s after copy
     if (!n.wanIp.empty() &&
         w::IconBtn(ui, t, Ui::Id("net.copy"), {info.right - 34, info.top + 206}, 34, copied ? glyph::Check : glyph::Copy, 18, true, copied)) {
