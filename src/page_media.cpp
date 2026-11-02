@@ -48,6 +48,27 @@ void DrawViz(PageCtx& p, const D2D1_RECT_F& r) { // soft light swelling up from 
     DrawSwell(ui.C(), vizSwell, kBlobs, r, p.media, ui.Now(), &card);
 }
 
+constexpr float kCardVeil = 0.22f; // over the album art backdrop: only a faint card, the cover shows through
+constexpr float kVizOverBack = 0.6f; // and the music's glow sits on it faintly: the art is the show
+
+void Backing(PageCtx& p, const D2D1_RECT_F& r, float radius) { // the card under everything: its fill, the blurred cover, the glow, the rim
+    Canvas& c = p.ui.C();
+    const Theme& t = p.media;
+    float k = p.backdrop, solid = 1 - k; // the panel's backdrop takes over as it fades in
+    if (solid > 0.001f) c.Fill(r, radius, t.card.Alpha(solid));
+    if (k > 0.001f) c.Fill(r, radius, t.veil.Alpha(kCardVeil * k));
+    if (p.coverBlur && solid > 0.001f) {
+        c.Image(p.coverBlur, r, radius, 0.7f * p.artFade * solid);
+        c.FillH(r, radius, t.veil.Alpha(0.30f * solid), t.veil.Alpha(0.72f * solid)); // wash for legibility
+    }
+    bool soft = k > 0.001f;
+    if (soft) c.Target()->PushLayer(D2D1::LayerParameters(r, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), // bounded to the card: the glow never leaves it, and the layer costs only its pixels
+                                                         1 - (1 - kVizOverBack) * k), nullptr);
+    DrawViz(p, r); // under border + art, over backdrop
+    if (soft) c.Target()->PopLayer();
+    c.StrokeV(r, radius, t.hairTop, t.hairBot, 1);
+}
+
 }
 
 void WaveLine(Canvas& c, float a0, float a1, float cy, float amp, double now, Color col, float width, float wavelen) {
@@ -86,7 +107,7 @@ bool StepSwell(Swell& s, Model& m, float dt, bool playing, int blobs) {
         want /= (b1 - b0); // average: blobs swell, they don't spike
         float& g = s.gain[i];
         g = (std::max)(want, g - dt * 0.12f); // its recent loudest, slowly forgotten: every blob uses its whole range at any volume
-        want = anim::Clamp01((want / (std::max)(g, 0.18f) - 0.30f) / 0.70f); // relative to that: quiet sinks, every hit stands up
+        want = anim::Clamp01((want / (std::max)(g, 0.18f) * m.VizGain() - 0.30f) / 0.70f); // relative to that, times the sensitivity: quiet sinks, every hit stands up
         float& v = s.level[i];
         v += (want - v) * (std::min)(1.0f, dt * (want > v ? 16.0f : 3.2f)); // swells fast, sinks soon after
         sum += v;
@@ -115,7 +136,7 @@ void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale, const Theme& t) {
     Ui& ui = p.ui;
     bool playing = p.m.track.playing;
     float left = 0, right = 0;
-    if (playing) p.m.meter.Read(left, right);
+    if (playing) p.m.Levels(left, right);
     float l = ui.Env(Ui::Id("viz.l"), std::sqrt(left));
     float rr = ui.Env(Ui::Id("viz.r"), std::sqrt(right)); // same env ids as DrawViz, shared smoothing
     if (playing || l > 0.01f || rr > 0.01f) ui.KeepAlive();
@@ -174,13 +195,7 @@ void MediaCompact(PageCtx& p) { // a smaller cover beside the song, the wave and
     const sys::Track& tr = p.m.track;
     bool has = p.m.hasTrack;
     constexpr float kRadius = 24, kArt = 104, kPad = 26;
-    c.Fill(r, kRadius, t.card);
-    if (p.coverBlur) {
-        c.Image(p.coverBlur, r, kRadius, 0.7f * p.artFade);
-        c.FillH(r, kRadius, t.veil.Alpha(0.30f), t.veil.Alpha(0.72f));
-    }
-    DrawViz(p, r);
-    c.StrokeV(r, kRadius, t.hairTop, t.hairBot, 1);
+    Backing(p, r, kRadius);
     D2D1_RECT_F place = Rect(r.left + kPad, r.top + kPad, kArt, kArt), art = ArtHover(p, place); // the rest lays out from where it sits, not from its hover lift
     FlipArt(p, art, 16, 40);
     art = place;
@@ -209,13 +224,7 @@ void MediaTall(PageCtx& p) { // sidebar: big centered art, everything else stack
     const sys::Track& tr = p.m.track;
     bool has = p.m.hasTrack;
     const float radius = 24;
-    c.Fill(r, radius, t.card);
-    if (p.coverBlur) {
-        c.Image(p.coverBlur, r, radius, 0.7f * p.artFade);
-        c.FillH(r, radius, t.veil.Alpha(0.30f), t.veil.Alpha(0.72f));
-    }
-    DrawViz(p, r);
-    c.StrokeV(r, radius, t.hairTop, t.hairBot, 1);
+    Backing(p, r, radius);
     float side = (std::min)(Width(r) - 64, Height(r) * 0.46f);
     D2D1_RECT_F place = Rect((r.left + r.right - side) / 2, r.top + 32, side, side), art = ArtHover(p, place);
     c.Glow({(art.left + art.right) / 2, (art.top + art.bottom) / 2 + Height(art) * 0.06f}, Width(art) * 0.62f, Height(art) * 0.62f, Color{0, 0, 0, 0.30f}); // a soft shadow under the art, no ring
@@ -265,15 +274,9 @@ void DrawMedia(PageCtx& p) {
     bool has = p.m.hasTrack;
     const float radius = 24;
 
-    c.Fill(r, radius, t.card);
-    if (p.coverBlur) {
-        c.Image(p.coverBlur, r, radius, 0.7f * p.artFade);
-        c.FillH(r, radius, t.veil.Alpha(0.30f), t.veil.Alpha(0.72f)); // wash for legibility
-    }
+    Backing(p, r, radius);
     float side = Height(r) - 52; // square art, 26px margin top/bottom
     float x = r.left + 26 + side + 30, wdt = r.right - 28 - x; // text column right of art
-    DrawViz(p, r); // under border + art, over backdrop
-    c.StrokeV(r, radius, t.hairTop, t.hairBot, 1);
 
     D2D1_RECT_F art = ArtHover(p, Rect(r.left + 26, r.top + 26, side, side));
     c.Glow({(art.left + art.right) / 2, (art.top + art.bottom) / 2 + Height(art) * 0.06f}, Width(art) * 0.62f, Height(art) * 0.62f, Color{0, 0, 0, 0.30f}); // a soft shadow under the art, no ring

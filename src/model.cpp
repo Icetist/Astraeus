@@ -25,8 +25,11 @@ namespace {
 constexpr wchar_t kLookVal[] = L"Appearance";
 constexpr int kLooks = Model::kLookStarfall + 1; // dark, light, glass, custom, halobar's, starfall
 constexpr wchar_t kQuietVal[] = L"Quiet"; // do not disturb: halobar reads and writes the same value
+constexpr wchar_t kArtBackVal[] = L"MediaArtBg"; // the album art background, shared with halobar the same way
+constexpr wchar_t kArtAlphaVal[] = L"MediaArtAlpha", kVizGainVal[] = L"VizGain"; // its strength and the visualizer's sensitivity, shared too
 constexpr wchar_t kHaloKey[] = L"Software\\HaloBar"; // halobar's own settings, never written from here
 constexpr wchar_t kHaloClass[] = L"HaloBar"; // its window: there means it's running
+constexpr int kMaxDockReach = 400; // pixels: past this the value is junk, not a dock
 
 constexpr wchar_t kPagesVal[] = L"PageOrder", kTilesVal[] = L"ToolTiles"; // saved by name: a new page or tile later never shifts the old ones
 const wchar_t* const kPageKeys[Model::kPageIds] = {L"home", L"media", L"system", L"network", L"tools", L"shelf"};
@@ -50,6 +53,25 @@ std::wstring JoinList(const std::vector<int>& v, const wchar_t* const* keys) {
     for (int id : v) s += (s.empty() ? L"" : L",") + std::wstring(keys[id]);
     return s.empty() ? kNoneVal : s;
 }
+
+constexpr wchar_t kOurKey[] = L"Software\\Astraeus"; // where quiet and the art background live, halobar writes them too
+
+struct KeyWatch { // a key's change notice: its values are read again after a write to it, not every second
+    HKEY key = nullptr;
+    HANDLE ev = nullptr;
+    bool Changed(const wchar_t* path) { // true the first time, after any write, and every time while the key can't be watched (missing: read as before)
+        if (!ev && !(ev = CreateEventW(nullptr, FALSE, FALSE, nullptr))) return true;
+        bool fired;
+        if (key) fired = WaitForSingleObject(ev, 0) == WAIT_OBJECT_0;
+        else if (RegOpenKeyExW(HKEY_CURRENT_USER, path, 0, KEY_NOTIFY, &key) != ERROR_SUCCESS) return key = nullptr, true;
+        else fired = true; // just opened: nothing read yet
+        if (fired && RegNotifyChangeKeyValue(key, FALSE, REG_NOTIFY_CHANGE_LAST_SET | REG_NOTIFY_THREAD_AGNOSTIC, ev, TRUE) != ERROR_SUCCESS) // armed again before the read, so a write during it still counts
+            RegCloseKey(key), key = nullptr; // deleted or gone: opened again next second
+        return fired;
+    }
+};
+KeyWatch ourWatch, haloWatch; // the ui thread's, for the process' life
+bool haloThemeWas = false; // the theme was wanted at the last read
 
 int HaloNum(HKEY key, const wchar_t* name, int fallback, int lo, int hi) { // out of range is stale or hand-edited: the default
     DWORD v = 0, size = sizeof(v);
@@ -101,7 +123,28 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     pillMusic = flag(L"PillMusic", 1);
     showArt = flag(L"ShowArt", 1);
     vizOn = flag(L"Visualizer", cfg.viz ? 1 : 0); // the ini's choice until the switch in settings is used
+    artBack = flag(kArtBackVal, 0);
+    stageArt = flag(L"StageArtBg", 0);
+    artAlpha = (std::clamp)(sys::ReadNum(kArtAlphaVal, 100), kArtAlphaMin, 100);
+    vizGain = (std::clamp)(sys::ReadNum(kVizGainVal, 100), kVizGainMin, kVizGainMax);
+    keyOnly = flag(L"KeyOnly", 0);
+    appKeyOnly = flag(L"AppKeyOnly", 0);
+    appHoverMs = (std::clamp)(sys::ReadNum(L"AppHoverMs", kAppHoverMs), 0, kAppHoverMax);
     hud = flag(L"Hud", 0); // experimental: off unless asked for
+    shelfCapture = flag(L"ShelfCapture", 0); // off unless asked for: the shelf holds only what's dropped on it
+    shelfHistory = (std::clamp)(sys::ReadNum(L"ShelfHistory", sys::Shelf::kHistDef), sys::Shelf::kHistMin, sys::Shelf::kHistMax);
+    shelfExpire = (std::clamp)(sys::ReadNum(L"ShelfExpire", sys::Shelf::kExpireNever), 0, sys::Shelf::kExpireNever);
+    shelfClearStart = flag(L"ShelfClearStart", 0);
+    SyncShelf(); // before Start: a clear at launch needs to know
+}
+
+void Model::SyncShelf() { shelf.Configure({shelfCapture != 0, shelfHistory, shelfExpire, shelfClearStart != 0}); }
+
+void Model::CommitShelfNote() {
+    if (shelfField == kShelfNote && shelfNoteFor) shelf.SetNote(shelfNoteFor, shelfEdit);
+    shelfField = kShelfNone;
+    shelfNoteFor = 0;
+    shelfEdit.clear();
 }
 
 Model::~Model() {
@@ -575,6 +618,8 @@ void Model::SetNotifyPills(bool on) {
     SyncNotify();
 }
 
+void Model::SetArtBack(bool on) { SetPref(artBack, kArtBackVal, on ? 1 : 0); } // halobar picks it up on its next look
+
 void Model::SetQuiet(bool on) {
     SetPref(quiet, kQuietVal, on ? 1 : 0); // halobar sees it within a moment, it watches our key
     SyncNotify();
@@ -589,17 +634,32 @@ void Model::SyncNotify() {
 }
 
 bool Model::PollShared() {
-    quiet = sys::ReadNum(kQuietVal, 0) ? 1 : 0; // halobar may have flipped it
-    haloRuns = FindWindowW(kHaloClass, nullptr) != nullptr;
+    if (ourWatch.Changed(kOurKey)) { // only after a write to our key
+        quiet = sys::ReadNum(kQuietVal, 0) ? 1 : 0; // halobar may have flipped it
+        artBack = sys::ReadNum(kArtBackVal, 0) ? 1 : 0; // and this one
+        artAlpha = (std::clamp)(sys::ReadNum(kArtAlphaVal, 100), kArtAlphaMin, 100); // and the two sliders
+        vizGain = (std::clamp)(sys::ReadNum(kVizGainVal, 100), kVizGainMin, kVizGainMax);
+    }
+    bool runs = FindWindowW(kHaloClass, nullptr) != nullptr;
+    bool theme = Following() || settingsOpen; // the settings swatch previews it too
+    bool fresh = haloWatch.Changed(kHaloKey); // asked every time: it also re-arms the notice
+    if (!fresh && runs == haloRuns && theme == haloThemeWas) { // nothing it was read from has changed: the same answer as last second
+        SyncNotify();
+        return false;
+    }
+    haloRuns = runs;
+    haloThemeWas = theme;
     Halo was = halo, now;
     bool pills = haloRuns; // running without saved settings: its default is pills on
     int dock = -1; // its dock's edge, only while it runs
+    int reach = 0; // its bottom dock's height off the screen's edge
     HKEY key = nullptr;
-    bool theme = Following() || settingsOpen; // the settings swatch previews it too
     if ((haloRuns || theme) && RegOpenKeyExW(HKEY_CURRENT_USER, kHaloKey, 0, KEY_QUERY_VALUE, &key) == ERROR_SUCCESS) {
         pills = haloRuns && HaloNum(key, L"Pills", 1, 0, 1) != 0;
         static constexpr int kHaloToOurs[] = {-1, 1, 2, 0}; // halobar counts bottom, left, right, top; we have no bottom
-        dock = haloRuns ? kHaloToOurs[HaloNum(key, L"Edge", 0, 0, 3)] : -1;
+        int haloSide = HaloNum(key, L"Edge", 0, 0, 3);
+        dock = haloRuns ? kHaloToOurs[haloSide] : -1;
+        reach = haloRuns && haloSide == 0 ? HaloNum(key, L"DockReach", 0, 0, kMaxDockReach) : 0; // halobar writes it as its size changes
         if (theme) { // its theme matters only while we wear it or show it
             now.here = true;
             now.look = HaloNum(key, L"Look", -1, -1, 3);
@@ -613,6 +673,7 @@ bool Model::PollShared() {
     }
     haloPills = pills;
     haloEdge = dock; // the drawer re-docks off it once the panel is closed, and back when it leaves
+    haloReach = reach; // the sidebar fits above its dock
     if (theme) halo = now; // not installed: its defaults, which follow us, so dark
     SyncNotify();
     return (Following() || settingsOpen) && halo != was; // open settings repaint too: the halobar swatch, and whether it's offered at all
@@ -749,6 +810,13 @@ void Model::Bands(float (&out)[sys::Spectrum::kBands]) {
     spectrumAsked = GetTickCount64();
     if (!spectrum) spectrum = std::make_unique<sys::Spectrum>();
     spectrum->Read(out);
+}
+
+bool Model::Levels(float& left, float& right) {
+    bool ok = meter.Read(left, right);
+    float g = VizGain();
+    left = (std::min)(1.0f, left * g), right = (std::min)(1.0f, right * g); // the sensitivity slider: louder or calmer, never past full
+    return ok;
 }
 
 void Model::IdleSpectrum() {

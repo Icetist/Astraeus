@@ -14,5 +14,7 @@ enum class Upd { Idle, Checking, Downloading, Current, Failed, Installed, Update
 void Show(HWND owner, const Theme& t, bool startup); // themed menu at the cursor, built on demand, freed on close
 void Ask(HWND owner, const Theme& t); // themed start-with-windows prompt, yes posts kStartup
 void SetUpdate(Upd state, const std::wstring& tag = L""); // the update row follows the check, live if the menu is open
+std::wstring UpdateText(); // the same words the menu's update row shows, for settings' button
+bool UpdateBusy(); // checking, downloading or about to restart
 
 }

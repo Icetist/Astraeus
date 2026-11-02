@@ -1,178 +1,87 @@
-#include "shelf.h"
+// The shelf's history: cards newest first, repeats moved up with a count, stacks, pins and notes, the limit and the auto-delete,
+// and one worker that makes previews and keeps images. Nothing here runs unless something is dropped, copied or looked at.
+#include "shelf_impl.h"
 
 #include <objbase.h>
-#include <ole2.h>
-#include <shellapi.h>
-#include <shlobj.h>
 #include <shlwapi.h>
-#include <shobjidl.h>
-#include <wrl/client.h>
 
 #include <algorithm>
-#include <mutex>
 #include <thread>
 
 #include "sys.h"
-
-using Microsoft::WRL::ComPtr;
 
 namespace sys {
 
 namespace {
 
-constexpr size_t kTextMax = 64 * 1024; // a longer note is cut: it's a stash, not an editor
-constexpr size_t kSaveTextMax = 2000; // notes are written to disk this long at most, and only when keeping is on
 constexpr size_t kNameMax = 80;
-constexpr wchar_t kKeepVal[] = L"ShelfKeep";
+constexpr int64_t kExpireSecs[Shelf::kExpireNever] = {3600, 6 * 3600, 24 * 3600, 7 * 24 * 3600}; // 1h, 6h, 24h, 7d
+constexpr int64_t kAgeSlackMs = 500; // the timer lands just after the oldest is due
 
-std::wstring ShelfFile() { // %LOCALAPPDATA%\Astraeus\shelf.txt
-    PWSTR base = nullptr;
-    std::wstring path;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &base))) path = std::wstring(base) + L"\\Astraeus";
-    CoTaskMemFree(base);
-    return path.empty() ? path : path + L"\\shelf.txt";
+bool AllImages(const std::vector<ShelfFile>& files) {
+    return !files.empty() && std::all_of(files.begin(), files.end(), [](const ShelfFile& f) { return !f.dir && (f.owned || shelfkind::IsImageName(f.path)); });
 }
 
-std::string Utf8(const std::wstring& s) {
-    int n = WideCharToMultiByte(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0, nullptr, nullptr);
-    std::string out(n > 0 ? n : 0, '\0');
-    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, s.data(), (int)s.size(), out.data(), n, nullptr, nullptr);
-    return out;
+bool SameFile(const ShelfFile& a, const ShelfFile& b) {
+    if (a.owned || b.owned) return a.owned && b.owned && a.hash == b.hash;
+    return _wcsicmp(a.path.c_str(), b.path.c_str()) == 0;
 }
 
-std::wstring Wide(const std::string& s) {
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    std::wstring out(n > 0 ? n : 0, L'\0');
-    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), out.data(), n);
-    return out;
-}
-
-std::wstring Escape(const std::wstring& s) { // one note per line on disk
-    std::wstring o;
-    for (wchar_t c : s) {
-        if (c == L'\\') o += L"\\\\";
-        else if (c == L'\n') o += L"\\n";
-        else if (c == L'\r') o += L"\\r";
-        else if (c == L'\t') o += L"\\t";
-        else o += c;
-    }
-    return o;
-}
-
-std::wstring Unescape(const std::wstring& s) {
-    std::wstring o;
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] != L'\\' || i + 1 == s.size()) {
-            o += s[i];
-            continue;
-        }
-        wchar_t e = s[++i];
-        o += e == L'n' ? L'\n' : e == L'r' ? L'\r' : e == L't' ? L'\t' : e;
-    }
-    return o;
-}
-
-bool Thumb(const std::wstring& path, UINT px, UINT& w, UINT& h, std::vector<uint32_t>& out) { // explorer's thumbnail, or the type's icon
-    ComPtr<IShellItemImageFactory> f;
-    if (FAILED(SHCreateItemFromParsingName(path.c_str(), nullptr, IID_PPV_ARGS(&f)))) return false; // moved or deleted since the drop
-    HBITMAP bmp = nullptr;
-    DWORD attr = GetFileAttributesW(path.c_str());
-    bool remote = PathIsNetworkPathW(path.c_str()) || (attr != INVALID_FILE_ATTRIBUTES && (attr & (FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)));
-    SIIGBF flags = (SIIGBF)(SIIGBF_RESIZETOFIT | (remote ? SIIGBF_INCACHEONLY : 0)); // a share or a cloud placeholder: only what's cached, never a download or a hung server
-    if (FAILED(f->GetImage({(LONG)px, (LONG)px}, flags, &bmp)) || !bmp) return false;
-    BITMAP bm{};
-    GetObjectW(bmp, sizeof(bm), &bm);
-    bool ok = bm.bmWidth > 0 && bm.bmHeight > 0;
-    if (ok) {
-        w = (UINT)bm.bmWidth;
-        h = (UINT)bm.bmHeight;
-        out.assign((size_t)w * h, 0);
-        BITMAPINFO bi{};
-        bi.bmiHeader = {sizeof(BITMAPINFOHEADER), bm.bmWidth, -bm.bmHeight, 1, 32, BI_RGB}; // top-down
-        HDC dc = GetDC(nullptr);
-        ok = GetDIBits(dc, bmp, 0, h, out.data(), &bi, DIB_RGB_COLORS) == (int)h;
-        ReleaseDC(nullptr, dc);
-    }
-    DeleteObject(bmp);
-    if (!ok) return false;
-    bool alpha = std::any_of(out.begin(), out.end(), [](uint32_t p) { return (p >> 24) != 0; });
-    for (uint32_t& p : out) {
-        if (!alpha) { // photos come back with no alpha at all: opaque
-            p |= 0xFF000000u;
-            continue;
-        }
-        uint32_t a = p >> 24, r = (std::min)((p >> 16) & 0xFF, a), g = (std::min)((p >> 8) & 0xFF, a), b = (std::min)(p & 0xFF, a); // stays a valid premultiplied pixel
-        p = a << 24 | r << 16 | g << 8 | b;
-    }
+bool Same(const ShelfItem& a, const ShelfItem& b) {
+    if (a.HasFiles() != b.HasFiles()) return false;
+    if (!a.HasFiles()) return a.text == b.text;
+    if (a.files.size() != b.files.size()) return false;
+    for (size_t i = 0; i < a.files.size(); ++i)
+        if (!SameFile(a.files[i], b.files[i])) return false;
     return true;
 }
 
-ComPtr<IDataObject> FileData(const std::wstring& path) { // the shell's own data object: file drop, id list, drag image
-    ComPtr<IDataObject> obj;
-    PIDLIST_ABSOLUTE full = nullptr;
-    if (FAILED(SHParseDisplayName(path.c_str(), nullptr, &full, 0, nullptr)) || !full) return obj; // gone since it was dropped
-    PIDLIST_ABSOLUTE parent = ILClone(full);
-    PCUITEMID_CHILD child = ILFindLastID(full);
-    if (parent && ILRemoveLastID(parent)) SHCreateDataObject(parent, 1, &child, nullptr, IID_PPV_ARGS(&obj));
-    ILFree(parent);
-    ILFree(full);
-    return obj;
+ShelfKind FileKind(const std::vector<ShelfFile>& files) { return AllImages(files) ? ShelfKind::Image : ShelfKind::File; }
+
+void ForgetId(Shelf::Work& w, uint64_t id) { // previews of a card that changed or went
+    for (auto it = w.ready.begin(); it != w.ready.end();) it = (it->first >> 8) == id ? w.ready.erase(it) : std::next(it);
+    for (auto it = w.asked.begin(); it != w.asked.end();) it = (*it >> 8) == id ? w.asked.erase(it) : std::next(it);
 }
 
-ComPtr<IDataObject> TextData(const std::wstring& text) {
-    ComPtr<IDataObject> obj;
-    if (FAILED(SHCreateDataObject(nullptr, 0, nullptr, nullptr, IID_PPV_ARGS(&obj)))) return obj;
-    size_t bytes = (text.size() + 1) * sizeof(wchar_t);
-    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
-    void* p = mem ? GlobalLock(mem) : nullptr;
-    if (!p) {
-        if (mem) GlobalFree(mem);
-        return nullptr;
-    }
-    memcpy(p, text.c_str(), bytes);
-    GlobalUnlock(mem);
-    FORMATETC fe = {CF_UNICODETEXT, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-    STGMEDIUM sm = {TYMED_HGLOBAL};
-    sm.hGlobal = mem;
-    if (FAILED(obj->SetData(&fe, &sm, TRUE))) { // the object owns mem on success
-        GlobalFree(mem);
-        return nullptr;
-    }
-    return obj;
+void DropOwned(const std::vector<ShelfFile>& files) {
+    for (const auto& f : files)
+        if (f.owned) DeleteFileW(f.path.c_str()); // an image the shelf kept for this card alone
 }
 
-FORMATETC Fmt(CLIPFORMAT cf) { return {cf, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL}; }
+}
 
+namespace shelfio {
+std::vector<ShelfFile> Files(const std::vector<std::wstring>& paths) {
+    std::vector<ShelfFile> out;
+    for (const auto& p : paths) {
+        ShelfFile f;
+        f.path = p;
+        f.name = PathFindFileNameW(p.c_str());
+        DWORD a = GetFileAttributesW(p.c_str());
+        f.dir = a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
+        out.push_back(std::move(f));
+    }
+    return out;
+}
 }
 
 std::wstring ShelfItem::Name() const {
-    if (File()) return PathFindFileNameW(path.c_str());
+    if (files.size() == 1) return files[0].name;
+    if (Stack()) return std::to_wstring(files.size()) + (kind == ShelfKind::Image ? L" images" : L" files");
     size_t a = text.find_first_not_of(L" \t\r\n");
     if (a == std::wstring::npos) return L"";
     size_t b = text.find_first_of(L"\r\n", a);
-    std::wstring line = text.substr(a, (std::min)(b == std::wstring::npos ? text.size() - a : b - a, kNameMax));
-    return line;
+    return text.substr(a, (std::min)(b == std::wstring::npos ? text.size() - a : b - a, kNameMax));
 }
-
-struct Shelf::Work {
-    struct Done {
-        uint64_t id;
-        UINT w = 0, h = 0;
-        std::vector<uint32_t> px;
-    };
-    std::mutex lock; // guards everything below
-    std::vector<std::pair<uint64_t, std::wstring>> todo;
-    std::vector<Done> done;
-    bool running = false;
-    HWND notify = nullptr;
-    UINT msg = 0;
-};
 
 Shelf::Shelf() : work(std::make_shared<Work>()) {}
 
 Shelf::~Shelf() {
+    if (listening) RemoveClipboardFormatListener(clipWnd);
+    if (saveDue && shelfio::Kept()) Save(); // the last burst; not after a reset took the switch away
+    if (clipWnd) DestroyWindow(clipWnd);
     std::lock_guard<std::mutex> g(work->lock);
-    work->todo.clear(); // a running worker finishes its current file and leaves
+    work->todo.clear(); // a running worker finishes its current job and leaves
     work->notify = nullptr;
 }
 
@@ -184,126 +93,324 @@ void Shelf::Start(HWND hwnd, UINT message) {
         work->notify = hwnd;
         work->msg = message;
     }
-    keep = ReadNum(kKeepVal, 0) != 0; // off unless asked for: nothing about what you stash touches the disk
+    keep = shelfio::Kept(); // off unless asked for: nothing about what you stash stays after you quit
+    shelfio::Sweep(!keep);
     if (keep) Load();
-    Previews();
+    Window();
+    started = true;
+    Configure(opts);
+    ScheduleAge();
 }
 
-bool Shelf::Accepts(IDataObject* data) {
-    if (!data) return false;
-    FORMATETC drop = Fmt(CF_HDROP), text = Fmt(CF_UNICODETEXT);
-    return data->QueryGetData(&drop) == S_OK || data->QueryGetData(&text) == S_OK;
-}
-
-bool Shelf::Add(IDataObject* data) {
-    if (!data) return false;
-    bool added = false;
-    FORMATETC drop = Fmt(CF_HDROP), text = Fmt(CF_UNICODETEXT);
-    STGMEDIUM m{};
-    if (SUCCEEDED(data->GetData(&drop, &m))) { // files win over text: explorer offers both
-        if (auto h = static_cast<HDROP>(GlobalLock(m.hGlobal))) {
-            UINT n = DragQueryFileW(h, 0xFFFFFFFF, nullptr, 0);
-            for (UINT i = (std::min)(n, (UINT)kMax); i-- > 0;) { // backwards, so the first dropped ends up first
-                UINT len = DragQueryFileW(h, i, nullptr, 0);
-                std::wstring path(len, L'\0');
-                if (!len || DragQueryFileW(h, i, path.data(), len + 1) != len) continue;
-                ShelfItem it;
-                it.path = std::move(path);
-                Push(std::move(it));
-                added = true;
-            }
-            GlobalUnlock(m.hGlobal);
-        }
-        ReleaseStgMedium(&m);
-    } else if (SUCCEEDED(data->GetData(&text, &m))) {
-        if (auto p = static_cast<const wchar_t*>(GlobalLock(m.hGlobal))) {
-            size_t cap = (std::min)(kTextMax, GlobalSize(m.hGlobal) / sizeof(wchar_t));
-            ShelfItem it;
-            it.text.assign(p, wcsnlen(p, cap));
-            GlobalUnlock(m.hGlobal);
-            if (it.text.find_first_not_of(L" \t\r\n") != std::wstring::npos) {
-                Push(std::move(it));
-                added = true;
-            }
-        }
-        ReleaseStgMedium(&m);
+void Shelf::Configure(const Opts& o) {
+    opts = o;
+    opts.limit = (std::clamp)(opts.limit, kHistMin, kHistMax);
+    opts.expire = (std::clamp)(opts.expire, 0, kExpireNever);
+    if (!started) return; // the model reads its settings before the window exists
+    bool want = opts.capture && clipWnd;
+    if (want != listening) {
+        listening = want && AddClipboardFormatListener(clipWnd); // event driven: windows tells us, nothing polls
+        if (!want) RemoveClipboardFormatListener(clipWnd);
     }
-    if (!added) return false;
-    Previews();
-    if (keep) Save();
-    return true;
+    size_t before = items.size();
+    Trim();
+    Age();
+    if (items.size() != before) Changed();
+    ScheduleAge();
 }
 
-void Shelf::Push(ShelfItem item) {
-    auto same = std::find_if(items.begin(), items.end(), [&](const ShelfItem& o) {
-        return item.File() ? o.File() && _wcsicmp(o.path.c_str(), item.path.c_str()) == 0 : !o.File() && o.text == item.text;
-    });
-    if (same != items.end()) { // dropped again: it moves to the front, keeping its preview
-        item = std::move(*same);
-        items.erase(same);
-    } else {
-        item.id = nextId++;
-        if (item.File()) {
-            DWORD a = GetFileAttributesW(item.path.c_str());
-            item.dir = a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
-        }
-    }
-    items.insert(items.begin(), std::move(item));
-    if (items.size() > kMax) items.pop_back(); // the oldest falls off
-}
-
-ShelfItem* Shelf::Find(uint64_t id) {
-    for (auto& it : items)
+const ShelfItem* Shelf::Find(uint64_t id) const {
+    for (const auto& it : items)
         if (it.id == id) return &it;
     return nullptr;
 }
 
-void Shelf::Remove(uint64_t id) {
-    items.erase(std::remove_if(items.begin(), items.end(), [id](const ShelfItem& o) { return o.id == id; }), items.end());
-    {
-        std::lock_guard<std::mutex> g(work->lock);
-        auto& todo = work->todo; // a preview not made yet isn't needed any more
-        todo.erase(std::remove_if(todo.begin(), todo.end(), [id](const auto& j) { return j.first == id; }), todo.end());
+ShelfItem* Shelf::Get(uint64_t id) { return const_cast<ShelfItem*>(Find(id)); }
+
+bool Shelf::Land(Haul& h) {
+    int64_t now = shelfio::Now();
+    if (!h.files.empty()) {
+        std::vector<ShelfFile> files = shelfio::Files(h.files);
+        size_t chunks = (files.size() + kStackMax - 1) / kStackMax;
+        for (size_t c = chunks; c-- > 0;) { // backwards: the first dropped ends up first
+            ShelfItem it;
+            it.files.assign(files.begin() + c * kStackMax, files.begin() + (std::min)(files.size(), (c + 1) * kStackMax));
+            it.kind = FileKind(it.files);
+            it.at = now;
+            Push(std::move(it));
+        }
+    } else if (!h.images.empty()) { // kept encrypted by the worker first; the card lands when they're written
+        std::shared_ptr<Work> w = work;
+        {
+            std::lock_guard<std::mutex> g(w->lock);
+            w->stores.push_back({w->tickets++, std::move(h.images)});
+        }
+        Previews();
+        return true;
+    } else {
+        size_t a = h.text.find_first_not_of(L" \t\r\n"), b = h.text.find_last_not_of(L" \t\r\n");
+        if (a == std::wstring::npos) return false;
+        ShelfItem it;
+        it.kind = shelfkind::Classify(h.text, it.rgb);
+        bool bare = it.kind == ShelfKind::Link || it.kind == ShelfKind::Color; // an address or a colour without the blanks around it
+        it.text = bare ? h.text.substr(a, b - a + 1) : std::move(h.text);
+        it.at = now;
+        Push(std::move(it));
     }
-    if (keep) Save();
+    Trim();
+    Changed();
+    return true;
 }
 
-void Shelf::Clear() {
+void Shelf::Push(ShelfItem item) {
+    auto same = std::find_if(items.begin(), items.end(), [&](const ShelfItem& o) { return Same(o, item); });
+    if (same != items.end()) { // again: it moves to the front with its count, keeping its pin, note and previews
+        ShelfItem kept = std::move(*same);
+        items.erase(same);
+        kept.count = (std::min)(kept.count + item.count, 9999);
+        kept.at = item.at;
+        for (size_t i = 0; i < item.files.size() && i < kept.files.size(); ++i)
+            if (item.files[i].owned && item.files[i].path != kept.files[i].path) DeleteFileW(item.files[i].path.c_str()); // the copy that just came in
+        item = std::move(kept);
+    } else {
+        item.id = nextId++;
+    }
+    items.insert(items.begin(), std::move(item));
+}
+
+void Shelf::Trim() {
+    for (size_t i = items.size(); items.size() > (size_t)opts.limit && i-- > 0;) // the oldest unkept go; pinned and noted stay whatever the count
+        if (!items[i].Kept()) Erase(i);
+}
+
+void Shelf::Erase(size_t at) {
+    uint64_t id = items[at].id;
+    DropOwned(items[at].files);
+    items.erase(items.begin() + (ptrdiff_t)at);
+    ForgetId(*work, id);
+    std::lock_guard<std::mutex> g(work->lock);
+    auto& todo = work->todo; // a preview not made yet isn't needed any more
+    todo.erase(std::remove_if(todo.begin(), todo.end(), [id](const Work::Job& j) { return (j.key >> 8) == id; }), todo.end());
+}
+
+void Shelf::Changed() {
+    ++version;
+    if (keep) {
+        saveDue = true;
+        if (!clipWnd || !SetTimer(clipWnd, shelfio::kSaveTimer, shelfio::kSaveDelayMs, nullptr)) Save();
+    }
+    ScheduleAge();
+}
+
+void Shelf::ScheduleAge() {
+    if (!clipWnd) return;
+    KillTimer(clipWnd, shelfio::kAgeTimer);
+    if (opts.expire >= kExpireNever) return; // never: no timer at all
+    int64_t oldest = INT64_MAX;
+    for (const auto& it : items)
+        if (!it.Kept()) oldest = (std::min)(oldest, it.at);
+    if (oldest == INT64_MAX) return;
+    int64_t ms = (oldest + kExpireSecs[opts.expire] - shelfio::Now()) * 1000 + kAgeSlackMs;
+    SetTimer(clipWnd, shelfio::kAgeTimer, (UINT)(std::clamp)(ms, (int64_t)USER_TIMER_MINIMUM, (int64_t)USER_TIMER_MAXIMUM), nullptr);
+}
+
+void Shelf::Age() {
+    if (opts.expire >= kExpireNever) return;
+    int64_t cutoff = shelfio::Now() - kExpireSecs[opts.expire];
+    bool gone = false;
+    for (size_t i = items.size(); i-- > 0;)
+        if (!items[i].Kept() && items[i].at < cutoff) {
+            Erase(i);
+            gone = true;
+        }
+    if (!gone) return;
+    Changed();
+    if (notify) PostMessageW(notify, msg, 0, 0);
+}
+
+void Shelf::Remove(uint64_t id) {
+    for (size_t i = 0; i < items.size(); ++i)
+        if (items[i].id == id) {
+            Erase(i);
+            Changed();
+            return;
+        }
+}
+
+void Shelf::Pin(uint64_t id, bool on) {
+    if (ShelfItem* it = Get(id); it && it->pinned != on) {
+        it->pinned = on;
+        Changed();
+    }
+}
+
+void Shelf::SetNote(uint64_t id, const std::wstring& note) {
+    ShelfItem* it = Get(id);
+    if (!it) return;
+    std::wstring n;
+    for (wchar_t c : note)
+        if (n.size() < kNoteMax) n += c == L'\r' || c == L'\n' || c == L'\t' ? L' ' : c; // one line
+    size_t a = n.find_first_not_of(L' '), b = n.find_last_not_of(L' ');
+    n = a == std::wstring::npos ? L"" : n.substr(a, b - a + 1);
+    if (n == it->note) return;
+    it->note = n;
+    Changed();
+}
+
+bool Shelf::CanMerge(uint64_t from, uint64_t into) const {
+    const ShelfItem *a = Find(from), *b = Find(into);
+    return a && b && from != into && a->HasFiles() && b->HasFiles() && a->files.size() + b->files.size() <= kStackMax;
+}
+
+bool Shelf::Merge(uint64_t from, uint64_t into) {
+    if (!CanMerge(from, into)) return false;
+    ShelfItem* b = Get(into);
+    const ShelfItem* a = Find(from);
+    b->files.insert(b->files.end(), a->files.begin(), a->files.end());
+    b->kind = FileKind(b->files);
+    b->pinned = b->pinned || a->pinned;
+    if (b->note.empty()) b->note = a->note;
+    auto at = std::find_if(items.begin(), items.end(), [from](const ShelfItem& o) { return o.id == from; });
+    items.erase(at); // not Erase: its files live on in the stack
+    ForgetId(*work, into); // its previews are of the smaller stack
+    Changed();
+    return true;
+}
+
+void Shelf::Split(uint64_t id, const std::vector<size_t>& picks) {
+    auto at = std::find_if(items.begin(), items.end(), [id](const ShelfItem& o) { return o.id == id; });
+    if (at == items.end() || !at->Stack()) return;
+    std::vector<bool> out(at->files.size(), picks.empty());
+    for (size_t p : picks)
+        if (p < out.size()) out[p] = true;
+    std::vector<ShelfItem> loose;
+    std::vector<ShelfFile> rest;
+    for (size_t i = 0; i < at->files.size(); ++i) {
+        if (!out[i]) {
+            rest.push_back(at->files[i]);
+            continue;
+        }
+        ShelfItem one;
+        one.files = {at->files[i]};
+        one.kind = FileKind(one.files);
+        one.at = at->at;
+        one.id = nextId++;
+        loose.push_back(std::move(one));
+    }
+    size_t pos = (size_t)(at - items.begin());
+    if (rest.empty()) {
+        items.erase(at);
+    } else {
+        at->files = std::move(rest);
+        at->kind = FileKind(at->files);
+        ++pos;
+    }
+    items.insert(items.begin() + (ptrdiff_t)pos, loose.begin(), loose.end()); // right after the stack: they stay where they were
+    ForgetId(*work, id);
+    Changed();
+}
+
+void Shelf::DropFiles(uint64_t id, const std::vector<size_t>& picks) {
+    ShelfItem* it = Get(id);
+    if (!it || picks.empty()) return;
+    std::vector<ShelfFile> rest, gone;
+    for (size_t i = 0; i < it->files.size(); ++i)
+        (std::find(picks.begin(), picks.end(), i) != picks.end() ? gone : rest).push_back(it->files[i]);
+    if (rest.empty()) {
+        Remove(id);
+        return;
+    }
+    DropOwned(gone);
+    it->files = std::move(rest);
+    it->kind = FileKind(it->files);
+    ForgetId(*work, id);
+    Changed();
+}
+
+size_t Shelf::ClearWhere(const std::function<bool(const ShelfItem&)>& match) {
+    size_t n = 0;
+    for (size_t i = items.size(); i-- > 0;)
+        if (!items[i].Kept() && match(items[i])) {
+            Erase(i);
+            ++n;
+        }
+    if (n) Changed();
+    return n;
+}
+
+void Shelf::WantThumb(uint64_t key) {
+    if (work->asked.count(key) || work->ready.count(key)) return;
+    const ShelfItem* it = Find(key >> 8);
+    size_t slot = (size_t)(key >> 1 & 0x7F);
+    if (!it || slot >= it->files.size()) return;
+    work->asked.insert(key);
     {
         std::lock_guard<std::mutex> g(work->lock);
-        work->todo.clear();
+        work->todo.push_front({key, it->files[slot].path, it->files[slot].owned, (key & 1) ? kBigPx : kThumbPx}); // newest wanted first: what's on screen now
     }
-    items.clear();
-    items.shrink_to_fit(); // previews are the bulk of it
-    if (keep) Save();
+    Previews();
+}
+
+bool Shelf::TakeThumb(uint64_t key, Pixels& out) {
+    auto it = work->ready.find(key);
+    if (it == work->ready.end()) return false;
+    out = std::move(it->second);
+    work->ready.erase(it);
+    return true;
+}
+
+void Shelf::ForgetThumb(uint64_t key) {
+    work->asked.erase(key);
+    work->ready.erase(key);
+}
+
+void Shelf::ForgetThumbs() {
+    work->asked.clear();
+    work->ready.clear();
+    std::lock_guard<std::mutex> g(work->lock);
+    work->todo.clear();
 }
 
 void Shelf::Previews() {
     std::shared_ptr<Work> w = work;
     std::lock_guard<std::mutex> g(w->lock);
-    for (auto& it : items)
-        if (it.File() && !it.asked) {
-            it.asked = true;
-            w->todo.emplace_back(it.id, it.path);
-        }
-    if (w->todo.empty() || w->running) return;
+    if ((w->todo.empty() && w->stores.empty()) || w->running) return;
     w->running = true;
     try {
         std::thread([w] {
             HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE); // thumbnail providers want an sta
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL); // never in the panel's way
             for (;;) {
-                std::pair<uint64_t, std::wstring> job;
+                Work::Store store;
+                Work::Job job;
+                bool isStore = false;
                 {
                     std::lock_guard<std::mutex> g2(w->lock);
-                    if (w->todo.empty()) {
+                    if (!w->stores.empty()) {
+                        store = std::move(w->stores.front());
+                        w->stores.pop_front();
+                        isStore = true;
+                    } else if (!w->todo.empty()) {
+                        job = std::move(w->todo.front());
+                        w->todo.pop_front();
+                    } else {
                         w->running = false; // nothing left: the thread is gone, no idle worker
                         break;
                     }
-                    job = std::move(w->todo.front());
-                    w->todo.erase(w->todo.begin());
                 }
-                Work::Done d{job.first};
-                if (!Thumb(job.second, kThumbPx, d.w, d.h, d.px)) continue; // the card keeps its type glyph
+                if (isStore) {
+                    Work::Stored s{store.ticket, {}};
+                    for (auto& img : store.imgs) {
+                        ShelfFile f;
+                        if (shelfio::StoreImage(img, f)) s.files.push_back(std::move(f));
+                    }
+                    std::lock_guard<std::mutex> g2(w->lock);
+                    w->stored.push_back(std::move(s));
+                    if (w->notify) PostMessageW(w->notify, w->msg, 0, 0);
+                    continue;
+                }
+                Work::Done d{job.key, {}};
+                shelfio::Preview(job.path, job.owned, job.px, d.pix); // a failed one still comes back: the card keeps its glyph, nothing asks again
                 std::lock_guard<std::mutex> g2(w->lock);
                 w->done.push_back(std::move(d));
                 if (w->notify) PostMessageW(w->notify, w->msg, 0, 0);
@@ -312,120 +419,33 @@ void Shelf::Previews() {
         }).detach();
     } catch (...) {
         w->running = false;
-        OutputDebugStringW(L"[shelf] preview thread failed\n");
+        OutputDebugStringW(L"[shelf] worker thread failed\n");
     }
 }
 
-void Shelf::OnPreview() {
+void Shelf::OnWork() {
     std::vector<Work::Done> done;
+    std::vector<Work::Stored> stored;
     {
         std::lock_guard<std::mutex> g(work->lock);
         done.swap(work->done);
+        stored.swap(work->stored);
     }
     for (auto& d : done)
-        if (ShelfItem* it = Find(d.id)) {
-            it->thumbW = d.w;
-            it->thumbH = d.h;
-            it->thumb = std::move(d.px);
+        if (Find(d.key >> 8) && work->asked.count(d.key)) work->ready[d.key] = std::move(d.pix); // the card may have gone meanwhile
+    if (stored.empty()) return;
+    int64_t now = shelfio::Now();
+    for (auto& s : stored) {
+        for (size_t c = (s.files.size() + kStackMax - 1) / kStackMax; c-- > 0;) {
+            ShelfItem it;
+            it.files.assign(s.files.begin() + c * kStackMax, s.files.begin() + (std::min)(s.files.size(), (c + 1) * kStackMax));
+            it.kind = ShelfKind::Image;
+            it.at = now;
+            Push(std::move(it));
         }
-}
-
-void Shelf::SetKeep(bool on) {
-    keep = on;
-    SaveNum(kKeepVal, on ? 1 : 0);
-    if (on) Save();
-    else DeleteFileW(ShelfFile().c_str()); // nothing of the shelf stays on disk
-}
-
-void Shelf::Save() const {
-    std::wstring file = ShelfFile();
-    if (file.empty()) return;
-    SHCreateDirectoryExW(nullptr, file.substr(0, file.find_last_of(L'\\')).c_str(), nullptr);
-    std::wstring body;
-    for (const auto& it : items) {
-        if (it.File()) body += L"F\t" + it.path + L"\n"; // just where it is
-        else body += L"T\t" + Escape(it.text.substr(0, kSaveTextMax)) + L"\n"; // a long note keeps its start, it doesn't vanish
     }
-    std::string bytes = Utf8(body);
-    std::wstring tmp = file + L".tmp";
-    HANDLE f = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return;
-    DWORD written = 0;
-    bool ok = WriteFile(f, bytes.data(), (DWORD)bytes.size(), &written, nullptr) && written == bytes.size();
-    CloseHandle(f);
-    if (!ok || !MoveFileExW(tmp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING)) DeleteFileW(tmp.c_str()); // a torn write never replaces the last good one
-}
-
-void Shelf::Load() {
-    HANDLE f = CreateFileW(ShelfFile().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return;
-    LARGE_INTEGER size{};
-    std::string bytes;
-    constexpr LONGLONG kFileMax = 1 << 20; // ten short entries never come near this
-    if (GetFileSizeEx(f, &size) && size.QuadPart > 0 && size.QuadPart < kFileMax) {
-        bytes.resize((size_t)size.QuadPart);
-        DWORD got = 0;
-        if (!ReadFile(f, bytes.data(), (DWORD)bytes.size(), &got, nullptr)) got = 0;
-        bytes.resize(got);
-    }
-    CloseHandle(f);
-    std::wstring all = Wide(bytes);
-    for (size_t at = 0; at < all.size() && items.size() < kMax;) {
-        size_t end = all.find(L'\n', at);
-        if (end == std::wstring::npos) end = all.size();
-        std::wstring line = all.substr(at, end - at);
-        at = end + 1;
-        if (line.size() < 3 || line[1] != L'\t') continue;
-        ShelfItem it;
-        if (line[0] == L'F') {
-            it.path = line.substr(2);
-            DWORD a = GetFileAttributesW(it.path.c_str());
-            if (a == INVALID_FILE_ATTRIBUTES) {
-                std::wstring folder = it.path.substr(0, it.path.find_last_of(L'\\'));
-                if (GetFileAttributesW(folder.c_str()) != INVALID_FILE_ATTRIBUTES) continue; // deleted since: dropped quietly
-                a = 0; // its drive or share isn't there yet at sign-in: kept, or the next save would lose it for good
-            }
-            it.dir = (a & FILE_ATTRIBUTE_DIRECTORY) != 0;
-        } else if (line[0] == L'T') {
-            it.text = Unescape(line.substr(2));
-        } else {
-            continue;
-        }
-        it.id = nextId++;
-        items.push_back(std::move(it)); // the file is newest first already
-    }
-}
-
-bool Shelf::DragOut(uint64_t id, HWND owner) {
-    ShelfItem* it = Find(id);
-    if (!it) return false;
-    ComPtr<IDataObject> obj = it->File() ? FileData(it->path) : TextData(it->text);
-    if (!obj) return false;
-    DWORD effect = DROPEFFECT_NONE;
-    HRESULT hr = SHDoDragDrop(owner, obj.Get(), nullptr, DROPEFFECT_COPY | DROPEFFECT_LINK, &effect); // never a move: the file stays where it is
-    return hr == DRAGDROP_S_DROP && effect != DROPEFFECT_NONE;
-}
-
-bool Shelf::Copy(uint64_t id, HWND owner) {
-    ShelfItem* it = Find(id);
-    if (!it) return false;
-    if (it->File()) { // the file itself, pasteable in explorer
-        ComPtr<IDataObject> obj = FileData(it->path);
-        return obj && SUCCEEDED(OleSetClipboard(obj.Get())) && SUCCEEDED(OleFlushClipboard()); // flushed: it outlives this object
-    }
-    if (!OpenClipboard(owner)) return false;
-    EmptyClipboard();
-    size_t bytes = (it->text.size() + 1) * sizeof(wchar_t);
-    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
-    bool ok = false;
-    if (void* p = mem ? GlobalLock(mem) : nullptr) {
-        memcpy(p, it->text.c_str(), bytes);
-        GlobalUnlock(mem);
-        ok = SetClipboardData(CF_UNICODETEXT, mem) != nullptr; // the clipboard owns mem now
-    }
-    if (!ok && mem) GlobalFree(mem);
-    CloseClipboard();
-    return ok;
+    Trim();
+    Changed();
 }
 
 }

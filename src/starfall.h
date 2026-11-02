@@ -125,7 +125,7 @@ inline void Cloud(Canvas& c, ID2D1Geometry* geo, const D2D1_RECT_F& r, float rad
     b->SetRadiusY(ry);
     b->SetOpacity(col.a);
     rt->PushAxisAlignedClip(box, D2D1_ANTIALIAS_MODE_ALIASED); // the brush is clear at the box edge: a hard scissor never shows
-    if (geo) rt->FillGeometry(geo, b);
+    if (geo) c.FillGeo(geo, b, true); // the panel's shape is kept frame to frame: its tessellation is cached
     else rt->FillRoundedRectangle({r, radius, radius}, b);
     rt->PopAxisAlignedClip();
 }
@@ -150,13 +150,75 @@ inline void Rim(Canvas& c, ID2D1Geometry* geo, const D2D1_RECT_F& r, float radiu
     b->SetStartPoint({r.left, edge ? r.top : r.bottom});
     b->SetEndPoint({r.left, edge ? r.bottom : r.top});
     b->SetOpacity(col.a);
-    if (geo) rt->DrawGeometry(geo, b, width);
+    if (geo) c.StrokeGeo(geo, b, width, nullptr, true); // widening the outline was the sky's dearest part: done once per shape
     else rt->DrawRoundedRectangle({Inset(r, width / 2, width / 2), (std::max)(0.0f, radius - width / 2), (std::max)(0.0f, radius - width / 2)}, b, width);
 }
 
 // where the drifting orb is at t, as fractions of the sky: two slow sways per axis, turning back softly near the edges (~15-30 dips/s on a panel)
 inline D2D1_POINT_2F Drift(float t) {
     return {0.5f + 0.30f * std::sin(t * kDriftX[0]) + 0.12f * std::sin(t * kDriftX[1] + 1.3f), 0.5f + 0.28f * std::sin(t * kDriftY[0] + 0.7f) + 0.12f * std::sin(t * kDriftY[1] + 2.1f)};
+}
+
+// the sky in passes, so a still panel can keep the parts that never move: the wash under the orb, the orb, then everything over it
+enum Over { kAll, kStill, kTwinkle }; // the dust over the orb: all of it, all but the breathing motes (for a cache), or only those
+
+inline void SkyUnder(Canvas& c, const D2D1_RECT_F& r, float radius, const Theme& th, float alpha, int edge = 0, ID2D1Geometry* geo = nullptr) {
+    Palette p = Colors(th);
+    // depth: a near-black indigo wash, a shade deeper away from the lit edge
+    Color top = p.night.Alpha((edge ? 0.45f : 0.60f) * alpha), bot = p.night.Alpha((edge ? 0.60f : 0.45f) * alpha);
+    if (geo) c.FillGeoV(geo, r, top, bot, true);
+    else c.FillV(r, radius, top, bot);
+}
+
+inline void SkyOrb(Canvas& c, const D2D1_RECT_F& r, float radius, const Theme& th, float t, float alpha, int edge = 0, ID2D1Geometry* geo = nullptr,
+                   bool drifting = false) {
+    float w = r.right - r.left, h = r.bottom - r.top;
+    Palette p = Colors(th);
+    bool thin = h < kHeroMinH;
+    float away = edge ? r.bottom : r.top, dir = edge ? 1.0f : -1.0f;
+    // one bloom, soft, off to one side; or an orb of light drifting slowly round the whole sky
+    D2D1_POINT_2F at = {r.left + w * kBloomX, thin ? (r.top + r.bottom) / 2 : away - dir * h * 0.3f};
+    if (drifting && t > 0) {
+        D2D1_POINT_2F f = Drift(t);
+        at.x = r.left + w * f.x;
+        if (!thin) at.y = r.top + h * f.y; // a pill or a bar is too short to wander up and down: the orb slides along it
+    }
+    Cloud(c, geo, r, radius, at, w * (thin ? 0.42f : 0.5f), thin ? h * 1.4f : h * 0.6f, p.bloom.Alpha(kBloomA * alpha));
+}
+
+inline void SkyOver(Canvas& c, const D2D1_RECT_F& r, float radius, const Theme& th, float t, float alpha, int edge = 0, ID2D1Geometry* geo = nullptr,
+                    float density = 1, Over which = kAll) {
+    float w = r.right - r.left, h = r.bottom - r.top;
+    Palette p = Colors(th);
+    bool thin = h < kHeroMinH;
+    float away = edge ? r.bottom : r.top, dir = edge ? 1.0f : -1.0f;
+    if (which != kTwinkle) { // the edge: barely there, a gradient of light fading inward
+        float gh = (std::min)(h * (thin ? 0.5f : 0.3f), kEdgeGlow);
+        D2D1_RECT_F band = edge ? D2D1_RECT_F{r.left, r.top, r.right, r.top + gh} : D2D1_RECT_F{r.left, r.bottom - gh, r.right, r.bottom};
+        Color lit = p.edge.Alpha(kEdgeA * alpha), none = p.edge.Alpha(0);
+        if (geo) c.FillGeoV(geo, band, edge ? lit : none, edge ? none : lit, true);
+        else c.FillV(band, radius, edge ? lit : none, edge ? none : lit);
+    }
+
+    // dust: sparse, small, dim; a slow breath on a few, only on frames drawn anyway
+    float in = (std::max)(4.0f, radius * 0.7f); // kept off rounded corners
+    int n = (std::min)(kMaxStars, (int)(w * h * density / kStarArea) + 2);
+    for (int i = 0; i < n; ++i) {
+        bool breathes = i % kTwinklers == 0;
+        if ((which == kStill && breathes) || (which == kTwinkle && !breathes)) continue;
+        float x = r.left + in + Hash((uint32_t)i * 3 + 1) * (w - 2 * in), y = r.top + 4 + Hash((uint32_t)i * 3 + 2) * (h - 8), s = Hash((uint32_t)i * 3 + 3);
+        float a = 0.09f + 0.32f * s * s * s; // nearly all of it barely there
+        if (breathes && t > 0) a *= 0.8f + 0.2f * std::sin(t * 2 * kPi * kTwinkleHz + s * 40);
+        c.Dot({x, y}, 0.35f + 0.35f * s * s, kDust.Alpha(a * alpha));
+    }
+    if (which == kTwinkle) return; // the rest is in the caller's cache
+    if (!thin) { // a single brighter star: the one detail the eye lands on
+        D2D1_POINT_2F s = {r.left + w * (0.18f + 0.2f * Hash(701)), away - dir * h * (0.16f + 0.12f * Hash(809))};
+        Cloud(c, nullptr, {s.x - 6, s.y - 6, s.x + 6, s.y + 6}, 0, s, 5, 5, p.edge.Alpha(0.10f * alpha));
+        c.Dot(s, 0.9f, kDust.Alpha(0.6f * alpha));
+    }
+
+    Rim(c, geo, r, radius, p.edge.Alpha(kRimA * alpha), edge, 1.0f); // a fine line of the same light along the outline
 }
 
 // r: where the sky shows, rounded by radius or cut to geo; edge: 0 its glow along the bottom (a panel hanging down), 1 along the top;
@@ -166,47 +228,9 @@ inline void Sky(Canvas& c, const D2D1_RECT_F& r, float radius, const Theme& th, 
                 bool drifting = false) {
     float w = r.right - r.left, h = r.bottom - r.top;
     if (w < 4 || h < 4 || alpha < 0.01f) return;
-    Palette p = Colors(th);
-    bool thin = h < kHeroMinH; // a pill or a bar: its ink sits over every part of it
-    float away = edge ? r.bottom : r.top, dir = edge ? 1.0f : -1.0f; // dir: from the lit edge inward
-
-    // depth: a near-black indigo wash, a shade deeper away from the lit edge
-    Color top = p.night.Alpha((edge ? 0.45f : 0.60f) * alpha), bot = p.night.Alpha((edge ? 0.60f : 0.45f) * alpha);
-    if (geo) c.FillGeoV(geo, r, top, bot);
-    else c.FillV(r, radius, top, bot);
-
-    // one bloom, soft, off to one side; or an orb of light drifting slowly round the whole sky
-    D2D1_POINT_2F at = {r.left + w * kBloomX, thin ? (r.top + r.bottom) / 2 : away - dir * h * 0.3f};
-    if (drifting && t > 0) {
-        D2D1_POINT_2F f = Drift(t);
-        at.x = r.left + w * f.x;
-        if (!thin) at.y = r.top + h * f.y; // a pill or a bar is too short to wander up and down: the orb slides along it
-    }
-    Cloud(c, geo, r, radius, at, w * (thin ? 0.42f : 0.5f), thin ? h * 1.4f : h * 0.6f, p.bloom.Alpha(kBloomA * alpha));
-
-    // the edge: barely there, a gradient of light fading inward
-    float gh = (std::min)(h * (thin ? 0.5f : 0.3f), kEdgeGlow);
-    D2D1_RECT_F band = edge ? D2D1_RECT_F{r.left, r.top, r.right, r.top + gh} : D2D1_RECT_F{r.left, r.bottom - gh, r.right, r.bottom};
-    Color lit = p.edge.Alpha(kEdgeA * alpha), none = p.edge.Alpha(0);
-    if (geo) c.FillGeoV(geo, band, edge ? lit : none, edge ? none : lit);
-    else c.FillV(band, radius, edge ? lit : none, edge ? none : lit);
-
-    // dust: sparse, small, dim; a slow breath on a few, only on frames drawn anyway
-    float in = (std::max)(4.0f, radius * 0.7f); // kept off rounded corners
-    int n = (std::min)(kMaxStars, (int)(w * h * density / kStarArea) + 2);
-    for (int i = 0; i < n; ++i) {
-        float x = r.left + in + Hash((uint32_t)i * 3 + 1) * (w - 2 * in), y = r.top + 4 + Hash((uint32_t)i * 3 + 2) * (h - 8), s = Hash((uint32_t)i * 3 + 3);
-        float a = 0.09f + 0.32f * s * s * s; // nearly all of it barely there
-        if (i % kTwinklers == 0 && t > 0) a *= 0.8f + 0.2f * std::sin(t * 2 * kPi * kTwinkleHz + s * 40);
-        c.Dot({x, y}, 0.35f + 0.35f * s * s, kDust.Alpha(a * alpha));
-    }
-    if (!thin) { // a single brighter star: the one detail the eye lands on
-        D2D1_POINT_2F s = {r.left + w * (0.18f + 0.2f * Hash(701)), away - dir * h * (0.16f + 0.12f * Hash(809))};
-        Cloud(c, nullptr, {s.x - 6, s.y - 6, s.x + 6, s.y + 6}, 0, s, 5, 5, p.edge.Alpha(0.10f * alpha));
-        c.Dot(s, 0.9f, kDust.Alpha(0.6f * alpha));
-    }
-
-    Rim(c, geo, r, radius, p.edge.Alpha(kRimA * alpha), edge, 1.0f); // a fine line of the same light along the outline
+    SkyUnder(c, r, radius, th, alpha, edge, geo);
+    SkyOrb(c, r, radius, th, t, alpha, edge, geo, drifting);
+    SkyOver(c, r, radius, th, t, alpha, edge, geo, density);
 }
 
 // a quiet divider: a hairline that fades out at both ends

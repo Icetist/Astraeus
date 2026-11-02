@@ -9,6 +9,7 @@
 #include "entry.h"
 #include "stageprefs.h"
 #include "tray.h"
+#include "version.h"
 
 using namespace sheet;
 
@@ -22,6 +23,7 @@ constexpr int kBatLowMin = 5, kBatLowMax = 50; // the low battery pill, in perce
 constexpr int kScaleMin = 80, kScaleMax = 130; // ui scale, percent
 constexpr int kLyricStep = 5; // lyric size moves in 5% steps
 constexpr float kHoldSec = 1.2f; // hold to reset everything
+constexpr float kOffAlpha = 0.4f; // a control that does nothing right now, greyed
 
 bool SwitchRow(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, const wchar_t* label, bool on, bool live, bool enabled = true) { // label left, switch right; true when flipped
     Canvas& c = ui.C();
@@ -167,6 +169,85 @@ void Media(PageCtx& p, const D2D1_RECT_F& r, bool live) { // what the player is 
         Flip(m, m.stageHide, L"StageHide"); // off: the fullscreen player keeps its buttons up
 }
 
+void ArtBack(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the cover behind the media page and the fullscreen player, each on its own switch, and how strongly
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F in = Box(c, t, r, L"ALBUM ART BACKGROUND");
+    bool can = m.showArt != 0; // no art shown: nothing to lay behind anything
+    if (SwitchRow(ui, t, "set.media.back", Rect(in.left, in.top, Width(in), kRowH), can ? L"Media page" : L"Album art is switched off", m.artBack != 0, live && can, can))
+        m.SetArtBack(m.artBack == 0); // shared: halobar's player follows
+    if (SwitchRow(ui, t, "set.stage.back", Rect(in.left, in.top + kRowH, Width(in), kRowH), L"Fullscreen player", m.stageArt != 0, live && can, can))
+        Flip(m, m.stageArt, L"StageArtBg"); // apart from the media page: either, both or neither
+    bool any = can && (m.artBack || m.stageArt);
+    float dim = ui.Smooth(Ui::Id("set.art.dim"), any ? 1.0f : kOffAlpha, 14);
+    bool layered = dim < 0.999f;
+    if (layered) c.Target()->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), dim), nullptr);
+    constexpr int lo = Model::kArtAlphaMin, hi = 100, step = Model::kSlideStep;
+    float v = (m.artAlpha - lo) / (float)(hi - lo);
+    bool done = false;
+    if (Knob(ui, t, Ui::Id("set.art.alpha"), Rect(in.left, in.top + 2 * kRowH + 4, Width(in), kSlideH), L"Strength", std::to_wstring(m.artAlpha) + L"%", v, live && any, done,
+             (float)step / (hi - lo)))
+        m.artAlpha = lo + (int)std::lround(v * (hi - lo) / step) * step; // live: the page behind shows it as it moves
+    if (done) m.SetPref(m.artAlpha, L"MediaArtAlpha", m.artAlpha); // shared: halobar's player follows
+    if (layered) c.Target()->PopLayer();
+}
+
+void Visualizer(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how hard the music's light answers, everywhere it shows
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F in = Box(c, t, r, L"VISUALIZER");
+    constexpr int lo = Model::kVizGainMin, hi = Model::kVizGainMax, step = Model::kSlideStep;
+    float v = (m.vizGain - lo) / (float)(hi - lo);
+    bool done = false;
+    if (Knob(ui, t, Ui::Id("set.viz.gain"), Rect(in.left, in.top + 2, Width(in), kSlideH), L"Sensitivity", std::to_wstring(m.vizGain) + L"%", v, live, done, (float)step / (hi - lo)))
+        m.vizGain = lo + (int)std::lround(v * (hi - lo) / step) * step; // live: the bars answer as it moves
+    if (done) m.SetPref(m.vizGain, L"VizGain", m.vizGain); // shared: halobar's follow
+    Note(c, t, in, in.top + kSlideH + 8, L"How strongly the bars and the glow react to music");
+    Note(c, t, in, in.top + kSlideH + 26, L"100% is the usual. Shared with HaloBar");
+}
+
+void Opening(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the closed island: only the shortcut opens it, wherever it is
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F in = Box(c, t, r, L"OPENING");
+    if (SwitchRow(ui, t, "set.keyonly", Rect(in.left, in.top, Width(in), kRowH), L"Open only with the shortcut", m.keyOnly != 0, live)) Flip(m, m.keyOnly, L"KeyOnly");
+    Note(c, t, in, in.top + kRowH + 6, L"Hovering or clicking the closed island");
+    Note(c, t, in, in.top + kRowH + 24, L"does nothing. The shortcut still opens it");
+}
+
+void Apps(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the edge over an app window: only the shortcut opens it, or how long it waits
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F in = Box(c, t, r, L"OVER APPS");
+    D2D1_RECT_F row = Rect(in.left, in.top, Width(in), 2 * kNoteH);
+    Ui::Hit h = live ? ui.Button(Ui::Id("set.apps.key", 1), {row.left, row.top, row.right - 52, row.bottom}) : Ui::Hit{}; // the words flip it too
+    Color ink = h.hover ? t.text : t.text.Mix(t.textDim, 0.25f);
+    c.Text(L"Open with the shortcut", Rect(row.left, row.top, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, ink); // two lines: the whole name, nothing cut
+    c.Text(L"only over apps", Rect(row.left, row.top + kNoteH, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, ink);
+    if ((w::Switch(ui, t, Ui::Id("set.apps.key"), {row.right - 24, (row.top + row.bottom) / 2}, m.appKeyOnly != 0, live) || h.clicked) && live)
+        Flip(m, m.appKeyOnly, L"AppKeyOnly");
+    bool can = m.appKeyOnly == 0; // the shortcut alone: no hover left to wait for
+    float dim = ui.Smooth(Ui::Id("set.apps.dim"), can ? 1.0f : kOffAlpha, 14);
+    bool layered = dim < 0.999f;
+    if (layered) c.Target()->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), dim), nullptr);
+    constexpr int hi = Model::kAppHoverMax, step = Model::kAppHoverStep;
+    float v = m.appHoverMs / (float)hi;
+    bool done = false;
+    if (Knob(ui, t, Ui::Id("set.apps.ms"), Rect(in.left, row.bottom + 6, Width(in), kSlideH), L"Hover delay over apps", std::to_wstring(m.appHoverMs) + L" ms", v,
+             live && can, done, (float)step / hi))
+        m.appHoverMs = (int)std::lround(v * hi / step) * step; // 50 ms steps
+    if (done) m.SetPref(m.appHoverMs, L"AppHoverMs", m.appHoverMs);
+    if (layered) c.Target()->PopLayer();
+}
+
 constexpr float kKeyW = 128; // a fullscreen key's capture chip
 
 void Fullscreen(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the keys that split the fullscreen player across two screens, and swap its halves
@@ -267,6 +348,51 @@ void Weather(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a city typed in, 
     Note(c, t, in, in.top + 58, L"Forecasts and city search by Open-Meteo");
 }
 
+void ShelfIntake(PageCtx& p, const D2D1_RECT_F& r, bool live) { // what the shelf takes in, and whether it outlasts a restart
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F in = Box(c, t, r, L"SHELF");
+    if (SwitchRow(ui, t, "set.shelf.cap", Rect(in.left, in.top, Width(in), kRowH), L"Everything you copy goes to the Shelf", m.shelfCapture != 0, live)) {
+        Flip(m, m.shelfCapture, L"ShelfCapture");
+        m.SyncShelf(); // starts or stops listening right away
+    }
+    bool keep = m.shelf.Keep();
+    if (SwitchRow(ui, t, "set.shelf.keep", Rect(in.left, in.top + kRowH, Width(in), kRowH), L"Keep after restart, encrypted", keep, live)) m.shelf.SetKeep(!keep);
+    if (SwitchRow(ui, t, "set.shelf.wipe", Rect(in.left, in.top + 2 * kRowH, Width(in), kRowH), L"Clear unpinned at each start", m.shelfClearStart != 0, live && keep, keep)) {
+        Flip(m, m.shelfClearStart, L"ShelfClearStart");
+        m.SyncShelf();
+    }
+    Note(c, t, in, in.top + 3 * kRowH + 2, m.shelfCapture ? L"Private and password copies are never taken" : L"Off: only what you drop on it");
+}
+
+void ShelfHistory(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how much the shelf keeps, and for how long
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F in = Box(c, t, r, L"SHELF HISTORY");
+    constexpr int lo = sys::Shelf::kHistMin, hi = sys::Shelf::kHistMax, step = sys::Shelf::kHistStep;
+    float v = (m.shelfHistory - lo) / (float)(hi - lo);
+    bool done = false;
+    if (Knob(ui, t, Ui::Id("set.shelf.hist"), Rect(in.left, in.top + 2, Width(in), kSlideH), L"Keep up to", std::to_wstring(m.shelfHistory) + L" cards", v, live, done,
+             (float)step / (hi - lo)))
+        m.shelfHistory = lo + (int)std::lround(v * (hi - lo) / step) * step;
+    if (done) {
+        m.SetPref(m.shelfHistory, L"ShelfHistory", m.shelfHistory);
+        m.SyncShelf(); // trimmed on let go, never mid-drag
+    }
+    c.Text(L"Delete after", Rect(in.left, in.top + kSlideH + 2, Width(in), 16), Weight::Regular, 11.5f, t.text.Mix(t.textDim, 0.25f));
+    static const wchar_t* const kAges[sys::Shelf::kExpireNever + 1] = {L"1 h", L"6 h", L"24 h", L"7 d", L"Never"};
+    int pick = Segmented(ui, t, "set.shelf.age", Rect(in.left, in.top + kSlideH + 19, Width(in), kKnobH + 4), kAges, sys::Shelf::kExpireNever + 1, m.shelfExpire, live);
+    if (pick >= 0) {
+        m.SetPref(m.shelfExpire, L"ShelfExpire", pick);
+        m.SyncShelf();
+    }
+    Note(c, t, in, in.top + kSlideH + kKnobH + 27, L"Pinned and noted cards always stay");
+}
+
 void Hud(PageCtx& p, const D2D1_RECT_F& r, bool live) { // astraeus' own volume pill in place of windows' popup
     Ui& ui = p.ui;
     Canvas& c = ui.C();
@@ -349,6 +475,26 @@ constexpr float kAdvHeadH = 56; // the advanced section's bar
 constexpr float kAdvRow = 150; // its cards: room for a slider and its notes
 constexpr float kCodeRow = 76;
 bool advOpen = false; // folded each launch: the everyday settings come first
+constexpr float kUpdH = 64, kUpdBtnW = 170; // the update card under advanced, and its button
+
+void Updates(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the version, and a check right now: the tray menu's row, here too
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    D2D1_RECT_F in = Box(c, t, r, L"ASTRAEUS");
+    static HWND host = nullptr; // the updater lives there; looked up once, not every frame
+    if (!IsWindow(host)) host = FindWindowW(L"AstraeusHost", nullptr);
+    bool busy = tray::UpdateBusy();
+    float cy = (in.top + in.bottom) / 2;
+    if (Act(ui, t, Ui::Id("set.update"), Rect(in.left, cy - 15, kUpdBtnW, 30), L"Check for updates", true, busy, live && !busy) && host) {
+        tray::SetUpdate(tray::Upd::Checking);
+        PostMessageW(host, WM_COMMAND, tray::kUpdate, 0); // the same check the tray menu runs
+    }
+    if (busy) ui.KeepAlive(); // the words follow the check as it goes
+    std::wstring state = tray::UpdateText(), note = L"v" APP_VER_W;
+    if (state != L"Check for updates") note += L"  ·  " + state; // idle: just the version
+    c.Text(note, Rect(in.left + kUpdBtnW + 14, in.top, Width(in) - kUpdBtnW - 14, Height(in)), Weight::Regular, 11.5f, t.textDim);
+}
 
 void AdvancedHead(PageCtx& p, const D2D1_RECT_F& r, bool live, float open) { // a bar that unfolds the rest
     Ui& ui = p.ui;
@@ -363,7 +509,7 @@ void AdvancedHead(PageCtx& p, const D2D1_RECT_F& r, bool live, float open) { // 
     c.Dot(badge, 16, t.track.Mix(t.accent.Alpha(0.3f), open));
     c.Icon(glyph::Settings, badge, 19, t.textDim.Mix(t.accentHi, open), open > 0.5f);
     c.Text(L"Advanced", Rect(r.left + 56, r.top + 9, Width(r) - 110, 20), Weight::Medium, 13, t.text);
-    c.Text(L"Power, weather, volume keys, backup and more", Rect(r.left + 56, r.top + 29, Width(r) - 110, 16), Weight::Light, 10.5f, t.textLow);
+    c.Text(L"Power, weather, shelf, volume keys, backup and more", Rect(r.left + 56, r.top + 29, Width(r) - 110, 16), Weight::Light, 10.5f, t.textLow);
     D2D1_POINT_2F o = {r.right - 26, (r.top + r.bottom) / 2}; // a chevron that turns over as it opens
     float a = open * kPi, s = 5, cs = std::cos(a), sn = std::sin(a);
     auto turn = [&](float x, float y) { return D2D1_POINT_2F{o.x + x * cs - y * sn, o.y + x * sn + y * cs}; };
@@ -387,7 +533,13 @@ float Advanced(PageCtx& p, const D2D1_RECT_F& area, bool live, int cols) { // po
     Backup(p, next(), live);
     Display(p, next(), live); // the two sizes side by side
     LyricType(p, next(), live);
-    y += ((n + cols - 1) / cols) * (kAdvRow + kPrefGap);
+    Opening(p, next(), live); // how the closed island opens: anywhere, then over apps
+    Apps(p, next(), live);
+    ArtBack(p, next(), live); // the album art behind, and the music's light
+    Visualizer(p, next(), live);
+    ShelfIntake(p, next(), live); // the shelf's intake and its history, side by side
+    ShelfHistory(p, next(), live);
+    y +=((n + cols - 1) / cols) * (kAdvRow + kPrefGap);
     Code(p, Rect(area.left, y, Width(area), kCodeRow), live); // always last
     y += kCodeRow + kPrefGap;
     return y - area.top;
@@ -427,5 +579,7 @@ float DrawPrefs(PageCtx& p, const D2D1_RECT_F& area, bool live, bool tall) {
         ui.C().PopClip();
         y += shown;
     }
+    Updates(p, Rect(area.left, y, Width(area), kUpdH), live); // under advanced, open or folded
+    y += kUpdH + kPrefGap;
     return y - area.top;
 }

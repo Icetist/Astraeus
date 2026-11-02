@@ -7,6 +7,8 @@
 #include <cwctype>
 #include <vector>
 
+#include "shelf.h"
+
 using Microsoft::WRL::ComPtr;
 
 namespace backup {
@@ -193,9 +195,7 @@ bool ImportFrom(const std::wstring& file, const std::wstring& iniPath, const wch
 
 void Reset() {
     ResetKey(kKey); // every panel choice, the shelf's keep switch among them
-    PWSTR base = nullptr;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &base))) DeleteFileW((std::wstring(base) + L"\\Astraeus\\shelf.txt").c_str()); // a kept shelf goes too
-    CoTaskMemFree(base);
+    sys::ShelfWipe(); // a kept shelf and the images it held go too
 }
 
 void ResetKey(const wchar_t* regKey) {

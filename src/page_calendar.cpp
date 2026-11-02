@@ -14,6 +14,10 @@ using namespace sheet;
 
 namespace {
 
+constexpr float kTallR = 24, kTallRingGap = 7; // the sidebar's date ring: badge at 46 from the edge, so it ends inside the sheet and short of the title at 92
+constexpr float kPlaceX = 136; // the forecast's place, right of its title
+constexpr float kNarrow = 460; // a list narrower than this, the sidebar's: smaller month heading, the day line and its action stacked
+constexpr float kFoot = 34, kFootNarrow = 58; // the space under the month grid: one line, or two stacked
 int viewYear = 0, viewMonth = 0; // the month on show, 1..12
 int pickY = 0, pickM = 0, pickD = 0; // the day tapped, 0 = today
 
@@ -114,7 +118,7 @@ bool Arrow(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F o, bool right) {
 void Hero(PageCtx& p, const Frame& f, const SYSTEMTIME& now) { // today, huge, inside a ring that fills as the month goes by
     Canvas& c = p.ui.C();
     const Theme& t = p.shell;
-    float R = f.tall ? 40.0f : 62.0f, ring = R + 10;
+    float R = f.tall ? kTallR : 62.0f, ring = R + (f.tall ? kTallRingGap : 10.0f), stroke = f.tall ? 4.0f : 6.0f; // the sidebar's header: the ring fits beside the title, inside the sheet
     D2D1_POINT_2F o = f.tall ? f.badge : D2D1_POINT_2F{f.badge.x, f.badge.y + 22};
     float today = now.wDay - 1 + (now.wHour * 60 + now.wMinute) / 1440.0f; // days gone, with the hours of this one
     int doy = 0;
@@ -128,10 +132,10 @@ void Hero(PageCtx& p, const Frame& f, const SYSTEMTIME& now) { // today, huge, i
     D2D1_MATRIX_3X2_F was;
     c.Target()->GetTransform(&was);
     c.Target()->SetTransform(D2D1::Matrix3x2F::Scale(sx, 1, o) * was);
-    c.Ring(o, ring, t.track, 6);
-    c.Arc(o, ring, -kPi / 2, (std::max)(0.02f, in) * 2 * kPi, back ? t.accentHi : t.accent, 6);
+    c.Ring(o, ring, t.track, stroke);
+    c.Arc(o, ring, -kPi / 2, (std::max)(0.02f, in) * 2 * kPi, back ? t.accentHi : t.accent, stroke);
     float tip = -kPi / 2 + in * 2 * kPi;
-    c.Dot({o.x + std::cos(tip) * ring, o.y + std::sin(tip) * ring}, 6, back ? t.accent : t.accentHi); // where we are on the ring
+    c.Dot({o.x + std::cos(tip) * ring, o.y + std::sin(tip) * ring}, stroke, back ? t.accent : t.accentHi); // where we are on the ring
     if (!back) {
         c.Text(std::to_wstring(now.wDay), Rect(o.x - R, o.y - R, 2 * R, 2 * R), Weight::Semi, R * 1.15f, t.text, Align::Center);
     } else { // the year: how much of it is gone
@@ -179,9 +183,9 @@ void Forecast(PageCtx& p, const D2D1_RECT_F& list) { // the hours and days ahead
     const sys::Wx& wx = m.wx;
     bool fahr = m.cfg.fahr;
     c.Text(L"Forecast", Rect(list.left + 2, list.top - 6, 200, 40), Weight::Semi, 26, t.text);
-    c.Text(wx.place, Rect(list.left + 136, list.top + 4, Width(list) - 300, 26), Weight::Thin, 20, t.accentHi);
     if (w::IconBtn(ui, t, Ui::Id("cal.close"), {list.right - 14, list.top + 15}, 30, glyph::Close, 18)) m.CloseCal();
     D2D1_RECT_F back = Rect(list.right - 120, list.top + 3, 86, 24); // back to the month
+    c.Text(wx.place, Rect(list.left + kPlaceX, list.top + 4, (std::max)(0.0f, back.left - 8 - (list.left + kPlaceX)), 26), Weight::Thin, 20, t.accentHi); // up to the button, however narrow the sheet
     Ui::Hit bh = ui.Button(Ui::Id("cal.month.back"), back);
     c.Fill(back, 12, t.accent.Alpha(0.16f + (bh.hover ? 0.10f : 0.0f)));
     c.Text(L"Calendar", back, Weight::Medium, 11.5f, t.accentHi, Align::Center);
@@ -356,14 +360,16 @@ void DrawCalendar(PageCtx& p, float k) {
     }
 
     D2D1_RECT_F list = frame.list;
+    bool narrow = Width(list) < kNarrow; // the sidebar: the heading shrinks, the foot stacks
+    float monthPt = narrow ? 21.0f : 26.0f, yearPt = narrow ? 16.0f : 20.0f;
     std::wstring month = Format(viewYear, viewMonth, 1, L"MMMM");
     float monthW = month.size() * 15.0f; // measured, so the year never runs into a long name
     ComPtr<IDWriteTextLayout> lay;
     DWRITE_TEXT_METRICS tm{};
-    if (SUCCEEDED(gfx::DWrite()->CreateTextLayout(month.c_str(), (UINT32)month.size(), gfx::TextFmt(Weight::Semi, 26, Align::Left), 1000, 40, &lay)) && SUCCEEDED(lay->GetMetrics(&tm)))
+    if (SUCCEEDED(gfx::DWrite()->CreateTextLayout(month.c_str(), (UINT32)month.size(), gfx::TextFmt(Weight::Semi, monthPt, Align::Left), 1000, 40, &lay)) && SUCCEEDED(lay->GetMetrics(&tm)))
         monthW = tm.widthIncludingTrailingWhitespace;
-    c.Text(month, Rect(list.left + 2, list.top - 6, monthW + 4, 40), Weight::Semi, 26, t.text);
-    c.Text(std::to_wstring(viewYear), Rect(list.left + 2 + monthW + 10, list.top + 4, 80, 26), Weight::Thin, 20, t.accentHi);
+    c.Text(month, Rect(list.left + 2, list.top - 6, monthW + 4, 40), Weight::Semi, monthPt, t.text);
+    c.Text(std::to_wstring(viewYear), Rect(list.left + 2 + monthW + 8, list.top + (narrow ? 6.0f : 4.0f), 60, 26), Weight::Thin, yearPt, t.accentHi);
     float ax = list.right - 104;
     if (Arrow(ui, t, Ui::Id("cal.prev"), {ax, list.top + 15}, false) && --viewMonth < 1) viewMonth = 12, --viewYear;
     if (Arrow(ui, t, Ui::Id("cal.next"), {ax + 34, list.top + 15}, true) && ++viewMonth > 12) viewMonth = 1, ++viewYear;
@@ -378,7 +384,8 @@ void DrawCalendar(PageCtx& p, float k) {
         if (h.clicked) viewYear = now.wYear, viewMonth = now.wMonth, pickY = pickM = pickD = 0;
     }
 
-    D2D1_RECT_F grid = {list.left, list.top + 42, list.right, list.bottom - 34};
+    float foot = narrow ? kFootNarrow : kFoot;
+    D2D1_RECT_F grid = {list.left, list.top + 42, list.right, list.bottom - foot};
     int first = FirstDay();
     float cw = Width(grid) / 7, rh = (Height(grid) - 22) / 6;
     for (int i = 0; i < 7; ++i) { // weekends sit in their own quiet columns
@@ -467,12 +474,13 @@ void DrawCalendar(PageCtx& p, float k) {
                       : diff > 0 ? L"In " + std::to_wstring(diff) + L" days" : std::to_wstring(-diff) + L" days ago";
     const Feast* feast = Holiday(sy, sm, sd);
     std::wstring day = Format(sy, sm, sd, L"dddd, d MMMM");
-    c.Text(day, Rect(list.left + 4, list.bottom - 28, Width(list) * 0.6f, 20), Weight::Medium, 13, t.text);
-    D2D1_RECT_F right = Rect(list.left + Width(list) * 0.4f, list.bottom - 30, Width(list) * 0.6f - 4, 24);
+    float dayY = narrow ? list.bottom - 52 : list.bottom - 28; // narrow: the day on its own line, its action under it
+    c.Text(day, Rect(list.left + 4, dayY, narrow ? Width(list) - 8 : Width(list) * 0.6f, 20), Weight::Medium, 13, t.text);
+    D2D1_RECT_F right = narrow ? Rect(list.left + 4, list.bottom - 30, Width(list) - 8, 24) : Rect(list.left + Width(list) * 0.4f, list.bottom - 30, Width(list) * 0.6f - 4, 24);
     D2D1_RECT_F connect = Rect(list.right - 150, list.bottom - 30, 150, 24);
     size_t count = m.cals.Linked() ? m.cals.Day(sy, sm, sd).size() : 0;
     if (m.calWaiting) { // connecting: what to copy, and a way out
-        c.Text(L"Copy the “Secret address in iCal format”", Rect(list.left + 4, list.bottom - 28, Width(list) - 90, 20), Weight::Medium, 12.5f, t.accentHi);
+        c.Text(L"Copy the “Secret address in iCal format”", Rect(list.left + 4, list.bottom - 28, Width(list) - 90, 20), Weight::Medium, narrow ? 11.0f : 12.5f, t.accentHi);
         if (TextBtn(ui, t, "cal.wait.x", Rect(list.right - 80, list.bottom - 30, 80, 24), L"Cancel", false)) m.StopCalWait();
     } else if (!m.cals.Linked()) { // nothing connected: one tap opens google calendar's settings, the copied link does the rest
         if (TextBtn(ui, t, "cal.connect", connect, L"Connect calendar", true)) m.StartCalWait(true);
@@ -480,7 +488,7 @@ void DrawCalendar(PageCtx& p, float k) {
     } else if (count > 0) { // the day has events: they open in the month's place
         if (TextBtn(ui, t, "cal.events", Rect(right.right - 110, right.top, 110, 24), std::to_wstring(count) + (count == 1 ? L" event" : L" events"), true)) m.calAgenda = true;
     } else {
-        c.Text(feast ? std::wstring(feast->name) : when, Rect(list.left + Width(list) * 0.4f, list.bottom - 28, Width(list) * 0.6f - 4, 20), Weight::Semi, 13, t.accentHi, Align::Right); // a holiday names itself
+        c.Text(feast ? std::wstring(feast->name) : when, Rect(right.left, list.bottom - 28, Width(right), 20), Weight::Semi, 13, t.accentHi, narrow ? Align::Left : Align::Right); // a holiday names itself
         if (ui.RClick(right)) m.calAgenda = true; // the day's view, with its calendars and +, even when empty
     }
 

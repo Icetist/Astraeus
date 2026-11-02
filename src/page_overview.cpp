@@ -8,6 +8,8 @@
 
 namespace {
 
+constexpr float kWxFullH = 150; // the weather card's full layout needs this height: its four lines end at 145
+constexpr float kWxTopLine = 42; // a short card's temperature starts under its icon line
 constexpr double kTipDelay = 0.45; // hover this long on the battery tile and its details come up
 constexpr ULONGLONG kTipReadMs = 5000; // re-read while it stays up: the rate moves
 constexpr float kTipW = 236, kTipRow = 19;
@@ -160,6 +162,13 @@ void WxCard(PageCtx& p, const D2D1_RECT_F& r) {
             c.Text(p.m.cfg.weather ? L"Fetching weather…" : L"Weather is off", Rect(r.left + 18, r.top + 118, 160, 18), Weight::Light, 12, t.textDim);
         return;
     }
+    if (Height(r) < kWxFullH) { // a short card, the sidebar's: the icon and the sky on one line, the temperature sized to what's left under them
+        c.Icon(fmt::WxIcon(wx.code, wx.isDay), {r.left + 28, r.top + 28}, 24, t.accent, true);
+        c.Text(fmt::WxText(wx.code), Rect(r.left + 48, r.top + 19, Width(r) - 62, 18), Weight::Regular, 12.5f, t.textDim);
+        float room = Height(r) - kWxTopLine - 6, fs = (std::min)(52.0f, room * 0.82f);
+        c.Text(fmt::Temp(wx.tempC, p.m.cfg.fahr), Rect(r.left + 14, r.top + kWxTopLine, Width(r) - 24, room), Weight::Thin, fs, t.text);
+        return;
+    }
     c.Icon(fmt::WxIcon(wx.code, wx.isDay), {r.left + 32, r.top + 34}, 30, t.accent, true); // day/night icon variant
     bool clock = Height(r) >= 120 && Width(r) >= 170; // room for the stacked clock in the card's empty right strip
     if (clock) {
@@ -272,11 +281,8 @@ void Stat(PageCtx& p, const D2D1_RECT_F& r, const wchar_t* label, const std::wst
     c.TextSp(label, Rect(r.left + 14, r.top + 14, Width(r) - 28, 14), Weight::Medium, 10, t.textLow, 1.4f);
     c.Text(value, Rect(r.left + 13, r.top + 30, Width(r) - 26, 30), Weight::Light, 22, t.text);
     D2D1_RECT_F chart = {r.left + 1, (std::max)(r.bottom - 58, r.top + 62), r.right - 1, r.bottom - 10}; // sparkline in the bottom 48px, never over the value
-    ComPtr<ID2D1RoundedRectangleGeometry> card; // inside the card's rounded corners, not its square bounds: the graph runs edge to edge
-    if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(Inset(r, 1, 1), 19, 19), &card))) return;
-    c.Target()->PushLayer(D2D1::LayerParameters(chart, card.Get()), nullptr); // bounded to the chart, so only its pixels pay for the mask
-    w::Spark(c, chart, h.Values(), h.Version(), maxV, t.accent);
-    c.Target()->PopLayer();
+    D2D1_ROUNDED_RECT card = D2D1::RoundedRect(Inset(r, 1, 1), 19, 19); // inside the card's rounded corners, not its square bounds: the graph runs edge to edge
+    w::Spark(c, chart, h.Values(), h.Version(), maxV, t.accent, false, &card); // cut to the card once per sample: a masked layer every frame cost more than the rest of the page
 }
 
 }

@@ -1,5 +1,7 @@
 #include "ui.h"
 
+#include <d2d1_1helper.h>
+
 #include <cmath>
 
 #include "anim.h"
@@ -267,22 +269,57 @@ namespace {
 
 struct SparkGeo {
     uint64_t key;
-    ComPtr<ID2D1PathGeometry> area, stroke;
+    ComPtr<ID2D1Geometry> area, stroke;
+    bool cut = false; // clipped: stroke is the line's widened outline cut to the card, filled rather than stroked
 };
 std::vector<SparkGeo> sparkCache; // small fifo, geometry rebuild is costly
+constexpr float kSparkLine = 1.6f;
+
+ComPtr<ID2D1Geometry> Cut(ID2D1Geometry* g, ID2D1Geometry* mask, float tol) { // g inside mask, as one path: built once per new sample, not masked through a layer every frame
+    ComPtr<ID2D1PathGeometry> out;
+    ComPtr<ID2D1GeometrySink> s;
+    if (!g || !mask || FAILED(gfx::D2D()->CreatePathGeometry(&out)) || FAILED(out->Open(&s))) return nullptr;
+    if (FAILED(g->CombineWithGeometry(mask, D2D1_COMBINE_MODE_INTERSECT, nullptr, tol, s.Get())) || FAILED(s->Close())) return nullptr;
+    return out;
+}
+
+bool Clip(Canvas& c, SparkGeo& g, const D2D1_RECT_F& r, const D2D1_ROUNDED_RECT& in) { // the card's rounded corners and the chart's box, as the layer they replace did
+    float dx = 96, dy = 96;
+    c.Target()->GetDpi(&dx, &dy);
+    float tol = D2D1::ComputeFlatteningTolerance(D2D1::Matrix3x2F::Identity(), dx, dy); // what a plain draw flattens to at this dpi
+    ComPtr<ID2D1RoundedRectangleGeometry> card;
+    ComPtr<ID2D1RectangleGeometry> box;
+    if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(in, &card)) || FAILED(gfx::D2D()->CreateRectangleGeometry(r, &box))) return false;
+    ComPtr<ID2D1Geometry> mask = Cut(card.Get(), box.Get(), tol);
+    ComPtr<ID2D1PathGeometry> wide;
+    ComPtr<ID2D1GeometrySink> s;
+    if (!mask || FAILED(gfx::D2D()->CreatePathGeometry(&wide)) || FAILED(wide->Open(&s))) return false;
+    if (FAILED(g.stroke->Widen(kSparkLine, c.RoundCaps(), nullptr, tol, s.Get())) || FAILED(s->Close())) return false;
+    ComPtr<ID2D1Geometry> area = Cut(g.area.Get(), mask.Get(), tol), line = Cut(wide.Get(), mask.Get(), tol);
+    if (!area || !line) return false;
+    g.area = area;
+    g.stroke = line;
+    g.cut = true;
+    return true;
+}
 
 }
 
 void Spark(Canvas& c, const D2D1_RECT_F& r, const std::vector<float>& values, uint64_t version, float maxV,
-               Color line, bool flip) {
+               Color line, bool flip, const D2D1_ROUNDED_RECT* in) {
     if (values.size() < 2 || maxV <= 0) return;
     uint64_t key = (uint64_t)(uintptr_t)values.data() * 31 + version; // buffer identity + data version
     key = key * 131 + (uint64_t)(r.left * 2) * 7 + (uint64_t)(r.top * 2) * 13 + (uint64_t)(Width(r) * 2) * 17 + // half px rect precision
           (uint64_t)(Height(r) * 2) * 19 + (uint64_t)maxV * 23 + (flip ? 1 : 0);
+    if (in) key = key * 37 + (uint64_t)(in->rect.left * 2) * 41 + (uint64_t)(in->rect.bottom * 2) * 43 + (uint64_t)(Width(in->rect) * 2) * 47 + (uint64_t)(in->radiusX * 2) * 53;
+    auto draw = [&](const SparkGeo& g) { // kept: the same geometry every frame until the next sample, tessellated once
+        c.FillGeoV(g.area.Get(), r, line.Alpha(flip ? 0.02f : 0.32f), line.Alpha(flip ? 0.32f : 0.02f), true); // area fades toward baseline
+        if (g.cut) c.FillGeometry(g.stroke.Get(), line, true);
+        else c.StrokeGeo(g.stroke.Get(), line, kSparkLine, true);
+    };
     for (const SparkGeo& g : sparkCache) {
         if (g.key != key) continue;
-        c.FillGeoV(g.area.Get(), r, line.Alpha(flip ? 0.02f : 0.32f), line.Alpha(flip ? 0.32f : 0.02f)); // area fades toward baseline
-        c.StrokeGeo(g.stroke.Get(), line, 1.6f);
+        draw(g);
         return;
     }
     ComPtr<ID2D1PathGeometry> area, stroke;
@@ -310,10 +347,11 @@ void Spark(Canvas& c, const D2D1_RECT_F& r, const std::vector<float>& values, ui
     a->Close();
     s->Close();
 
-    c.FillGeoV(area.Get(), r, line.Alpha(flip ? 0.02f : 0.32f), line.Alpha(flip ? 0.32f : 0.02f));
-    c.StrokeGeo(stroke.Get(), line, 1.6f);
+    SparkGeo g{key, area, stroke};
+    if (in && !Clip(c, g, r, *in)) return; // can't cut it: nothing rather than spilling past the card
+    draw(g);
     if (sparkCache.size() >= 8) sparkCache.erase(sparkCache.begin()); // drop oldest
-    sparkCache.push_back({key, area, stroke});
+    sparkCache.push_back(g);
 }
 
 bool Chip(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const std::wstring& label, bool selected) {

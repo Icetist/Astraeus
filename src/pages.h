@@ -22,6 +22,7 @@ struct PageCtx {
     float hintFade = 0;
     ID2D1Bitmap* coverPrev = nullptr; // the cover before the track changed, shown for the first half of the flip
     float flip = 1; // 0..1 the art turning over to the new cover
+    float backdrop = 0; // 0..1 the album art fills the panel behind the media page: its card goes see-through
 };
 
 void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale, const Theme& t); // audio-reactive glow behind art, in t's accent
@@ -40,6 +41,7 @@ void DrawNet(PageCtx& p);
 void DrawTools(PageCtx& p);
 void DrawShelf(PageCtx& p); // files and notes dropped on the island
 void ForgetShelfArt(); // the device is going: drop the shelf's preview bitmaps
+void ShelfClosed(); // the panel went up: the shelf's menus and open card go with it
 void FlipArt(PageCtx& p, const D2D1_RECT_F& r, float radius, float iconPx); // album art that turns over on a track change
 float DrawPrefs(PageCtx& p, const D2D1_RECT_F& area, bool live, bool tall); // the newer settings cards, returns their height
 void DrawBt(PageCtx& p, float t); // bluetooth menu overlay, t = open anim 0..1

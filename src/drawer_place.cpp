@@ -9,6 +9,7 @@
 
 namespace {
 
+constexpr float kSideMargin = 24; // dips the sidebar leaves clear above and below, together, inside the work area
 constexpr UINT kFullCheckMs = 250; // the shell's fullscreen notice is checked against the window in front this often
 constexpr int kFullChecks = 4; // ~1 s: a real game has the screen by then, an overlay's blink is gone
 constexpr UINT kDeskSettleMs = 300; // show desktop and minimize animate for about this long: one look once the windows have landed
@@ -45,10 +46,13 @@ void Drawer::Place() {
         ambientSync = (UINT)(std::clamp)((int)std::lround(hz / kAmbientFps), 1, 4); // dxgi caps sync interval at 4
         pillSync = (UINT)(std::max)(1L, std::lround(hz / kPillFps)); // glass paces with a timer, no cap; the swapchain clamps it below
     }
-    sideH = (std::min)(kSideMaxH, (mi.rcMonitor.bottom - mi.rcMonitor.top) / scale - 2 * cfg.fillet - 60); // sidebar fits the screen
+    work = mi.rcWork; // explorer keeps it clear of its taskbar, whatever its size
+    reachUsed = model.haloReach;
+    if (reachUsed > 0) work.bottom = (std::min)(work.bottom, mi.rcMonitor.bottom - (LONG)reachUsed); // halobar's dock floats without reserving room: kept clear of it too
+    sideH = (std::min)(kSideMaxH, (work.bottom - work.top) / scale - 2 * cfg.fillet - kSideMargin); // sidebar fits between the taskbars
     fastSync = 1; // a new screen, maybe a new refresh rate: judge it afresh
     framesSeen = framesLate = 0;
-    Resize(winH > 0 ? winH : kStrip, false);
+    Resize(wantH > 0 ? wantH : kStrip, false); // the depth asked for, not the right edge's padded window
     if (deskOn) SetTimer(hwnd, kDeskTimer, kDeskSettleMs, nullptr); // another screen or edge: another patch of it to look under
 }
 
@@ -58,7 +62,7 @@ RECT Drawer::Footprint() const { // the screen area the open panel drops into, i
         LONG x = monitor.left + (monitor.right - monitor.left - a) / 2;
         return {x, monitor.top, x + a, monitor.top + d};
     }
-    LONG y = monitor.top + (monitor.bottom - monitor.top - a) / 2;
+    LONG y = work.top + (work.bottom - work.top - a) / 2; // centered where no taskbar is
     return edgeNow == 1 ? RECT{monitor.left, y, monitor.left + d, y + a} : RECT{monitor.right - d, y, monitor.right, y + a};
 }
 
@@ -149,7 +153,7 @@ void Drawer::ApplyPlace() {
     if (!screensNow) mon = sys::FindScreen(screenNow); // one screen: the picked one, primary if none
     island = islandLook = false; // a resting pill goes with the old edge; the next second brings it back on the new one
     spring = anim::Spring{};
-    winH = kStrip; // Place keeps the window this deep: the plain strip, never an empty pill-deep band
+    winH = wantH = kStrip; // Place keeps the window this deep: the plain strip, never an empty pill-deep band
     FreeDev(); // swapchain is sized for the old edge
     Place();
     BuildStrips();

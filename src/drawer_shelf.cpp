@@ -5,6 +5,11 @@
 #include <shlobj.h>
 #include <shobjidl.h>
 
+namespace {
+constexpr UINT kPasteDelayMs = 60; // the app in front settles with the keyboard before ctrl+v is sent
+constexpr size_t kQueryMax = 80; // the shelf's search field
+}
+
 struct Drawer::DropSink final : IDropTarget {
     explicit DropSink(Drawer* owner) : d(owner) {
         CoCreateInstance(CLSID_DragDropHelper, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&helper)); // the shell keeps drawing the drag image over us
@@ -116,8 +121,45 @@ void Drawer::ShelfOut() {
     if (!id || !opened) return;
     if (GetCapture() == hwnd) ReleaseCapture(); // ole's drag loop takes the mouse from here
     dragSelf = true;
-    model.shelf.DragOut(id, hwnd); // returns once it's dropped or called off
+    model.shelf.DragOut(id, model.shelfPicks, hwnd); // returns once it's dropped or called off
+    model.shelfPicks.clear();
     dragSelf = false;
     if (!MouseIn()) SetTimer(hwnd, kCloseTimer, (UINT)cfg.closeMs, nullptr);
     Redraw();
+}
+
+void Drawer::ShelfPaste() {
+    uint64_t id = model.shelfPaste;
+    model.shelfPaste = 0;
+    auto how = (sys::Shelf::CopyHow)model.shelfPasteHow;
+    bool ok = id && model.shelf.Copy(id, how, model.shelfPicks);
+    model.shelfPicks.clear();
+    if (!ok) return;
+    HWND front = GetForegroundWindow(); // the panel never activates on a click: the app in front still has the keyboard
+    if (front == hwnd) front = typing ? typingFrom : keys ? keysFrom : nullptr; // the search or the shortcut took it: it goes back where it came from
+    model.shelfField = Model::kShelfNone;
+    Close(); // hands the keyboard back first, then the paste lands where the user was
+    if (!front || !IsWindow(front) || front == hwnd) return; // nowhere sensible: it's on the clipboard
+    pasteTo = front;
+    SetTimer(hwnd, kPasteTimer, kPasteDelayMs, nullptr);
+}
+
+void Drawer::ShelfKey(WPARAM wp) {
+    wchar_t ch = (wchar_t)wp;
+    bool note = model.shelfField == Model::kShelfNote;
+    std::wstring& s = note ? model.shelfEdit : model.shelfQuery;
+    size_t cap = note ? sys::Shelf::kNoteMax : kQueryMax;
+    if (ch == 22) { // ctrl+v, the first line
+        for (wchar_t c : sys::ClipText()) {
+            if (c == L'\r' || c == L'\n') break;
+            if (c >= 32 && s.size() < cap) s += c;
+        }
+    } else if (ch == 8) {
+        if (!s.empty()) s.pop_back();
+    } else if (ch == 127) { // ctrl+backspace: the last word
+        while (!s.empty() && s.back() == L' ') s.pop_back();
+        while (!s.empty() && s.back() != L' ') s.pop_back();
+    } else if (ch >= 32 && s.size() < cap) {
+        s += ch;
+    }
 }

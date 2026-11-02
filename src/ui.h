@@ -84,7 +84,7 @@ bool Tile(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, 
 bool Pill(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, float& value, bool* iconTap, bool off = false); // off: muted, the fill greys out
 void Gauge(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, float radius, float thick, float value);
 void Spark(Canvas& c, const D2D1_RECT_F& r, const std::vector<float>& values, uint64_t version, float maxV,
-               Color line, bool flip = false);
+               Color line, bool flip = false, const D2D1_ROUNDED_RECT* in = nullptr); // in: kept inside a card's corners, and inside r
 bool Chip(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const std::wstring& label, bool selected);
 bool Switch(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, bool on, bool enabled = true); // 46x26 toggle
 std::wstring Pct(float v);

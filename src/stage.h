@@ -110,4 +110,5 @@ private:
     uint64_t coverId = ~0ull;
     ComPtr<ID2D1Bitmap1> cover;
     ComPtr<ID2D1Bitmap> coverBlur;
+    ComPtr<ID2D1Bitmap> coverArt; // the album art background: barely softened, baked only while its switch is on
 };

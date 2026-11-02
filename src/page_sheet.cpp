@@ -105,7 +105,7 @@ bool ScanBtn(Ui& ui, const Theme& t, const char* idName, const D2D1_RECT_F& r, b
     if (sc < 0.999f) {
         float k = (1 - sc) * a;
         c.Fill(Inset(b, -4, -4), rad + 4, t.accent.Alpha((0.10f + 0.14f * hover) * k)); // halo grows on hover
-        c.FillH(b, rad, t.accent.Alpha(k), t.accentHi.Mix(t.accent, 0.4f * (1 - hover)).Alpha(k));
+        c.Fill(b, rad, t.accent.Mix(t.accentHi, 0.35f * hover).Alpha(k)); // solid accent, a shade lighter under the mouse
     }
     if (sc > 0.001f) {
         c.Fill(b, rad, t.cardHi.Mix(t.track, 0.5f * hover).Alpha(sc * a));
@@ -182,7 +182,7 @@ int Segmented(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, cons
     float seg = Width(r) / n, rad = Height(r) / 2;
     c.Fill(r, rad, t.track.Alpha(0.7f));
     float x = ui.Smooth(Ui::Id(id, 99), r.left + seg * cur, 18); // thumb slides between options
-    c.FillV({x + 3, r.top + 3, x + seg - 3, r.bottom - 3}, rad - 3, t.accentHi, t.accent);
+    c.Fill({x + 3, r.top + 3, x + seg - 3, r.bottom - 3}, rad - 3, t.accent); // solid, as every other accented control in settings
     int picked = -1;
     for (int i = 0; i < n; ++i) {
         D2D1_RECT_F cell = {r.left + seg * i, r.top, r.left + seg * (i + 1), r.bottom};

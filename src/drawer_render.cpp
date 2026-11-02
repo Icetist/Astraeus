@@ -18,6 +18,7 @@ constexpr float kRailFadeLen = 30, kRailFadeLead = 12; // icons fade over this n
 constexpr float kWidgetW = 52; // a status widget on either side of the pill's clock
 constexpr float kArrowPad = 18; // a rail chevron keeps at least this from the panel's edge
 constexpr float kArrowRoom = 22; // the top rail gives up this much at each end for its chevrons when it scrolls
+constexpr float kRailHiHalf = 26; // the top rail's active highlight, half its width at most
 constexpr float kArrowHalf = 11, kArrowLen = 3; // its hit box half size; its arms' reach: small
 constexpr float kArrowRate = 14; // chevrons fade in and out at this rate
 
@@ -35,6 +36,60 @@ bool RailArrow(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F at, float dx, 
     c.Line({back.x + px * kArrowLen, back.y + py * kArrowLen}, tip, ink, 1.4f);
     c.Line({back.x - px * kArrowLen, back.y - py * kArrowLen}, tip, ink, 1.4f);
     return h.clicked;
+}
+
+constexpr float kBackScale = 0.5f; // the backdrop is baked at half size: a quarter of the pixels, still sharp enough to make the cover out
+constexpr float kBackSigma = 2; // in the half copy's pixels, about 4 at the cover's size: softened, the cover clearly itself
+constexpr float kBackSat = 1.15f, kBackDim = 0.92f; // close to the cover's own colors
+constexpr float kLumaR = 0.2126f, kLumaG = 0.7152f, kLumaB = 0.0722f; // rec. 709 weights, what saturation turns around
+constexpr float kBackRate = 6; // the backdrop fades in and out with the page at this rate
+constexpr float kScrimTop = 0.22f, kScrimBottom = 0.50f; // over the backdrop: lighter at the top, deeper under the controls
+
+ComPtr<ID2D1Bitmap> BakeBackdrop(ID2D1DeviceContext* ctx, ID2D1Bitmap1* source) { // shrunk, blurred, saturated: once per cover, never per frame
+    ComPtr<ID2D1Effect> shrink, blur, tone;
+    if (FAILED(ctx->CreateEffect(CLSID_D2D1Scale, &shrink)) || FAILED(ctx->CreateEffect(CLSID_D2D1GaussianBlur, &blur)) ||
+        FAILED(ctx->CreateEffect(CLSID_D2D1ColorMatrix, &tone)))
+        return nullptr;
+    D2D1_SIZE_U px = source->GetPixelSize();
+    D2D1_SIZE_F dip = source->GetSize();
+    if (!px.width || !px.height || dip.width <= 0 || dip.height <= 0) return nullptr;
+    D2D1_SIZE_U out = {(std::max)(1u, (UINT32)(px.width * kBackScale + 0.5f)), (std::max)(1u, (UINT32)(px.height * kBackScale + 0.5f))};
+    shrink->SetInput(0, source);
+    shrink->SetValue(D2D1_SCALE_PROP_SCALE, D2D1::Vector2F(out.width / dip.width, out.height / dip.height)); // dips at 96 are the out pixels, whatever dpi the cover carries
+    shrink->SetValue(D2D1_SCALE_PROP_INTERPOLATION_MODE, D2D1_SCALE_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
+    blur->SetInputEffect(0, shrink.Get());
+    blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, kBackSigma);
+    blur->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD); // no dark fade at the edges
+    float s = kBackSat, k = kBackDim, q = 1 - s;
+    D2D1_MATRIX_5X4_F m = D2D1::Matrix5x4F((kLumaR * q + s) * k, kLumaR * q * k, kLumaR * q * k, 0, // row per input channel, column per output
+                                           kLumaG * q * k, (kLumaG * q + s) * k, kLumaG * q * k, 0,
+                                           kLumaB * q * k, kLumaB * q * k, (kLumaB * q + s) * k, 0,
+                                           0, 0, 0, 1,
+                                           0, 0, 0, 0);
+    tone->SetInputEffect(0, blur.Get());
+    tone->SetValue(D2D1_COLORMATRIX_PROP_COLOR_MATRIX, m);
+    tone->SetValue(D2D1_COLORMATRIX_PROP_CLAMP_OUTPUT, TRUE);
+    ComPtr<ID2D1Bitmap1> bmp;
+    D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
+    if (FAILED(ctx->CreateBitmap(out, nullptr, 0, bp, &bmp))) return nullptr;
+    float dx, dy;
+    ComPtr<ID2D1Image> was;
+    ctx->GetDpi(&dx, &dy);
+    ctx->GetTarget(&was);
+    D2D1_MATRIX_3X2_F xf;
+    ctx->GetTransform(&xf);
+    ctx->SetDpi(96, 96);
+    ctx->SetTarget(bmp.Get());
+    ctx->SetTransform(D2D1::Matrix3x2F::Identity()); // a frame's leftover transform would bake the cover off to one side
+    ctx->BeginDraw();
+    ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
+    ctx->DrawImage(tone.Get());
+    HRESULT hr = ctx->EndDraw();
+    ctx->SetTransform(xf);
+    ctx->SetTarget(was.Get());
+    ctx->SetDpi(dx, dy);
+    if (FAILED(hr)) return nullptr; // a failed bake leaves the page as it always looked
+    return bmp;
 }
 
 bool MakeDev(ComPtr<ID3D11Device>& d3d, ComPtr<ID2D1DeviceContext>& ctx) { // a d3d device and a d2d context on it
@@ -122,10 +177,13 @@ bool Drawer::RenewDev() {
     canvas.reset(); // everything made on the old device goes with it
     cover.Reset();
     coverBlur.Reset();
+    coverBack.Reset();
     coverPrev.Reset();
     ForgetShelfArt();
     pillLayer.Reset();
     pillKey = 0;
+    skyLayer.Reset();
+    skyKey = 0;
     starfall::Forget(); // its brushes too
     backBuf.Reset();
     if (!glass && frameWait) CloseHandle(frameWait), frameWait = nullptr;
@@ -183,13 +241,16 @@ bool Drawer::GlassDev(const DXGI_SWAP_CHAIN_DESC1& d) {
 void Drawer::FitSurfaces() {
     // the island alone: its pill and the room its spring bounces into. anything more (opening, a peek, the pill growing) gets the whole panel.
     // only the depth changes and the surfaces stay anchored to the same corner, so nothing on screen moves when they grow back
-    bool alone = !opened && !peeking && !grow && !dragging && spring.target <= kIslandH + 1 && spring.value <= kIslandH + overshoot;
+    bool pillOnly = !opened && !peeking && !grow && !dragging && spring.target <= kIslandH + 1 && spring.value <= kIslandH + overshoot;
+    bool alone = pillOnly && edgeNow != 2; // the right edge draws at its window's far side, and that window stays panel deep
     float depth = alone ? kIslandH + overshoot : Depth() + overshoot;
-    if (!alone && ctx) devWide = true, trimKey = 0; // the next resting pill tidies up, even if it looks just like the last one
+    if (!pillOnly && ctx) devWide = true, trimKey = 0; // the next resting pill tidies up, even if it looks just like the last one
     UINT w = (UINT)((Side() ? depth : W) * scale + 0.5f), h = (UINT)((Side() ? Span() : depth) * scale + 0.5f);
     if (!ctx || (w == surfW && h == surfH) || !w || !h) return;
     pillLayer.Reset(); // sized for the old surfaces
     pillKey = 0;
+    skyLayer.Reset();
+    skyKey = 0;
     ctx->SetTarget(nullptr);
     backBuf.Reset();
     bool ok = false;
@@ -229,6 +290,7 @@ void Drawer::FreeDev() {
     canvas.reset();
     cover.Reset();
     coverBlur.Reset();
+    coverBack.Reset();
     coverPrev.Reset(); // the flip's old cover too: it would hold the device
     ForgetShelfArt(); // its previews belong to this device
     if (frameWait) {
@@ -241,6 +303,8 @@ void Drawer::FreeDev() {
     dcomp.Reset();
     backBuf.Reset();
     pillLayer.Reset(); // belongs to this device
+    skyLayer.Reset();
+    skyKey = 0;
     starfall::Forget(); // the sky's brushes, likewise
     devWide = false;
     swap.Reset();
@@ -261,6 +325,7 @@ void Drawer::SyncCover() {
         coverSrc.Reset();
         cover.Reset();
         coverBlur.Reset();
+        coverBack.Reset();
         const auto& bytes = model.track.cover;
         if (id != 0 && bytes && !bytes->empty()) coverSrc = gfx::Decode(bytes->data(), bytes->size(), 480); // decode capped at 480px
         if (coverSrc && cfg.albumCol) SetMedia(Make(mediaSeed = theme::FromBmp(coverSrc.Get()))); // tint media page from art
@@ -268,6 +333,12 @@ void Drawer::SyncCover() {
     }
     if (coverSrc && !cover && SUCCEEDED(ctx->CreateBitmapFromWicBitmap(coverSrc.Get(), nullptr, &cover))) // gpu upload, redone after device loss
         coverBlur = Blur(cover.Get());
+    bool showing = opened || (spring.value > 0.5f && !islandLook); // the open panel, or it still retracting: a pill or the strip never needs it
+    if (!model.artBack || !model.showArt || !cover || !showing) coverBack.Reset(); // freed as the panel goes, baked again on the next open
+    else if (!coverBack && backFailed != coverId) {
+        coverBack = BakeBackdrop(ctx.Get(), cover.Get());
+        backFailed = coverBack ? 0 : coverId; // a cover that won't bake isn't tried every frame
+    }
 }
 
 void Drawer::SyncWall() {
@@ -382,11 +453,15 @@ ComPtr<ID2D1Geometry> Drawer::BuildShape(float h, float w) const {
     return path;
 }
 
+D2D1_POINT_2F Drawer::BodyOrg(float h) const {
+    return edgeNow == 0 ? D2D1_POINT_2F{cfg.fillet, h - H} // content slides with the shape, never stretched
+         : edgeNow == 1 ? D2D1_POINT_2F{h - CW(), cfg.fillet}
+                        : D2D1_POINT_2F{winH - h, cfg.fillet};
+}
+
 void Drawer::DrawBody(float h, float dt, double now) {
     float panelW = CW(), panelH = CH();
-    D2D1_POINT_2F org = edgeNow == 0 ? D2D1_POINT_2F{cfg.fillet, h - H} // content slides with the shape, never stretched
-                      : edgeNow == 1 ? D2D1_POINT_2F{h - panelW, cfg.fillet}
-                                     : D2D1_POINT_2F{winH - h, cfg.fillet};
+    D2D1_POINT_2F org = BodyOrg(h);
     D2D1_MATRIX_3X2_F base = D2D1::Matrix3x2F::Translation(org.x, org.y);
     ctx->SetTransform(base);
     canvas->PushClip(edgeNow == 0 ? D2D1_RECT_F{0, H - h, panelW, H} : edgeNow == 1 ? D2D1_RECT_F{panelW - h, 0, panelW, panelH} : D2D1_RECT_F{0, 0, h, panelH});
@@ -406,6 +481,16 @@ void Drawer::DrawBody(float h, float dt, double now) {
         pageT = 1;
         model.SetLive(opened, page == Model::kPgSystem, page == Model::kPgNetwork);
     }
+    bool sheetUp = model.btOpen || model.wifiOpen || model.settingsOpen || model.calOpen || model.mixerOpen;
+    float backA = ui.Smooth(Ui::Id("md.back"), coverBack && page == Model::kPgMedia && !sheetUp ? 1.0f : 0, kBackRate); // fades with the page, a sheet hides it
+    if (backA > 0.004f && coverBack) { // the cover across the whole panel, under the rail and the page, inside the panel's free corners
+        D2D1_RECT_F bleed = edgeNow == 0 ? D2D1_RECT_F{0, -cfg.corner, panelW, panelH} : edgeNow == 1 ? D2D1_RECT_F{-cfg.corner, 0, panelW, panelH}
+                                                                                         : D2D1_RECT_F{0, 0, panelW + cfg.corner, panelH}; // the docked side runs past the clip: square there
+        Color scrim = theme::Luma(mediaNow.text) < 0.5f ? Color{1, 1, 1, 1} : Color{0, 0, 0, 1}; // a light look's dark ink wants a light wash
+        float fadeIn = ui.SmoothFrom(Ui::Id("md.back.in", (int)coverId), 1, 0, kBackRate); // a new cover's backdrop fades in
+        canvas->Image(coverBack.Get(), bleed, cfg.corner, backA * fadeIn * model.artAlpha / 100.0f); // the strength slider, shared with halobar
+        canvas->FillV(bleed, cfg.corner, scrim.Alpha(kScrimTop * backA), scrim.Alpha(kScrimBottom * backA)); // contrast stays high wherever the text sits
+    }
     auto divider = [&](D2D1_POINT_2F a, D2D1_POINT_2F b) { // starfall: a seam of starlight instead of a plain rule
         if (shellNow.stars) starfall::Seam(*canvas, a, b, shellNow);
         else canvas->Line(a, b, shellNow.line, 1, false);
@@ -418,7 +503,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
         DrawRail(shellNow);
     }
     bool fieldFocus = model.Typing() || Entry::Get().focus || StagePrefs::Get().capture || ui.Captured(); // a text field, a key being picked or a slider held keeps its arrows
-    railHot = opened && !fieldFocus && Inside(Side() ? D2D1_RECT_F{0, 0, panelW, kTopRail} : D2D1_RECT_F{0, 0, kRailW, H}, local.mouse);
+    railHot = opened && !fieldFocus && Inside(RailBox(), local.mouse);
     D2D1_RECT_F area = Side() ? D2D1_RECT_F{14, kTopRail + 10, panelW - 14, panelH - 14} : D2D1_RECT_F{kRailW + 14, 18, panelW - 20, H - 20};
 
     if (pageT < 1) pageT = (std::min)(1.0f, pageT + dt / 0.38f); // 380ms page switch
@@ -442,6 +527,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
     pc.flip = coverPrev ? ui.SmoothFrom(Ui::Id("cover.flip", (int)coverId), 1, 0, kFlipRate) : 1;
     pc.coverPrev = art && pc.flip < 0.5f ? coverPrev.Get() : nullptr;
     if (pc.flip > 0.999f) coverPrev.Reset(); // turned: the old one can go
+    pc.backdrop = backA;
     ui.Block(sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f || csheet > 0.01f || msheet > 0.01f); // page under a sheet takes no input
     if (under > 0.001f) { // a sheet that has taken over hides the page, skip drawing it
         switch (page) {
@@ -613,7 +699,7 @@ void Drawer::DrawPeek(float h) {
 bool Drawer::StepIslandBars(float dt, double now) {
     bool playing = model.hasTrack && model.track.playing;
     float l = 0, r = 0;
-    if (playing) model.meter.Read(l, r);
+    if (playing) model.Levels(l, r); // scaled by the sensitivity slider
     float level = std::sqrt((l + r) / 2); // sqrt lifts quiet passages so the bars stay alive
     bool moving = false;
     for (int i = 0; i < 4; ++i) {
@@ -755,6 +841,45 @@ bool Drawer::PillLayer(float h, float shapeWide) { // before the frame: rebuilt 
     return ok;
 }
 
+bool Drawer::SkyLayer(float h, float shapeWide) { // before the frame, like the pill's: rebuilt only when the panel's shape, size or palette changed
+    D2D1_SIZE_U px = ctx->GetPixelSize();
+    if (!px.width || !px.height) return false;
+    ComPtr<ID2D1Geometry> shape = Shape(h, shapeWide);
+    if (!shape) return false;
+    uint64_t k = 1469598103934665603ull; // fnv-1a over what the still parts are drawn from
+    auto mix = [&k](const void* p, size_t n) {
+        for (size_t i = 0; i < n; ++i) k = (k ^ ((const unsigned char*)p)[i]) * 1099511628211ull;
+    };
+    void* geo = shape.Get();
+    mix(&geo, sizeof(geo));
+    float f[] = {h, shapeWide, W, winW, winH, (float)edgeNow, (float)model.BgOpacity(), (float)px.width, (float)px.height, shapeXform._31, shapeXform._32};
+    mix(f, sizeof(f));
+    for (const Color* c : {&shellNow.bg, &shellNow.accent}) mix(c, sizeof(Color)); // the sky's colours all come from these two
+    bool fits = skyLayer && skyLayer->GetPixelSize().width == px.width && skyLayer->GetPixelSize().height == px.height;
+    if (fits && k == skyKey) return true;
+    if (!fits) {
+        skyLayer.Reset();
+        float dx = 96, dy = 96;
+        ctx->GetDpi(&dx, &dy);
+        D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dx, dy);
+        if (FAILED(ctx->CreateBitmap(px, nullptr, 0, bp, &skyLayer))) return false;
+    }
+    ComPtr<ID2D1Image> was;
+    ctx->GetTarget(&was);
+    ctx->SetTarget(skyLayer.Get());
+    ctx->BeginDraw();
+    ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
+    ctx->SetTransform(shapeXform);
+    skyPass = 1;
+    PaintShape(shape.Get(), h);
+    skyPass = 0;
+    bool ok = SUCCEEDED(ctx->EndDraw());
+    ctx->SetTarget(was.Get());
+    skyKey = ok ? k : 0;
+    if (!ok) skyLayer.Reset();
+    return ok;
+}
+
 bool Drawer::DrawIslandSide(float h, float a) {
     const Theme& t = shellNow;
     const Theme& mt = mediaNow;
@@ -847,13 +972,14 @@ void Drawer::DrawRailTop(const Theme& t) {
     float lo = 14 + room, hi = lo + step * shown; // the view's ends
     bool clip = n > shown;
     if (clip) c.PushClip({lo - 6, 0, hi + 6, kTopRail});
-    float x = ui.Smooth(Ui::Id("railx"), 14 + step * (slot + 0.5f), 18) - off; // highlight glides to the active page
-    c.Fill({x - 26, cy - 19, x + 26, cy + 19}, 19, t.accent.Alpha(0.13f * RailFade(x, lo, hi, (float)n)));
+    float x = ui.Smooth(Ui::Id("railx"), lo + step * (slot + 0.5f), 18) - off; // highlight glides to the active page; slots start after the chevron's room
+    float hw = (std::min)(kRailHiHalf, step / 2 + 4); // a narrow panel's slot: the highlight never wider than it, so the clip never cuts it
+    c.Fill({x - hw, cy - 19, x + hw, cy + 19}, 19, t.accent.Alpha(0.13f * RailFade(x, lo, hi, (float)n)));
     if (t.stars) starfall::Halo(c, {x, cy}, 30, 22, t, RailFade(x, lo, hi, (float)n)); // starfall: the active page glows, with a faint violet reach
     c.Fill({x - 11, kTopRail - 6, x + 11, kTopRail - 3}, 1.5f, t.accent.Alpha(RailFade(x, lo, hi, (float)n))); // accent bar under the active icon
     for (int i = 0; i < n; ++i) {
         int id = model.pages[(size_t)i];
-        float ix = 14 + step * (i + 0.5f) - off, fade = RailFade(ix, lo, hi, (float)n);
+        float ix = lo + step * (i + 0.5f) - off, fade = RailFade(ix, lo, hi, (float)n);
         if (fade <= 0) continue; // scrolled out of view: neither drawn nor clickable
         Ui::Hit h = ui.Button(Ui::Id("railt", id), {(std::max)(lo, ix - 28), 4, (std::min)(hi, ix + 28), kTopRail - 4});
         if (h.clicked) SetPage(id);

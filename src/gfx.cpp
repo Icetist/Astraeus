@@ -12,6 +12,9 @@
 
 namespace {
 
+constexpr float kRealFiner = 0.7f; // a realization drawn at a tolerance this much finer than it was made for is made again
+constexpr size_t kMaxReals = 24; // the panel's shape and its passes, a few sparklines
+
 struct FmtEntry {
     uint64_t key; // packed weight/size/align, see TextFmt
     ComPtr<IDWriteTextFormat> format;
@@ -136,12 +139,16 @@ ComPtr<ID2D1Bitmap> BakeBlur(ID2D1DeviceContext* ctx, ID2D1Bitmap1* source, floa
     float dx, dy;
     ctx->GetDpi(&dx, &dy);
     ctx->GetTarget(&was);
+    D2D1_MATRIX_3X2_F xf;
+    ctx->GetTransform(&xf);
     ctx->SetDpi(96, 96);
     ctx->SetTarget(out.Get()); // bake once, not every frame
+    ctx->SetTransform(D2D1::Matrix3x2F::Identity()); // a frame's leftover transform would bake the image off to one side
     ctx->BeginDraw();
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
     ctx->DrawImage(blur.Get());
     ctx->EndDraw();
+    ctx->SetTransform(xf);
     ctx->SetTarget(was.Get());
     ctx->SetDpi(dx, dy);
     return out;
@@ -292,6 +299,7 @@ ComPtr<IWICBitmapSource> DecodeFile(const wchar_t* path, UINT maxPx) {
 }
 
 Canvas::Canvas(ID2D1RenderTarget* target) : rt(target) {
+    rt->QueryInterface(IID_PPV_ARGS(&dc1)); // windows 8.1 and later: geometry realizations
     rt->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 1), &brush); // one brush, recolored per draw
     D2D1_STROKE_STYLE_PROPERTIES p = {D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, // round caps for arcs and lines
                                       D2D1_LINE_JOIN_ROUND, 10.0f, D2D1_DASH_STYLE_SOLID, 0.0f};
@@ -344,8 +352,47 @@ void Canvas::Arc(D2D1_POINT_2F c, float r, float from, float sweep, Color color,
     rt->DrawGeometry(path.Get(), Brush(color), width, rndCaps.Get());
 }
 
-void Canvas::FillGeometry(ID2D1Geometry* geometry, Color c) {
-    rt->FillGeometry(geometry, Brush(c));
+void Canvas::FillGeometry(ID2D1Geometry* geometry, Color c, bool kept) { FillGeo(geometry, Brush(c), kept); }
+
+ID2D1GeometryRealization* Canvas::Realize(ID2D1Geometry* geo, float stroke, ID2D1StrokeStyle* style) {
+    if (!dc1 || !geo) return nullptr;
+    D2D1_MATRIX_3X2_F m;
+    float dx = 96, dy = 96;
+    rt->GetTransform(&m);
+    rt->GetDpi(&dx, &dy);
+    float tol = D2D1::ComputeFlatteningTolerance(*D2D1::Matrix3x2F::ReinterpretBaseType(&m), dx, dy); // as fine as a plain draw at this scale
+    Real* hit = nullptr;
+    for (Real& e : reals)
+        if (e.geo.Get() == geo && e.stroke == stroke && e.style == style) hit = &e;
+    if (!hit) { // first sight: drawn the plain way. a shape that changes every frame (the panel dropping) never pays for a realization
+        if (reals.size() >= kMaxReals) reals.erase(reals.begin()); // oldest out: a handful are live at once
+        reals.push_back({geo, nullptr, stroke, style, tol, frame});
+        return nullptr;
+    }
+    if (hit->real && tol >= hit->tol * kRealFiner) { // drawn no bigger than it was made for
+        hit->lastUse = frame;
+        return hit->real.Get();
+    }
+    if (!hit->real && hit->lastUse == frame) return nullptr; // seen again within the same frame: still no sign it lasts
+    ComPtr<ID2D1GeometryRealization> made;
+    HRESULT hr = stroke > 0 ? dc1->CreateStrokedGeometryRealization(geo, tol, stroke, style, &made) : dc1->CreateFilledGeometryRealization(geo, tol, &made);
+    hit->lastUse = frame;
+    if (FAILED(hr)) return nullptr;
+    hit->real = made;
+    hit->tol = tol;
+    return made.Get();
+}
+
+void Canvas::FillGeo(ID2D1Geometry* geo, ID2D1Brush* b, bool kept) {
+    if (!geo || !b) return;
+    if (ID2D1GeometryRealization* r = kept ? Realize(geo, 0, nullptr) : nullptr) dc1->DrawGeometryRealization(r, b);
+    else rt->FillGeometry(geo, b);
+}
+
+void Canvas::StrokeGeo(ID2D1Geometry* geo, ID2D1Brush* b, float width, ID2D1StrokeStyle* style, bool kept) {
+    if (!geo || !b) return;
+    if (ID2D1GeometryRealization* r = kept ? Realize(geo, width, style) : nullptr) dc1->DrawGeometryRealization(r, b);
+    else rt->DrawGeometry(geo, b, width, style);
 }
 
 namespace {
@@ -371,6 +418,7 @@ uint64_t HashText(const std::wstring& s, const void* f, float w, float h, float 
 
 constexpr size_t kMaxGrad = 96; // gradient cache cap, wiped when full
 constexpr uint32_t kLayTtl = 240; // frames a layout may sit unused before eviction
+constexpr uint32_t kRealTtl = 90; // frames a realization may sit unused: sparklines change every second, the old ones go soon
 
 }
 
@@ -420,6 +468,7 @@ void Canvas::NewFrame() {
         if (frame - it->second.lastUse > kLayTtl) it = layouts.erase(it); // evict unused after ttl
         else ++it;
     }
+    std::erase_if(reals, [this](const Real& e) { return frame - e.lastUse > kRealTtl; });
 }
 
 void Canvas::FillV(const D2D1_RECT_F& r, float radius, Color top, Color bottom) {
@@ -435,8 +484,8 @@ void Canvas::FillH(const D2D1_RECT_F& r, float radius, Color left, Color right) 
     if (auto* b = Gradient(left, right, false, r)) rt->FillRoundedRectangle({r, radius, radius}, b);
 }
 
-void Canvas::FillGeoV(ID2D1Geometry* geometry, const D2D1_RECT_F& bounds, Color top, Color bottom) {
-    if (auto* b = Gradient(top, bottom, true, bounds)) rt->FillGeometry(geometry, b);
+void Canvas::FillGeoV(ID2D1Geometry* geometry, const D2D1_RECT_F& bounds, Color top, Color bottom, bool kept) {
+    if (auto* b = Gradient(top, bottom, true, bounds)) FillGeo(geometry, b, kept);
 }
 
 void Canvas::Glow(D2D1_POINT_2F center, float rx, float ry, Color c, const D2D1_ROUNDED_RECT* in) {
@@ -468,9 +517,7 @@ void Canvas::Glow(D2D1_POINT_2F center, float rx, float ry, Color c, const D2D1_
     rt->PopAxisAlignedClip();
 }
 
-void Canvas::StrokeGeo(ID2D1Geometry* geometry, Color c, float width) {
-    rt->DrawGeometry(geometry, Brush(c), width, rndCaps.Get());
-}
+void Canvas::StrokeGeo(ID2D1Geometry* geometry, Color c, float width, bool kept) { StrokeGeo(geometry, Brush(c), width, rndCaps.Get(), kept); }
 
 void Canvas::Text(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c, Align a) {
     if (s.empty()) return;
@@ -517,7 +564,7 @@ ID2D1BitmapBrush* Canvas::BitmapBrush(ID2D1Bitmap* bmp) {
     ComPtr<ID2D1BitmapBrush> b;
     if (FAILED(rt->CreateBitmapBrush(bmp, &b))) return nullptr; // brush lets us fill a rounded rect
     b->SetInterpolationMode(D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-    constexpr size_t kMaxBmpBrushes = 2; // a frame only draws the cover and its blur
+    constexpr size_t kMaxBmpBrushes = 3; // a frame draws the cover, its blur and the media page's backdrop
     if (bmpBrushes.size() >= kMaxBmpBrushes) bmpBrushes.erase(bmpBrushes.begin()); // drops the old cover's gpu copy too
     bmpBrushes.emplace_back(bmp, b);
     return b.Get();

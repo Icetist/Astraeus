@@ -61,9 +61,13 @@ public:
     void Ring(D2D1_POINT_2F center, float radius, Color c, float width);
     void Line(D2D1_POINT_2F a, D2D1_POINT_2F b, Color c, float width, bool round = true);
     void Arc(D2D1_POINT_2F center, float radius, float from, float sweep, Color c, float width);
-    void FillGeometry(ID2D1Geometry* g, Color c);
-    void FillGeoV(ID2D1Geometry* g, const D2D1_RECT_F& bounds, Color top, Color bottom);
-    void StrokeGeo(ID2D1Geometry* g, Color c, float width);
+    // kept: g stays the same object frame after frame (the panel's shape, a sparkline), so its tessellation is cached on the gpu instead of redone per draw
+    void FillGeometry(ID2D1Geometry* g, Color c, bool kept = false);
+    void FillGeoV(ID2D1Geometry* g, const D2D1_RECT_F& bounds, Color top, Color bottom, bool kept = false);
+    void StrokeGeo(ID2D1Geometry* g, Color c, float width, bool kept = false);
+    void FillGeo(ID2D1Geometry* g, ID2D1Brush* b, bool kept = false); // any brush, e.g. a gradient the caller keeps
+    void StrokeGeo(ID2D1Geometry* g, ID2D1Brush* b, float width, ID2D1StrokeStyle* style, bool kept = false); // style null: square ends, as DrawGeometry has
+    ID2D1StrokeStyle* RoundCaps() const { return rndCaps.Get(); }
     void Glow(D2D1_POINT_2F center, float rx, float ry, Color c, const D2D1_ROUNDED_RECT* in = nullptr); // radial falloff, cached per color; in: kept inside a card's rounded corners
     void NewFrame(); // advances frame counter, sweeps stale layouts
     void FillV(const D2D1_RECT_F& r, float radius, Color top, Color bottom); // V = vertical gradient, H = horizontal
@@ -103,6 +107,17 @@ private:
     std::unordered_multimap<uint64_t, TextLay> layouts; // multimap: hash collisions resolved by full compare
     std::vector<std::pair<ID2D1Bitmap*, ComPtr<ID2D1BitmapBrush>>> bmpBrushes; // cover + its blur, oldest evicted
     ID2D1BitmapBrush* BitmapBrush(ID2D1Bitmap* bmp);
+    struct Real { // a geometry's cached tessellation, made for this device
+        ComPtr<ID2D1Geometry> geo; // held so its address can't be reused by another while cached
+        ComPtr<ID2D1GeometryRealization> real;
+        float stroke; // 0 a fill, else the stroke width
+        ID2D1StrokeStyle* style;
+        float tol; // flattening tolerance it was made for
+        uint32_t lastUse;
+    };
+    ID2D1GeometryRealization* Realize(ID2D1Geometry* g, float stroke, ID2D1StrokeStyle* style);
+    ComPtr<ID2D1DeviceContext1> dc1; // null on a target without realizations: kept draws go the plain way
+    std::vector<Real> reals;
     uint32_t frame = 0;
 };
 

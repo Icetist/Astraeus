@@ -1,14 +1,19 @@
-## Astraeus 2.2.3
+## Astraeus 2.3.0
 
 ### New
-- **Starfall, a theme only Astraeus has.** A deep night sky with fine star dust, a violet glow that drifts slowly around the open panel, and soft light along the edges. The pill wears it too. HaloBar takes it on when it follows Astraeus.
-- **Lyrics text size.** Advanced settings → **Text size**, from 80% to 150%, for both the classic and two-screen player.
-- **A rail that scrolls.** With more than five pages on, the side rail scrolls instead of squeezing them in. Small arrows show where more pages are, the wheel moves it one page at a time, and ↑/↓ switch pages while the mouse is over it.
-- **The pill on the desktop is on by default** for new installs: on an empty desktop the island stays up, with the clock when nothing is playing.
+- **A new Shelf.** Cards for text, links, images, files, colors and code, with search, filters, pins, notes and stacks. Preview anything at full size, drag items in and back out, and paste straight into the app you were in. Saved history is encrypted.
+- **Everything you copy can land on the Shelf.** Off by default: Advanced settings → **Shelf**, with how many cards to keep and when to delete them.
+- **Album art background.** The cover behind the Media page, the fullscreen player, or both, each on its own switch, with a **Strength** slider. The Media page switch and the strength are shared with HaloBar.
+- **Visualizer sensitivity.** One slider for how strongly the bars and the glow react to the music, shared with HaloBar.
+- **Open only with the shortcut.** Hovering or clicking the closed island does nothing; only the keyboard shortcut opens it. There's also an option for this only when an app window is under the edge, with its own hover delay.
+- **Check for updates** right in settings, under Advanced.
 
 ### Better
-- **A lighter fullscreen player.** It draws only as fast as what's moving needs, no longer runs at full speed on high-refresh screens, and steps right down when a game is in front.
-- **Display size** now sits in Advanced settings, beside the lyrics text size.
+- **A lighter Astraeus.** Starfall, the Home cards and the fullscreen player draw with less work, and a closed panel no longer keeps redrawing after a quick page switch.
+- **The sidebar fits around your taskbar**, Windows' or HaloBar's, at any size, and refits when it changes.
+- **Sidebar layouts fixed**: the calendar, the forecast, the weather card and the page row no longer overlap or cut off.
+- **Every settings control is a solid accent**, no more gradients.
+- **Smoother picker and sidebar.** The color picker catches every click, and the sidebar no longer flickers when clicked.
 
 > [!NOTE]
 > The executable is not code-signed yet, so Windows SmartScreen may show an "unknown publisher" warning the first time. Click **More info → Run anyway**.

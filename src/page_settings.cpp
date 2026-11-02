@@ -17,6 +17,15 @@ namespace {
 constexpr float kGap = 10;
 constexpr int kPresets[] = {0x5B8CFF, 0x9B7BFF, 0xFF6FAE, 0xFF6B6B, 0xFF9F43, 0xF5C542, 0x3DDC97, 0x2EC4D6}; // curated accents
 bool ringDrag = false; // dragging around the hue ring
+bool ringKnob = false; // that drag took the knob itself and hasn't moved yet
+float ringGrab = 0; // degrees between the press and the knob it took, kept through the drag
+D2D1_POINT_2F wheelGrab{}; // custom wheel: the taken handle's offset from the press
+bool wheelHeld = false; // that press took a handle and hasn't moved yet: a tap only selects it
+constexpr float kRingSlack = 8; // the hue ring takes a press this far past its band
+constexpr float kGrabSlack = 4; // a knob or handle takes a press this far past its dot
+constexpr float kTapSlop = 3; // moved less than this: a tap, the color stays
+constexpr float kHandleR = 9; // a wheel handle's dot
+constexpr float kPresetHalfH = 13; // a preset dot takes a press this far above and below its center
 int wheelPick = 0; // custom wheel: the handle being edited, 0 accent, 1 background
 float settingsScroll = 0; // wanted scroll of the cards, eased by Scroll
 constexpr float kMinRow = 196; // cards never squeeze below this: the page scrolls instead
@@ -58,29 +67,38 @@ void Orb(PageCtx& p, D2D1_POINT_2F o, float R, bool live) { // hue ring around a
         c.Arc(o, R, Rad(deg - 90.5f), Rad(11), theme::Hsl(deg, 0.80f, 0.60f).Alpha(custom ? 1.0f : 0.45f), ringW);
     }
     uint32_t id = Ui::Id("set.orb");
-    float reach = R + ringW;
+    float face = R - ringW, reach = R + ringW / 2 + kRingSlack; // the orb's face inside, the ring's band out to here
     D2D1_RECT_F box = {o.x - reach, o.y - reach, o.x + reach, o.y + reach};
     Ui::Hit h = live ? ui.Button(id, box) : Ui::Hit{};
     D2D1_POINT_2F ms = ui.In().mouse, ps = ui.In().pressPos;
     float dist = std::hypot(ms.x - o.x, ms.y - o.y), pdist = std::hypot(ps.x - o.x, ps.y - o.y);
+    auto angle = [&](D2D1_POINT_2F q) { return std::fmod(std::atan2(q.y - o.y, q.x - o.x) * 180 / kPi + 90 + 360, 360.0f); };
     if (ui.IsActive(id) && ui.In().pressed) {
-        if (std::fabs(pdist - R) < ringW + 8) ringDrag = true; // grabbed the ring
-        else if (pdist < R - ringW && !m.hexFocus) { // tapped the orb: type a color
+        if (pdist >= face && pdist <= reach) { // grabbed the ring: the band never reaches into the face, a tap near its edge still types
+            ringDrag = true;
+            D2D1_POINT_2F knob = {o.x + R * std::cos(Rad(cur.hue - 90)), o.y + R * std::sin(Rad(cur.hue - 90))};
+            ringKnob = custom && std::hypot(ps.x - knob.x, ps.y - knob.y) < ringW + kGrabSlack;
+            ringGrab = ringKnob ? std::remainder(cur.hue - angle(ps), 360.0f) : 0; // took the knob itself: it moves from where it is, no jump
+        } else if (pdist < face && !m.hexFocus) { // tapped the orb: type a color
             m.hexFocus = true;
             m.hexTarget = 0;
             m.hexEdit = HexText(custom ? m.accentHex : ToHex(t.accent));
         }
     }
-    if (m.hexFocus && ui.In().pressed && pdist > R - ringW) m.CommitHex(); // clicked away: keep it if it's a color
+    if (m.hexFocus && ui.In().pressed && pdist >= face) m.CommitHex(); // clicked away: keep it if it's a color
     if (ringDrag && ui.IsActive(id) && ui.In().down) { // whole panel recolors live while you drag
-        float hue = std::fmod(std::atan2(ms.y - o.y, ms.x - o.x) * 180 / kPi + 90 + 360, 360.0f);
-        m.accentHex = ToHex(theme::Hsl(hue, 0.78f, 0.62f));
-        m.accentMode = 1;
-        cur = theme::FromCol(Color::Rgb((uint32_t)m.accentHex));
+        float hue = std::fmod(angle(ms) + ringGrab + 360, 360.0f);
+        if (ringKnob && std::hypot(ms.x - ps.x, ms.y - ps.y) >= kTapSlop) ringKnob = false; // it moved: from now on it follows
+        if (!ringKnob) { // the knob only pressed, not moved: its color stays exactly as it was
+            m.accentHex = ToHex(theme::Hsl(hue, 0.78f, 0.62f));
+            m.accentMode = 1;
+            cur = theme::FromCol(Color::Rgb((uint32_t)m.accentHex));
+        }
     }
-    if (ringDrag && ui.In().released) {
+    if (ringDrag && (ui.In().released || !ui.IsActive(id))) { // let go, or the press went elsewhere: never left armed for a later release
+        bool mine = ui.IsActive(id) && ui.In().released;
         ringDrag = false;
-        m.SetAccent(1, m.accentHex); // remember it
+        if (mine) m.SetAccent(m.accentMode, m.accentHex); // remember it; a knob only tapped keeps its mode too
     }
     (void)h;
 
@@ -115,11 +133,12 @@ void Presets(PageCtx& p, float x, float y, float step, bool live) { // one-tap a
     Canvas& c = ui.C();
     for (int i = 0; i < 8; ++i) {
         D2D1_POINT_2F o = {x + i * step, y};
-        Ui::Hit h = live ? ui.Button(Ui::Id("set.preset", i), {o.x - 10, o.y - 10, o.x + 10, o.y + 10}) : Ui::Hit{};
+        float half = (std::max)(10.0f, step / 2); // touching cells, no dead gaps between the dots
+        Ui::Hit h = live ? ui.Button(Ui::Id("set.preset", i), {o.x - half, o.y - kPresetHalfH, o.x + half, o.y + kPresetHalfH}) : Ui::Hit{};
         bool on = p.m.accentMode == 1 && (p.m.accentHex & 0xFFFFFF) == kPresets[i];
         if (on || h.hover) c.Ring(o, 10, p.shell.text.Alpha(on ? 0.9f : 0.4f), 1.5f);
         c.Dot(o, 7, Color::Rgb((uint32_t)kPresets[i]));
-        if (h.clicked) p.m.SetAccent(1, kPresets[i]);
+        if (h.down && ui.In().pressed) p.m.SetAccent(1, kPresets[i]); // on the press: a small dot can't lose its click to a twitch off it before release
     }
 }
 
@@ -227,16 +246,22 @@ void Wheel(PageCtx& p, D2D1_POINT_2F o, float R, bool live) {
         float a = (x.h - 90) * kPi / 180;
         return D2D1_POINT_2F{o.x + std::cos(a) * x.s * R, o.y + std::sin(a) * x.s * R};
     };
-    D2D1_POINT_2F ms = ui.In().mouse;
+    D2D1_POINT_2F ms = ui.In().mouse, ps = ui.In().pressPos;
     if (ui.IsActive(id) && ui.In().pressed) { // grab the handle under the press, or move the selected one here
-        for (int w = 0; w < 2; ++w) {
+        wheelGrab = {};
+        wheelHeld = false;
+        float best = kHandleR + 2 + kGrabSlack; // the nearer handle wins where the two overlap
+        for (int k = 0; k < 2; ++k) {
+            int w = k == 0 ? wheelPick : 1 - wheelPick; // the one on top first
             D2D1_POINT_2F q = spot(w);
-            if (std::hypot(ms.x - q.x, ms.y - q.y) < 12) wheelPick = w;
+            float d = std::hypot(ps.x - q.x, ps.y - q.y);
+            if (d < best) best = d, wheelPick = w, wheelGrab = {q.x - ps.x, q.y - ps.y}, wheelHeld = true; // taken where it sits: it moves with the mouse, no jump
         }
         if (m.hexFocus) m.CommitHex();
     }
-    if (ui.IsActive(id) && (ui.In().down || ui.In().released)) {
-        float dx = ms.x - o.x, dy = ms.y - o.y;
+    if (ui.IsActive(id) && wheelHeld && std::hypot(ms.x - ps.x, ms.y - ps.y) >= kTapSlop) wheelHeld = false; // it moved: from now on it follows
+    if (ui.IsActive(id) && !wheelHeld && (ui.In().down || ui.In().released)) { // a handle only tapped is just selected, its color untouched
+        float dx = ms.x + wheelGrab.x - o.x, dy = ms.y + wheelGrab.y - o.y;
         Hsv x = Handle(m, wheelPick);
         x.h = std::fmod(std::atan2(dy, dx) * 180 / kPi + 90 + 360, 360.0f);
         x.s = (std::min)(1.0f, std::hypot(dx, dy) / R);
@@ -262,11 +287,15 @@ void Shade(PageCtx& p, const D2D1_RECT_F& r, bool live) { // brightness of the s
     c.FillH(r, rad, Color{0, 0, 0, 1}, FromHsv({x.h, x.s, 1}));
     c.Stroke(r, rad, p.shell.hairTop, 1);
     uint32_t id = Ui::Id("set.shade");
-    float v = x.v;
-    D2D1_RECT_F track = {r.left + rad, r.top - 4, r.right - rad, r.bottom + 4};
-    if (live && ui.Slider(id, track, v, false)) {
-        x.v = v;
-        Store(m, wheelPick, x, false);
+    D2D1_RECT_F track = {r.left + rad, r.top - 4, r.right - rad, r.bottom + 4}; // where the thumb's center travels
+    D2D1_RECT_F grab = {r.left - kGrabSlack, r.top - 6, r.right + kGrabSlack, r.bottom + 6}; // the whole bar and its thumb at either end take a press
+    if (live) ui.Button(id, grab);
+    if (ui.IsActive(id) && ui.In().down && Width(track) > 0) {
+        float v = anim::Clamp01((ui.In().mouse.x - track.left) / Width(track));
+        if (std::fabs(v - x.v) >= 0.0005f) { // ignore jitter
+            x.v = v;
+            Store(m, wheelPick, x, false);
+        }
     }
     if (ui.IsActive(id) && ui.In().released) Store(m, wheelPick, Handle(m, wheelPick), true);
     D2D1_POINT_2F k = {track.left + Width(track) * x.v, (r.top + r.bottom) / 2};

@@ -322,6 +322,10 @@ void Show(HWND owner, const Theme& t, bool startup) {
     if (UpdBusy()) SetTimer(g->hwnd, kSpinTimer, 16, nullptr);
 }
 
+std::wstring UpdateText() { return UpdLabel(); }
+
+bool UpdateBusy() { return UpdBusy(); }
+
 void SetUpdate(Upd state, const std::wstring& tag) {
     upd = state;
     if (!tag.empty()) updTag = tag;

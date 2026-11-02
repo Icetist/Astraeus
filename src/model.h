@@ -114,6 +114,7 @@ public:
     void SetAccent(int mode, int hex); // persisted, drawer crossfades to it; mode 0 wallpaper, 1 custom, 2 windows
     void SetNotifyPills(bool on); // persisted, starts or stops the watcher
     void SetQuiet(bool on); // do not disturb, shared with halobar
+    void SetArtBack(bool on); // the media page's album art background, shared with halobar too
     bool PollShared(); // once a second: do not disturb, halobar's pills and theme; true when the look changed
     bool PillsWanted() const { return !quiet && (notifyPills || haloPills); } // windows notifications drop as pills now
     bool Following() const { return look == kLookHalo; } // the look is halobar's
@@ -223,6 +224,7 @@ public:
     int glassBlur = 100; // glass: 0 clear .. 100 fully frosted
     int edge = 0; // 0 top (default), 1 left, 2 right: the user's pick
     int haloEdge = -1; // the edge halobar's dock holds, in our numbering; -1 none (bottom, or not running)
+    int haloReach = 0; // pixels its bottom dock rises from the screen's bottom, 0 when it isn't there: the sidebar ends above it
     int Edge() const { return edge != haloEdge ? edge : edge == 0 ? 1 : 0; } // where the panel really docks: never on halobar's edge, off a side to the top, off the top to the left
     int screens = 0; // 0 one screen, 1 every screen (the panel follows the mouse)
     int islandSecs = 0; // the pill over maximized windows, after the mouse leaves: 0 brief, up to kIslandMaxSecs, -1 always
@@ -237,7 +239,7 @@ public:
     bool passFocus = false, passShow = false, passWrong = false; // the wi-fi password field: taking keystrokes, shown in clear, last try failed
     std::string passFor; // raw ssid of the network being joined
     std::wstring passEdit; // what's typed so far, wiped once used
-    bool Typing() const { return hexFocus || passFocus || cityFocus; } // the panel holds the keyboard
+    bool Typing() const { return hexFocus || passFocus || cityFocus || shelfField != kShelfNone; } // the panel holds the keyboard
     void AskPass(const sys::WifiNet& n); // a new secured network: type its password in the panel
     void SubmitPass();
     void CancelPass();
@@ -260,9 +262,20 @@ public:
     int reduceMotion = 0; // calmer animation: no bounce, no drifting, no sliding
     sys::NotifyWatch notifyWatch; // only runs while PillsWanted
     bool timerOn = false;
-    sys::Shelf shelf; // files and notes dropped on the island
+    sys::Shelf shelf; // what was dropped on the island, and everything copied while that's switched on
     bool shelfHot = false; // something droppable is over the panel right now
     uint64_t shelfDrag = 0; // a shelf item the page wants dragged out, started after the frame
+    uint64_t shelfPaste = 0; // a card the page wants pasted into the app in front, also after the frame
+    int shelfPasteHow = 0; // a sys::Shelf::CopyHow
+    std::vector<size_t> shelfPicks; // the files of a stack that drag or paste is about; empty: all of them
+    enum ShelfField { kShelfNone, kShelfSearch, kShelfNote };
+    int shelfField = kShelfNone; // the shelf's field holding the keyboard
+    std::wstring shelfQuery, shelfEdit; // the search, and a note being typed
+    uint64_t shelfNoteFor = 0;
+    void CommitShelfNote(); // the typed note onto its card, ends typing
+    int shelfCapture = 0; // everything copied goes to the shelf too: off unless asked for
+    int shelfHistory = sys::Shelf::kHistDef, shelfExpire = sys::Shelf::kExpireNever, shelfClearStart = 0;
+    void SyncShelf(); // hands those four to the shelf
     int powerPills = 1; // a pill when it's plugged in or unplugged
     int batLow = 20; // the low battery pill shows at this percent, 5..50
     bool lowShown = false; // shown once per discharge
@@ -308,6 +321,17 @@ public:
     int pillLeft = kWWeather, pillRight = kWCpu; // its two status widgets
     std::wstring PillWidget(int which, int& icon) const; // what a widget shows now, empty when it has nothing
     int mediaCompact = 0, pillMusic = 1, showArt = 1, vizOn = 1; // media modules
+    int artBack = 0; // the media page sits on its cover, blurred across the whole panel
+    int stageArt = 0; // the fullscreen player on its cover too, switched apart from the media page
+    static constexpr int kArtAlphaMin = 20, kVizGainMin = 50, kVizGainMax = 200, kSlideStep = 5; // percent ranges of the two shared sliders
+    int artAlpha = 100; // percent: how strongly the cover shows behind, shared with halobar
+    int vizGain = 100; // percent: how hard the visualizer answers the music, shared with halobar
+    float VizGain() const { return vizGain / 100.0f; }
+    bool Levels(float& left, float& right); // the meter's peaks, scaled by the sensitivity
+    int keyOnly = 0; // only the shortcut opens the closed island: hover and clicks on it do nothing
+    int appKeyOnly = 0; // an app window under the edge: hovering opens nothing, only the shortcut does
+    static constexpr int kAppHoverMs = 500, kAppHoverMax = 1000, kAppHoverStep = 50; // the dwell over an app window: default, most, slider step
+    int appHoverMs = kAppHoverMs; // how long the mouse rests at the edge over an app before the pill drops
     int hud = 0; // astraeus' own volume and brightness pill, experimental, off by default
 
 private:

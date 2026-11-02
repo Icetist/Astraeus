@@ -45,7 +45,7 @@ public:
     void Frame();
 
 private:
-    enum : UINT_PTR { kHoverTimer = 1, kCloseTimer, kReleaseTimer, kPeekTimer, kDevTimer, kFollowTimer, kTrimTimer = 8, kFullTimer, kGreetTimer, kDeskTimer, kAdoptTimer }; // all one-shot; 7 is the model's
+    enum : UINT_PTR { kHoverTimer = 1, kCloseTimer, kReleaseTimer, kPeekTimer, kDevTimer, kFollowTimer, kTrimTimer = 8, kFullTimer, kGreetTimer, kDeskTimer, kAdoptTimer, kPasteTimer }; // all one-shot; 7 is the model's
     static constexpr UINT kAdoptMsg = WM_APP + 60; // a hover strip on another screen asks the panel to come over
     static constexpr float kStrip = 3; // idle bezel height in dips, just enough to catch the mouse
     static constexpr UINT kShelfMsg = WM_APP + 61; // the shelf page asked for a drag out, run after the frame: it's modal
@@ -62,6 +62,9 @@ private:
     void DropLeave();
     void DropDone(IDataObject* data);
     void ShelfOut(); // the modal drag of one shelf item to wherever the user lets go
+    void ShelfPaste(); // a card onto the clipboard, then ctrl+v into the app that was in front
+    void ShelfKey(WPARAM ch); // a character for the shelf's search or note field
+    HWND pasteTo = nullptr; // where that ctrl+v goes, checked again when it's sent
     HPOWERNOTIFY acNote = nullptr, batNote = nullptr; // plugged in or out, battery percent: laptops only
     int acNow = -1; // -1 until windows' first notice, which only says how things are
     void WatchPower(); // laptops: register for the two power notices
@@ -94,6 +97,8 @@ private:
     void Place();
     void Resize(float hDip, bool topmost); // window only as tall as visible shape
     D2D1_POINT_2F ToDip(LPARAM lp) const; // mouse px to dip coords
+    D2D1_POINT_2F BodyOrg(float h) const; // where panel space starts in the window at depth h, for drawing and hit tests alike
+    D2D1_RECT_F RailBox() const { return Side() ? D2D1_RECT_F{0, 0, CW(), kTopRail} : D2D1_RECT_F{0, 0, kRailW, H}; } // the rail, in panel space
     void TrackLeave();
     bool MouseIn() const;
 
@@ -151,6 +156,10 @@ private:
     int pillPass = 0; // 0 the whole pill, 1 only its still parts (into the layer), 2 only the moving bars
     ComPtr<ID2D1Bitmap1> pillLayer; // the resting pill without its bars
     uint64_t pillKey = 0;
+    bool SkyLayer(float h, float shapeWide); // starfall, the open panel at rest: the sky's still parts over the orb drawn once into a bitmap
+    int skyPass = 0; // 0 the whole sky, 1 only its still parts over the orb (into the layer), 2 the rest around the layer
+    ComPtr<ID2D1Bitmap1> skyLayer; // only while the open panel rests: let go as it closes
+    uint64_t skyKey = 0;
     uint64_t trimKey = 0; // the resting pill the last cache trim was scheduled for
     bool devWide = false; // this device has drawn more than the pill: once a pill rests again it moves to a fresh one
     float IslandSpan() const { return Side() ? kIslandSide : kIslandW; } // pill length along its edge
@@ -226,14 +235,18 @@ private:
     HWND hwnd = nullptr;
     float scale = 1; // dpi / 96
     RECT monitor = {};
+    RECT work = {}; // the screen less every taskbar, windows' or halobar's: a side panel keeps within it
+    int reachUsed = 0; // halobar's dock height work was cut by, so a change re-places the panel
     float W = 0, H = 0; // panel size in dips
     const float overshoot = 46; // extra room for spring bounce below H
     float winH = 0; // current window height in dips
+    float wantH = 0; // the depth last asked for; on the right edge the window stays deeper and a region trims it to this
     bool hidden = false, fullApp = false, tracking = false, armed = false;
     bool keys = false; // opened from the shortcut: the panel holds the keyboard until it closes
     HWND keysFrom = nullptr; // where the keyboard goes back to
     bool pillRgn = false; // the island's window region is on: the window is panel-wide, only the pill is live
-    RECT pillRect{}; // that region, to skip setting it again unchanged
+    bool rgnOn = false; // any window region: the pill's, or the right edge's trim to the depth in use
+    RECT rgnRect{}; // that region, to skip setting it again unchanged
     bool eco = false; // process in efficiency mode
     bool locked = false, screenOff = false; // nobody can see the pill: its bars stop until the screen is back
     HPOWERNOTIFY displayNote = nullptr; // display on/off notices
@@ -246,7 +259,6 @@ private:
     bool islandHot = false; // mouse over the island: show the expand hint
     bool stayWasAlways = false; // the island was set to always last second, to notice it being switched off
     float islandBars[4] = {}; // mini visualizer levels, eased per frame
-    static constexpr UINT kIslandMs = 500; // dwell before the island shows over an app window
     anim::Spring spring;
     bool opened = false, dragging = false, peeking = false;
     bool island = false; // island pill is up (or dropping)
@@ -326,4 +338,6 @@ private:
     ComPtr<IWICBitmapSource> coverSrc;
     ComPtr<ID2D1Bitmap1> cover;
     ComPtr<ID2D1Bitmap> coverBlur;
+    ComPtr<ID2D1Bitmap> coverBack; // the media page's full-bleed backdrop, baked once per cover while the panel shows
+    uint64_t backFailed = 0; // the cover whose backdrop couldn't be baked
 };

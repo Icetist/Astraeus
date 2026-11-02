@@ -13,6 +13,10 @@ namespace {
 
 constexpr wchar_t kClass[] = L"AstraeusStage";
 constexpr float kPi = 3.14159265f;
+constexpr float kStageArtSigma = 6; // the album art background at 1024 px: softened, the cover clearly itself
+constexpr float kStageArtGlass = 0.6f; // glass keeps some of the desktop showing through it
+constexpr float kStageArtWash = 0.32f, kStageArtWashLight = 0.30f; // over the art: enough for white or dark type to read
+constexpr float kStageVizOverArt = 0.6f; // the music's light over the art, as the media page's
 constexpr double kLyrWaitSec = 12; // how long the lyrics layout waits for a new song's lines before giving way
 constexpr float kLeaveSec = 0.26f; // easing back toward the bezel as it fades
 constexpr double kIdleSec = 2.5; // controls and cursor fade after the mouse rests this long
@@ -167,9 +171,13 @@ bool Stage::MakeDev(UINT pxW, UINT pxH) {
     d.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     d.BufferCount = 2;
     d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
-    d.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED; // glass lets the blurred desktop through, dark and light paint every pixel
+    d.AlphaMode = mode == 2 ? DXGI_ALPHA_MODE_PREMULTIPLIED : DXGI_ALPHA_MODE_IGNORE; // glass lets the blurred desktop through; dark, light and custom paint every pixel opaque, so the compositor needn't blend a whole screen
     d.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
-    if (FAILED(factory->CreateSwapChainForComposition(d3d.Get(), &d, nullptr, &sc)) || FAILED(sc.As(&swap))) return false;
+    if (FAILED(factory->CreateSwapChainForComposition(d3d.Get(), &d, nullptr, &sc)) && d.AlphaMode == DXGI_ALPHA_MODE_IGNORE) { // a driver that won't: as it always was
+        d.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
+        if (FAILED(factory->CreateSwapChainForComposition(d3d.Get(), &d, nullptr, &sc))) return false;
+    }
+    if (!sc || FAILED(sc.As(&swap))) return false;
     swap->SetMaximumFrameLatency(1);
     frameWait = swap->GetFrameLatencyWaitableObject();
     D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
@@ -262,15 +270,21 @@ LRESULT Stage::Handle(UINT msg, WPARAM wp, LPARAM lp) {
 
 void Stage::SyncCover() {
     uint64_t id = model.hasTrack ? model.track.coverId : 0;
+    if (!model.stageArt) coverArt.Reset(); // switched off: its pixels go
+    else if (id == coverId && cover && !coverArt) coverArt = gfx::BakeBlur(ctx.Get(), cover.Get(), kStageArtSigma); // switched on mid-song
     if (id == coverId) return;
     coverId = id;
     artSeeded = false;
     cover.Reset();
     coverBlur.Reset();
+    coverArt.Reset();
     const auto& bytes = model.track.cover;
     if (!id || !bytes || bytes->empty()) return;
     ComPtr<IWICBitmapSource> src = gfx::Decode(bytes->data(), bytes->size(), 1024); // sharper than the panel's copy, the art is big here
-    if (src && SUCCEEDED(ctx->CreateBitmapFromWicBitmap(src.Get(), nullptr, &cover))) coverBlur = gfx::BakeBlur(ctx.Get(), cover.Get(), 40.0f);
+    if (src && SUCCEEDED(ctx->CreateBitmapFromWicBitmap(src.Get(), nullptr, &cover))) {
+        coverBlur = gfx::BakeBlur(ctx.Get(), cover.Get(), 40.0f);
+        if (model.stageArt) coverArt = gfx::BakeBlur(ctx.Get(), cover.Get(), kStageArtSigma);
+    }
     artSeeded = src && model.cfg.albumCol; // same rule as the media page: album colors unless turned off
     if (artSeeded) artSeed = theme::FromBmp(src.Get());
 }
@@ -329,14 +343,21 @@ void Stage::Backdrop(double now) { // the media page's glow, scaled to the room:
     if (glassy && shade > 0.01f) c.Fill(full, 0, Color{0, 0, 0, 0.42f * shade}); // a bright desktop gets neutral smoked glass so white type reads
     else c.Fill(full, 0, light || mode == 3 ? look.bg.Alpha(1) : Color{0.02f, 0.02f, 0.03f, 1}); // custom: the room in the user's color
     float zoom = 1.10f + 0.03f * (float)std::sin(now * 0.07) + 0.03f * beat; // slow breathing, nudged by the beat
-    if (coverBlur) {
-        float gw = W * (zoom - 1) / 2, gh = H * (zoom - 1) / 2;
-        c.Image(coverBlur.Get(), {-gw, -gh, W + gw, H + gh}, 0, glassy ? 0.30f : light ? 0.55f : 0.7f); // glass keeps the desktop showing
+    bool art = coverArt != nullptr; // the album art background: the cover itself, not a color wash
+    float gw = W * (zoom - 1) / 2, gh = H * (zoom - 1) / 2;
+    if (art) {
+        float strength = model.artAlpha / 100.0f; // the shared strength slider
+        c.Image(coverArt.Get(), {-gw, -gh, W + gw, H + gh}, 0, (glassy ? kStageArtGlass : 1.0f) * strength);
+        c.Fill(full, 0, light ? Color{1, 1, 1, kStageArtWashLight} : Color{0, 0, 0, kStageArtWash}); // lighter than the blur's wash: the art shows, the type still reads
+    } else {
+        if (coverBlur) c.Image(coverBlur.Get(), {-gw, -gh, W + gw, H + gh}, 0, glassy ? 0.30f : light ? 0.55f : 0.7f); // glass keeps the desktop showing
+        c.Fill(full, 0, light ? Color{1, 1, 1, 0.38f} : Color{0, 0, 0, glassy ? 0.12f : 0.30f}); // wash so the type reads
     }
-    c.Fill(full, 0, light ? Color{1, 1, 1, 0.38f} : Color{0, 0, 0, glassy ? 0.12f : 0.30f}); // wash so the type reads
     StepSwell(swell, model, frameDt, model.hasTrack && model.track.playing, kBlobs);
+    if (art) c.Target()->PushLayer(D2D1::LayerParameters(full, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), kStageVizOverArt), nullptr); // the music's light sits softer on the art
     if (beat > 0.01f) c.Glow({W / 2, H}, W * (0.45f + 0.15f * beat), H * 0.35f * beat, look.accent.Alpha(0.18f * beat)); // the kick blooms from the floor
     DrawSwell(c, swell, kBlobs, {0, H * 0.25f, W, H}, look, now); // soft light swelling up from the floor
+    if (art) c.Target()->PopLayer();
     Color floor = light ? Color{1, 1, 1, 1} : Color{0, 0, 0, 1};
     c.FillV(full, 0, floor.Alpha(light ? 0.05f : 0.10f), floor.Alpha(light ? 0.35f : glassy ? 0.30f : 0.45f)); // settles the bottom so the room doesn't feel lopsided
 }
@@ -585,7 +606,7 @@ void Stage::Frame(const Theme& media) {
 
     float pl = 0, pr = 0;
     bool playing = model.hasTrack && model.track.playing;
-    if (playing) model.meter.Read(pl, pr); // paused: levels just fall away
+    if (playing) model.Levels(pl, pr); // paused: levels just fall away
     auto follow = [dt](float& v, float to) { v += (to - v) * (std::min)(1.0f, dt * (to > v ? 34.0f : 7.0f)); }; // quicker than the panel's
     follow(left, std::sqrt(pl)); // sqrt lifts quiet passages
     follow(right, std::sqrt(pr));
@@ -627,7 +648,7 @@ void Stage::Frame(const Theme& media) {
     canvas->NewFrame();
     ctx->BeginDraw();
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
-    ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
+    if (mode == 2) ctx->Clear(D2D1::ColorF(0, 0, 0, 0)); // the other rooms start with an opaque fill over every pixel: a clear first would be a whole screen spent twice
     ui.Begin(*canvas, input, dt, now);
     Backdrop(now);
     if (role != kWhole) canvas->Fill({0, 0, W, H}, 0, Color{0, 0, 0, kPairShade}); // the same shade on both, so the two screens read as one room

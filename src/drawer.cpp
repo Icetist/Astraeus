@@ -166,13 +166,17 @@ void Drawer::ReleaseLater() {
 }
 
 void Drawer::Resize(float hDip, bool topmost) {
-    winH = hDip;
+    wantH = hDip;
     bool idle = hDip <= kStrip + 0.01f;
     if (idle != eco) sys::SetEco(eco = idle); // throttle only while fully closed
+    // the right edge grows leftwards: each change of depth moves the window's left side, and for a frame the last picture shows shifted with it.
+    // so while anything shows it keeps its full depth, nothing drawn ever moves, and a region trims what takes the mouse to the depth in use
+    winH = edgeNow == 2 && !idle ? (std::max)(hDip, Depth() + overshoot) : hDip;
     float along = idle ? (std::min)(Span(), cfg.hoverW) : Span(); // closed: small hot zone; the island keeps the full width, a region trims it to the pill
     winW = along;
     int a = (int)(along * scale + 0.5f);
-    int d = (std::max)(2, (int)(hDip * scale + 0.5f)); // min 2px so strip stays hoverable
+    int d = (std::max)(2, (int)(winH * scale + 0.5f)); // min 2px so strip stays hoverable
+    int live = (std::clamp)((int)(hDip * scale + 0.5f), 2, d); // the depth really in use, measured from the docked edge
     int x, y, w, h;
     if (edgeNow == 0) { // top: along = width, depth = height
         w = a, h = d;
@@ -181,27 +185,32 @@ void Drawer::Resize(float hDip, bool topmost) {
     } else { // left or right: along = height, depth = width, centered vertically
         w = d, h = a;
         x = edgeNow == 1 ? monitor.left : monitor.right - w;
-        y = monitor.top + (monitor.bottom - monitor.top - h) / 2;
+        y = work.top + (work.bottom - work.top - h) / 2; // centered where no taskbar is, windows' or halobar's
     }
     SetWindowPos(hwnd, topmost ? HWND_TOPMOST : nullptr, x, y, w, h,
                  SWP_NOACTIVATE | (topmost ? 0 : SWP_NOZORDER)); // only re-raise z-order when opening
     // a narrower window for the pill would move what's on screen when it grows into the panel: the pill would jump aside for a frame.
     // so the window keeps its width and a region makes everything beside the pill click-through; opening just lifts the region
     bool pill = islandLook && !opened && !idle;
+    int inner = edgeNow == 2 ? w - live : 0; // side edges: the live part's inner side; the left edge's window is only that deep anyway
+    RECT want = {inner, 0, edgeNow == 0 ? w : inner + live, h}; // the right edge's trim, when nothing narrower is wanted
     if (pill) {
         int pa = (int)(IslandSpan() * scale + 0.5f);
         bubbleNow = Bubble();
         int extra = bubbleNow ? (int)((kBubbleGap + kBubble + 2) * scale + 0.5f) : 0; // the bubble beside it is live too
-        RECT want = edgeNow == 0 ? RECT{(w - pa) / 2, 0, (w + pa) / 2 + extra, h} : RECT{0, (h - pa) / 2, w, (h + pa) / 2 + extra};
-        if (!pillRgn || !EqualRect(&want, &pillRect)) { // only when it changed: resizes come often
+        want = edgeNow == 0 ? RECT{(w - pa) / 2, 0, (w + pa) / 2 + extra, h} : RECT{inner, (h - pa) / 2, inner + live, (h + pa) / 2 + extra};
+    }
+    if (pill || live < d) {
+        if (!rgnOn || !EqualRect(&want, &rgnRect)) { // only when it changed: resizes come often
             HRGN rg = CreateRectRgnIndirect(&want);
-            if (rg && SetWindowRgn(hwnd, rg, FALSE)) pillRgn = true, pillRect = want; // the system owns rg now
+            if (rg && SetWindowRgn(hwnd, rg, FALSE)) rgnOn = true, rgnRect = want; // the system owns rg now
             else if (rg) DeleteObject(rg);
         }
-    } else if (pillRgn) {
+    } else if (rgnOn) {
         SetWindowRgn(hwnd, nullptr, FALSE);
-        pillRgn = false;
+        rgnOn = false;
     }
+    pillRgn = pill && rgnOn;
 }
 
 D2D1_POINT_2F Drawer::ToDip(LPARAM lp) const {
@@ -220,8 +229,8 @@ bool Drawer::MouseIn() const {
     GetCursorPos(&p);
     GetWindowRect(hwnd, &r);
     if (!PtInRect(&r, p)) return false; // real cursor check, leave msgs can lie
-    if (!pillRgn) return true;
-    HRGN rg = CreateRectRgn(0, 0, 0, 0); // the island: inside the pill, not just the window
+    if (!rgnOn) return true;
+    HRGN rg = CreateRectRgn(0, 0, 0, 0); // the island or the right edge's trim: inside the live part, not just the window
     bool in = rg && GetWindowRgn(hwnd, rg) != ERROR && PtInRegion(rg, p.x - r.left, p.y - r.top);
     if (rg) DeleteObject(rg);
     return in;
@@ -321,6 +330,9 @@ void Drawer::Close() {
     opened = false;
     island = false; // the island retracts with the same spring, its shape stays until it's gone
     model.hexFocus = model.cityFocus = model.tilesEdit = false;
+    if (model.shelfField == Model::kShelfNote) model.CommitShelfNote(); // a note half typed is kept, like a city
+    model.shelfField = Model::kShelfNone; // the search text stays for next time, the keyboard goes back
+    ShelfClosed();
     Entry::Get().Drop(); // whatever was typed goes with the panel
     StagePrefs::Get().capture = 0; // a fullscreen key half picked is dropped with the panel
     model.CancelPass();
@@ -360,9 +372,11 @@ void Drawer::Answer() {
     if (hidden) return; // a game has this screen
     if (MouseIn()) { // still at the edge: what a hover there brings
         islandNext = AppBelow();
-        if (islandNext) ShowIsland();
-        else Open();
-        return;
+        if (!model.keyOnly && !(islandNext && model.appKeyOnly)) { // shortcut only, everywhere or over an app: a hover brings nothing, as below
+            if (islandNext) ShowIsland();
+            else Open();
+            return;
+        }
     }
     stayWasAlways = false; // the mouse moved on: the pill comes back here if something holds it up, without closing anything
     SyncStay();
@@ -374,12 +388,13 @@ void Drawer::OnSecond() {
     if (++shadeTick >= kShadeSecs) shadeTick = 0, SampleShade();
     model.IdleSpectrum();
     if (model.PollShared()) Redraw(); // halobar changed the theme we wear: a showing pill or panel repaints, SyncLook crossfades
+    if (model.haloReach != reachUsed && !opened && !dragging) Place(); // halobar's dock grew, shrank, came or went: the sidebar refits, never under the mouse
     SyncHud();
     RetryHud();
     if (deskOn != (model.pillDesk != 0)) WatchDesk(); // the switch in settings was flipped
     if (!opened) {
         SyncStay();
-        if (island && Bubble() != bubbleNow) Resize(winH, false); // the bubble came or went: the live region follows
+        if (island && Bubble() != bubbleNow) Resize(wantH, false); // the bubble came or went: the live region follows
         if (island && !Unseen()) { // a still pill redraws only when what it shows changed: the minute, a widget, the bubble's time
             std::wstring sig = PillSig();
             if (sig != pillSig) {
@@ -437,6 +452,7 @@ void Drawer::StartDrag(float y) {
     dragVel = 0;
     spring.vel = 0; // finger takes over from spring
     KillTimer(hwnd, kCloseTimer);
+    KillTimer(hwnd, kHoverTimer); // the hover's pending open would fight the drag; armed stays, no re-arm until the mouse leaves
     Resize(Depth() + overshoot, true); // full size so drag isn't clipped
     Redraw();
 }
@@ -568,10 +584,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (!opened && !islandLook && spring.value < 1) { // on the closed strip; the island handles its own hover
             if (cfg.hoverOpen && !armed) {
-                EnsureDev(); // warm up gpu during hover delay
+                armed = true; // once per hover, even when nothing is going to open
                 islandNext = AppBelow(); // one check per hover, nothing polls
-                SetTimer(hwnd, kHoverTimer, islandNext ? kIslandMs : (UINT)cfg.hoverMs, nullptr); // open only if mouse lingers
-                armed = true;
+                if (model.keyOnly || (islandNext && model.appKeyOnly)) return 0; // only the shortcut opens it: everywhere, or over an app
+                EnsureDev(); // warm up gpu during hover delay
+                SetTimer(hwnd, kHoverTimer, islandNext ? (UINT)model.appHoverMs : (UINT)cfg.hoverMs, nullptr); // open only if mouse lingers
             }
             return 0;
         }
@@ -582,8 +599,10 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         // while a pill shows, the panel only ever opens on a click: hovering the pill never drops it
         input.mouse = p;
-        D2D1_POINT_2F local = {p.x - cfg.fillet, p.y - (spring.value - H)}; // to panel space, panel slides down from -H
-        if (ui.Captured() || ui.HitAt(local) != ui.Hovered()) Redraw(); // only redraw when hover target changes
+        D2D1_POINT_2F org = BodyOrg((std::clamp)(spring.value, 0.0f, Depth() + overshoot)); // panel space as the frame draws it, on every edge
+        D2D1_POINT_2F local = {p.x - org.x, p.y - org.y};
+        bool onRail = opened && Inside(RailBox(), local);
+        if (ui.Captured() || ui.HitAt(local) != ui.Hovered() || onRail != railHot) Redraw(); // hover target changed, or the rail's arrow keys come or go
         return 0;
     }
     case WM_MOUSELEAVE:
@@ -612,6 +631,19 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 Close(); // up here, then down there once it's out of sight
             } else if (opened) {
                 SetTimer(hwnd, kFollowTimer, kFollowMs, nullptr);
+            }
+            return 0;
+        }
+        if (wp == kPasteTimer) { // the app in front has the keyboard back: send it ctrl+v
+            HWND to = pasteTo;
+            pasteTo = nullptr;
+            if (to && GetForegroundWindow() == to) { // moved on meanwhile: it stays on the clipboard, nothing is typed elsewhere
+                INPUT in[4] = {};
+                for (INPUT& i : in) i.type = INPUT_KEYBOARD;
+                in[0].ki.wVk = in[3].ki.wVk = VK_CONTROL;
+                in[1].ki.wVk = in[2].ki.wVk = 'V';
+                in[2].ki.dwFlags = in[3].ki.dwFlags = KEYEVENTF_KEYUP;
+                SendInput(4, in, sizeof(INPUT));
             }
             return 0;
         }
@@ -656,7 +688,8 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (wp == kHoverTimer) {
             armed = false;
-            if (!MouseIn()) ReleaseLater();
+            if (dragging || GetCapture() == hwnd) {} // a press on the strip already decides: a pill dropping mid-drag would shrink the window under the finger
+            else if (!MouseIn()) ReleaseLater();
             else if (islandNext) ShowIsland(); // an app below: the pill first, a tap opens the panel
             else Open();
         } else if (wp == kCloseTimer) {
@@ -672,6 +705,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_LBUTTONDOWN: {
+        if (!opened && model.keyOnly) return 0; // only the shortcut opens it: a click on the strip, the pill or a notification does nothing
         if ((island || peeking) && !opened) { // tap a pill: the full panel grows out of it
             if (island && Bubble() && Inside(BubbleBox(), ToDip(lp))) { // the bubble: straight to the tool that runs
                 int act = model.Activity();
@@ -683,11 +717,13 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         D2D1_POINT_2F p = ToDip(lp);
+        if (!opened && spring.value < 1 && model.appKeyOnly && AppBelow()) return 0; // over an app with shortcut only: the bare strip opens nothing
         SetCapture(hwnd); // keep getting moves outside window while held
         if (!opened && spring.value < 1) {
             StartDrag(DepthOf(p)); // pull out from the strip
             return 0;
         }
+        if (input.released && !dragging) Frame(); // the last release hasn't had its frame yet: deliver it first, or its widget still holds the mouse and this press goes nowhere
         input.mouse = p;
         input.pressPos = p;
         input.pressed = true;
@@ -746,6 +782,9 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         BuildStrips(); // screens may have come or gone
         Log(msg == WM_DPICHANGED ? L"dpi changed" : L"displays changed");
         return 0;
+    case WM_SETTINGCHANGE:
+        if (wp == SPI_SETWORKAREA) Place(), Redraw(); // a taskbar came, went or changed size: the sidebar fits the new room
+        return DefWindowProcW(hwnd, msg, wp, lp);
     case WM_APP_CAL:
         if (wp == 1) model.cals.Sync(hwnd, WM_APP_CAL, 0); // a link came in while the last fetch ran: fetched now
         if (model.calOpen) Redraw();
@@ -779,6 +818,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case kAdoptMsg: { // hovered the strip on another screen
         HMONITOR m = (HMONITOR)wp;
+        if (model.keyOnly) return 0; // only the shortcut opens it: another screen's strip brings nothing either
         if (island && !opened && !dragging && !peeking && !stage && m != mon) { // a resting pill here: after a moment's dwell it goes up and comes down there
             if (adoptTo != m) adoptTo = m, SetTimer(hwnd, kAdoptTimer, (UINT)cfg.hoverMs, nullptr);
             return 0;
@@ -827,12 +867,13 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_VOLKEY:
         OnVolumeKey((UINT)wp);
         return 0;
-    case WM_APP_SHELF: // a preview came in
-        model.shelf.OnPreview();
+    case WM_APP_SHELF: // a preview came in, an image was kept, or the clipboard brought something
+        model.shelf.OnWork();
         Redraw();
         return 0;
     case kShelfMsg:
-        ShelfOut();
+        if (wp == 1) ShelfPaste();
+        else ShelfOut();
         return 0;
     case WM_CHAR: // only reaches us while a field holds the keyboard
         if (model.passFocus) {
@@ -855,6 +896,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (Entry::Get().focus) {
             Entry::Get().Type((wchar_t)wp);
+            Redraw();
+            return 0;
+        }
+        if (model.shelfField != Model::kShelfNone) {
+            ShelfKey(wp);
             Redraw();
             return 0;
         }
@@ -929,6 +975,16 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             Redraw();
             return 0;
         }
+        if (model.shelfField != Model::kShelfNone) {
+            if (model.shelfField == Model::kShelfNote && wp == VK_RETURN) model.CommitShelfNote();
+            else if (model.shelfField == Model::kShelfNote && wp == VK_ESCAPE) model.shelfField = Model::kShelfNone, model.shelfNoteFor = 0, model.shelfEdit.clear(); // the note stays as it was
+            else if (wp == VK_RETURN || wp == VK_ESCAPE) { // the search: enter keeps it, esc empties it first
+                if (wp == VK_ESCAPE && !model.shelfQuery.empty()) model.shelfQuery.clear();
+                else model.shelfField = Model::kShelfNone;
+            }
+            Redraw();
+            return 0;
+        }
         if (model.cityFocus) {
             if (wp == VK_RETURN) model.CommitCity();
             else if (wp == VK_ESCAPE) model.cityFocus = false;
@@ -982,19 +1038,35 @@ void Drawer::PaintShape(ID2D1Geometry* shape, float h) {
     if (!shape) return;
     Color body = shellNow.bg;
     if (!shellNow.glass) body.a *= model.BgOpacity() / 100.0f; // the solid looks can let the desktop through a little
-    canvas->FillGeometry(shape, body); // dark mode: black, blends with screen bezel
+    if (skyPass != 1) canvas->FillGeometry(shape, body, true); // dark mode: black, blends with screen bezel. kept: a shape at rest is tessellated once
     D2D1_RECT_F sky{};
     if (shellNow.stars && SUCCEEDED(shape->GetBounds(nullptr, &sky))) { // starfall: the pill and the panel both wear the sky; a resting pill bakes it once into its layer
         bool alive = opened && !islandLook && !model.reduceMotion; // the open panel's orb drifts and its dust breathes; the pill and calm motion hold still
         float t = alive ? (float)std::fmod(lastFrame, kSkyWrap) + 0.001f : 0;
-        starfall::Sky(*canvas, {sky.left + cfg.fillet, sky.top, sky.right - cfg.fillet, sky.bottom}, 0, shellNow, t, body.a, 0, shape, 1, alive);
+        D2D1_RECT_F r = {sky.left + cfg.fillet, sky.top, sky.right - cfg.fillet, sky.bottom};
+        if (skyPass == 0) {
+            starfall::Sky(*canvas, r, 0, shellNow, t, body.a, 0, shape, 1, alive);
+        } else if (Width(r) >= 4 && Height(r) >= 4 && body.a >= 0.01f) { // Sky's own guard
+            if (skyPass == 1) {
+                starfall::SkyOver(*canvas, r, 0, shellNow, t, body.a, 0, shape, 1, starfall::kStill);
+            } else { // the orb drifts between the wash and the still parts' layer, the breathing motes go on top
+                starfall::SkyUnder(*canvas, r, 0, shellNow, body.a, 0, shape);
+                starfall::SkyOrb(*canvas, r, 0, shellNow, t, body.a, 0, shape, alive);
+                D2D1_MATRIX_3X2_F was;
+                ctx->GetTransform(&was);
+                ctx->SetTransform(D2D1::Matrix3x2F::Identity()); // the layer is the whole surface, pixel for pixel
+                ctx->DrawImage(skyLayer.Get());
+                ctx->SetTransform(was);
+                starfall::SkyOver(*canvas, r, 0, shellNow, t, body.a, 0, shape, 1, starfall::kTwinkle);
+            }
+        }
     }
     if (shellNow.glass && glassShadeNow > 0.01f) // over a white page: neutral smoked glass under the highlights, the blur still shows through
-        canvas->FillGeometry(shape, Color{0, 0, 0, 0.42f * glassShadeNow});
+        canvas->FillGeometry(shape, Color{0, 0, 0, 0.42f * glassShadeNow}, true);
     if (shellNow.glass) { // liquid glass: glossy light from above and a bright specular rim
-        canvas->FillGeoV(shape, {0, 0, W, (std::min)(h, 90.0f)}, shellNow.sheen, shellNow.sheen.Alpha(0));
-        canvas->FillGeoV(shape, {0, h - (std::min)(h * 0.5f, 34.0f), W, h}, Color{1, 1, 1, 0}, Color{1, 1, 1, 0.09f}); // light caught in the lower lip, like a drop of glass
-        canvas->StrokeGeo(shape, Color{1, 1, 1, 0.26f}, 1.2f);
+        canvas->FillGeoV(shape, {0, 0, W, (std::min)(h, 90.0f)}, shellNow.sheen, shellNow.sheen.Alpha(0), true);
+        canvas->FillGeoV(shape, {0, h - (std::min)(h * 0.5f, 34.0f), W, h}, Color{1, 1, 1, 0}, Color{1, 1, 1, 0.09f}, true); // light caught in the lower lip, like a drop of glass
+        canvas->StrokeGeo(shape, Color{1, 1, 1, 0.26f}, 1.2f, true);
     }
 }
 
@@ -1014,6 +1086,7 @@ void Drawer::Frame() {
         grow = false; // expansion finished, or retracted
         if (spring.target <= 0 && winH > kStrip) {
             islandLook = hand = false; // fully retracted, back to the plain strip and arrow cursor
+            pageT = 1; // a page slide cut short by closing only advances while the body draws: left behind, it kept the closed strip at full frame rate
             Resize(kStrip, false); // shrink window so it can't block clicks
             ui.Forget();
             if (model.pickPending) { // the color picker waited for the panel to be gone
@@ -1036,7 +1109,7 @@ void Drawer::Frame() {
             if (cfg.gpuIdleSec > 0) SetTimer(hwnd, kReleaseTimer, (UINT)cfg.gpuIdleSec * 1000, nullptr); // schedule gpu release
         } else if (spring.target > 0) {
             float room = spring.target + (hintFade > 0.01f ? kHintRoom : 0); // a tip outside the panel needs a little window
-            if (std::fabs(winH - room) > 1) Resize(room, false); // otherwise drop the overshoot margin once at rest
+            if (std::fabs(wantH - room) > 1) Resize(room, false); // otherwise drop the overshoot margin once at rest
         }
     }
     if (PlaceStale() && opened) Close(); // re-dock once it has retracted
@@ -1065,10 +1138,17 @@ void Drawer::Frame() {
     FitSurfaces(); // before drawing: a pill alone keeps a small strip, the panel gets its full size back
     if (!ctx || !canvas) return; // resizing failed and dropped the device: the next frame rebuilds it
     canvas->NewFrame();
-    bool pillCached = false;
+    bool pillCached = false, skyCached = false;
     if (islandLook && !opened && !peeking && !Side() && !moving && !dragging && !themes && h > 0.5f && std::fabs(h - spring.target) < 0.01f) { // resting pill
         shapeXform = EdgeXform();
         pillCached = PillLayer(h, IslandSpan());
+    }
+    if (shellNow.stars && opened && !islandLook && !grow && !peeking && !moving && !dragging && !themes && h > 24 && std::fabs(h - spring.target) < 0.01f) { // starfall, the panel at rest
+        shapeXform = EdgeXform();
+        skyCached = SkyLayer(h, Span());
+    } else if (skyLayer && !opened) {
+        skyLayer.Reset(); // the panel went: its gpu memory goes too
+        skyKey = 0;
     }
     ctx->BeginDraw();
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -1091,7 +1171,9 @@ void Drawer::Frame() {
             ctx->DrawImage(pillLayer.Get());
             ctx->SetTransform(shapeXform);
         } else {
+            skyPass = skyCached ? 2 : 0;
             PaintShape(shape.Get(), h);
+            skyPass = 0;
         }
         outline = shape;
         if (glass && std::fabs(spring.vel) > 1 && !dragging) { // composition applies the blur's outline a few frames late: cut it where the glass will be, both ways
@@ -1161,5 +1243,6 @@ void Drawer::Frame() {
     }
     if (PlaceStale() && !opened && !dragging && !peeking && (spring.value <= 0.5f || island)) ApplyPlace(); // a pill that always stays would otherwise keep the old edge forever
     if (model.shelfDrag) PostMessageW(hwnd, kShelfMsg, 0, 0); // the drag runs its own loop: never inside a frame
+    if (model.shelfPaste) PostMessageW(hwnd, kShelfMsg, 1, 0); // nor a paste: it hands the keyboard around
 }
 
