@@ -2,7 +2,9 @@
 
 #include <bcrypt.h>
 
+#include <algorithm>
 #include <cctype>
+#include <cwctype>
 #include <cstring>
 #include <thread>
 
@@ -134,6 +136,42 @@ bool Swap(const std::string& data) { // write new exe beside us, rename ourselve
     return true;
 }
 
+constexpr wchar_t kUninstall[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
+constexpr wchar_t kWingetEntry[] = L"Icetist.Astraeus_"; // winget names its entry <package id>_<source>
+constexpr DWORD kKeyName = 256;
+
+std::wstring RegText(HKEY key, const wchar_t* sub, const wchar_t* name) {
+    wchar_t v[MAX_PATH] = {};
+    DWORD size = sizeof(v);
+    return RegGetValueW(key, sub, name, RRF_RT_REG_SZ, nullptr, v, &size) == ERROR_SUCCESS ? v : L"";
+}
+
+void SetText(HKEY key, const wchar_t* sub, const wchar_t* name, const std::wstring& v) {
+    RegSetKeyValueW(key, sub, name, REG_SZ, v.c_str(), (DWORD)((v.size() + 1) * sizeof(wchar_t)));
+}
+
+void SyncWinget(const std::wstring& tag, const std::string& hash) { // installed by winget: tell it the new version and file, or it thinks we're stale or tampered with
+    HKEY root;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kUninstall, 0, KEY_READ | KEY_SET_VALUE, &root) != ERROR_SUCCESS) return;
+    std::wstring exe, dir = SelfDir(&exe);
+    const std::wstring ver = tag.size() > 1 && tag[0] == L'v' ? tag.substr(1) : tag;
+    wchar_t name[kKeyName];
+    for (DWORD i = 0, n = kKeyName; RegEnumKeyExW(root, i, name, &n, nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS; ++i, n = kKeyName) {
+        if (wcsncmp(name, kWingetEntry, wcslen(kWingetEntry)) != 0) continue;
+        std::wstring loc = RegText(root, name, L"InstallLocation");
+        while (!loc.empty() && loc.back() == L'\\') loc.pop_back();
+        if (_wcsicmp(loc.c_str(), dir.c_str()) != 0 && _wcsicmp(RegText(root, name, L"PortableTargetFullPath").c_str(), exe.c_str()) != 0) continue; // another copy, not this one
+        SetText(root, name, L"DisplayVersion", ver);
+        std::wstring had = RegText(root, name, L"SHA256");
+        if (had.empty()) continue;
+        std::wstring sum(hash.begin(), hash.end());
+        if (std::any_of(had.begin(), had.end(), [](wchar_t ch) { return ch >= L'A' && ch <= L'F'; })) // keep winget's casing
+            for (auto& ch : sum) ch = (wchar_t)std::towupper(ch);
+        SetText(root, name, L"SHA256", sum);
+    }
+    RegCloseKey(root);
+}
+
 }
 
 struct Updater::Impl {
@@ -186,7 +224,9 @@ struct Updater::Impl {
             return Updater::kFailed;
         }
         MarkDone(Widen(t)); // once only, even if the swap fails
-        return Swap(exe) ? Updater::kInstalled : Updater::kFailed;
+        if (!Swap(exe)) return Updater::kFailed;
+        SyncWinget(Widen(t), want);
+        return Updater::kInstalled;
     }
 };
 
