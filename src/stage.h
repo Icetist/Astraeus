@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <memory>
 
+#include "access.h"
 #include "lyricview.h"
 #include "model.h"
 #include "theme.h"
@@ -62,6 +63,17 @@ private:
     double roleAt = -10; // when the halves last changed
     const wchar_t* hint = nullptr; // a word about what a key just did, fading
     double hintAt = -10;
+    std::wstring hintWords; // when that word has a number in it
+    void NextLyrics(); // these lyrics are wrong: the next version
+    void LyricsChoice(float show); // the faint mark in the corner, only while the controls are up
+    void LyricsMenu(); // and what it opens: every source's version, and none
+    D2D1_RECT_F ChoiceBox() const;
+    bool lyrMenu = false; // that list is open
+    int lyrMenuNth = 0; // each opening fades in afresh
+    bool lyrCycling = false; // asked for another version, not back yet
+    bool lyrQuiet = false; // picked from the list: it shows in the words, no note needed
+    double lyrCycleAt = 0;
+    std::shared_ptr<const sys::Lyrics> lyrCycleFrom;
     void Seek(const D2D1_RECT_F& r, float show);
 
     Model& model;
@@ -84,6 +96,7 @@ private:
     double lastBeat = 0;
     static constexpr int kBlobs = 6;
     Swell swell; // soft light rising along the bottom of the screen
+    Waveform wave; // or bars across the room, with the waveform look
 
     int mode = 0; // the panel's appearance when the stage opened: 0 dark, 1 light, 2 glass, 3 custom
     bool LightRoom() const { return mode == 1 || (mode == 3 && theme::Luma(look.bg) >= 0.18f); }
@@ -96,6 +109,7 @@ private:
     Seed artSeed;
     Input input;
     Ui ui;
+    Access access; // what a screen reader sees
 
     ComPtr<ID3D11Device> d3d;
     ComPtr<ID2D1DeviceContext> ctx;

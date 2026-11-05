@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <condition_variable>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -50,6 +51,7 @@ enum : UINT { // posted to ui thread by services/worker
     WM_APP_WS, // the workspaces changed
     WM_APP_UPDATES, // the update count is in
     WM_APP_PING, // a host answered, or didn't
+    WM_APP_FEEDS, // a widget's feed has something new
 };
 
 class Hist { // fixed-size rolling graph history
@@ -135,6 +137,9 @@ public:
     static bool ParseHex(const std::wstring& text, int& rgb); // #rgb, #rrggbb, with or without #
     void CyclePower();
     void CycleOut();
+    void SetOutTo(const std::wstring& id); // that output becomes the default: every app following the default goes with it
+    std::vector<sys::MediaSource> mediaSources; // every app reporting media, as of the last change
+    std::wstring mediaPin; // the one followed by hand, empty: whatever's playing
 
     const bool portable; // laptop: power mode tile, else output tile
     int pwrMode = -1; // 0 eco, 1 balanced, 2 perf, -1 unknown
@@ -285,7 +290,7 @@ public:
     bool passFocus = false, passShow = false, passWrong = false; // the wi-fi password field: taking keystrokes, shown in clear, last try failed
     std::string passFor; // raw ssid of the network being joined
     std::wstring passEdit; // what's typed so far, wiped once used
-    bool Typing() const { return hexFocus || passFocus || cityFocus || nameFor >= 0 || field != kFieldNone || shelfField != kShelfNone; } // the panel holds the keyboard
+    bool Typing() const { return hexFocus || passFocus || cityFocus || faceKeys || faceSearch || nameFor >= 0 || field != kFieldNone || shelfField != kShelfNone; } // the panel holds the keyboard
     void AskPass(const sys::WifiNet& n); // a new secured network: type its password in the panel
     void SubmitPass();
     void CancelPass();
@@ -333,7 +338,22 @@ public:
     std::wstring ActivityText() const; // its time, short enough for the bubble
     float ActivityFrac() const; // its ring, 0..1
     int rememberPage = 1, defaultPage = 0, lastPage = 0; // the page the panel opens on, by identity
-    enum PageId { kPgHome, kPgMedia, kPgSystem, kPgNetwork, kPgTools, kPgShelf, kPageIds }; // what a page is, wherever it sits on the rail
+    enum PageId { kPgHome, kPgMedia, kPgSystem, kPgNetwork, kPgTools, kPgShelf, kPgWidgets, kPageIds }; // what a page is, wherever it sits on the rail
+    std::vector<int> faceOn; // the widgets on the widgets page, in order
+    std::map<int, int> faceSize; // each one's size there if it was ever chosen: 0 small, 1 wide, 2 large
+    void SetFaceSize(int kind, int size);
+    void PlaceFaces(const std::vector<int>& order); // the same widgets, in a new order
+    bool faceSearch = false; // the widget gallery's search is taking the keyboard
+    std::wstring faceQuery; // and what's typed there
+    static constexpr size_t kFaceQueryMax = 40;
+    int pageVisit = 0; // bumps as the page changes or the panel closes: what a page had open over itself goes then. not a timer: an idle panel draws no frames
+    int facePanel = -1; // the one open in full
+    bool faceKeys = false; // and it's taking the keyboard
+    bool facesDue = false; // the widgets page drew: its clocks want the next second too
+    void ToggleFace(int kind);
+    void OpenFace(int kind);
+    void CloseFace();
+    void SyncFaces(); // what they fetch: everything while the panel's up, screen time's quiet note always
     std::vector<int> pages; // the rail's pages top to bottom, never empty
     int SlotOf(int id) const; // its place on the rail, -1 hidden
     bool HasPage(int id) const { return SlotOf(id) >= 0; }
@@ -344,13 +364,27 @@ public:
     static int PageGlyph(int id);
     enum ToolTile { kTlSnip, kTlColor, kTlAwake, kTlAlerts, kTlDnd, kTlSaver, kTlAir, kTlSettings, kTlWork, kTlLang, kTlBin, kTlUpdates, kToolTiles }; // new ones go last: saved lists keep their meaning // the tools page's quick tiles
     std::vector<int> tiles; // the ones shown, in order, may be empty
-    bool TileHere(int id) const { return id != kTlAwake || portable; } // keeping the screen awake is for laptops
+    bool TileHere(int id) const { return id == kTlWork ? tiler != sys::Tiler::kNone : id != kTlAwake || portable; } // keeping the screen awake is for laptops, workspaces for a pc with a tiling manager
+    void CheckTiler(); // installed or removed since the last look: the tile, pill word and dashboard tile come and go with it
+    ULONGLONG tilerAt = 0;
     void SetTiles(const std::vector<int>& order);
     bool tilesEdit = false; // the tools page shows its tiles with x and + marks; ends when the panel closes
     static const wchar_t* TileName(int id);
     static int TileGlyph(int id);
     int stageHide = 1; // the fullscreen player's controls fade while the mouse rests (on by default)
+    int stageThump = 1; // the fullscreen cover thumps with the beat
     int uiScale = 100; // percent, 80..130, folded into the dpi scale
+    enum { kContrastAuto, kContrastOn, kContrastOff };
+    static constexpr int kTextMin = 100, kTextMax = 200;
+    int a11yContrast = kContrastAuto; // high contrast: as windows has it, or always, or never
+    int a11yFollow = 1; // windows' "make text bigger" counts
+    int a11yText = 100; // percent, the text size picked here
+    int a11yKeys = 1; // tab, enter and the arrows
+    int a11yReader = 1; // screen readers can see the panel
+    void ReadAccess(); // what windows has for high contrast and text size: at start, and when its settings change
+    bool HighContrast() const;
+    int TextPct() const; // the larger of the size picked here and windows'
+    int ZoomPct() const { return uiScale * TextPct() / 100; } // the size everything's drawn at
     int lyricScale = 100; // percent, the fullscreen player's lyric type; 100 is the size it always had
     static constexpr int kLyricMin = 80, kLyricMax = 150;
     int bgOpacity = 100; // percent, the panel and pill body on the solid looks; BgOpacity() is what's drawn
@@ -379,8 +413,46 @@ public:
     static constexpr int kAppHoverMs = 500, kAppHoverMax = 1000, kAppHoverStep = 50; // the dwell over an app window: default, most, slider step
     int appHoverMs = kAppHoverMs; // how long the mouse rests at the edge over an app before the pill drops
     int hud = 0; // astraeus' own volume and brightness pill, experimental, off by default
+    int vizWave = 0; // the media page and fullscreen draw a waveform across, behind the art, instead of the soft glow
+    int vizFull = 0; // the visualizer ignores how loud windows plays: quiet music still moves it
+
+    enum Layout { kLayHorizontal, kLayVertical, kLayouts }; // the panel's shape: the wide island, or a narrow column
+    int layout = kLayHorizontal;
+    int pinned = 0; // the panel stays open, windows make room for it
+    int floating = 0; // the panel is a card clear of the edge, not dripping from it
+    static const wchar_t* LayoutName(int l);
+
+    struct BoardTile { // one tile of the display dashboard, in grid cells
+        int kind = 0, x = 0, y = 0, w = 2, h = 2;
+    };
+    enum BoardKind { kBdClock, kBdCalendar, kBdWeather, kBdMedia, kBdLyrics, kBdCpu, kBdGpu, kBdRam, kBdNet, kBdDisk, kBdProcs, kBdVolume, kBdTodo, kBdWork, kBdShelf, kBdTimer, kBdServers, kBdBattery, kBoardKinds }; // new ones go last
+    bool BoardOffered(int kind) const; // whether this pc can show it: no workspaces without a tiling manager, no battery on a desktop
+    static constexpr int kBoardCols = 12; // the grid is always 12 across; its rows follow the screen's shape
+    struct BoardSpot { // a screen that shows the dashboard, with its own tiles
+        std::wstring screen; // the monitor's own id, the same after a replug
+        std::vector<BoardTile> tiles;
+        bool edited = false; // never arranged: the preset, made for that screen's shape
+    };
+    std::vector<BoardSpot> boards; // persisted
+    std::vector<std::wstring> boardsAway; // dashboards switched to the plain desktop for now, by the shortcut or their button; forgotten at restart
+    BoardSpot* Spot(const std::wstring& screen);
+    void SetBoardOn(const std::wstring& screen, bool on); // persisted
+    void SetBoardTiles(const std::wstring& screen, const std::vector<BoardTile>& t); // persisted
+    std::vector<BoardTile> BoardPreset(int rows) const; // the starting layout, for a grid this many rows deep
+    int boardsUp = 0; // dashboards showing now: the stats they show keep coming
+    std::vector<BoardTile> boardShown; // every tile on a showing dashboard, so polling follows what they need
+    bool BoardHas(int kind) const;
+    static const wchar_t* BoardName(int kind);
+    static int BoardGlyph(int kind);
+    void SetBoardLive(int up, std::vector<BoardTile> shown); // the dashboards came or went
+
+    float binZone[4] = {}; // the shelf's recycle bin while something is dragged over the panel, panel space: left top right bottom
+    bool binOver = false; // the drag is over it
 
 private:
+    bool panelLive = false, panelProcs = false, panelPing = false; // what the open panel asked for; the dashboard adds its own
+    void ApplyLive();
+    void LoadBoard(); // the dashboard's switch, screen and tiles
     void Worker();
 
     sys::NetSrc netSrc;
@@ -391,6 +463,9 @@ private:
     std::condition_variable wake;
     bool quit = false, pollOn = false, wantProcs = false, ready = false; // ready = fresh sample waiting
     bool wantPing = false; // the network page is showing: measure latency
+    bool wantList = false; // the process list, costly: only the system page or a processes tile
+    bool sysContrast = false; // windows' high contrast is on
+    int sysText = 100; // windows' text size, percent
     float newPing = -2; // worker writes, -1 no answer, -2 not measured
     HANDLE icmp = INVALID_HANDLE_VALUE; // opened the first time latency is wanted
     sys::Stats newStats; // worker writes, OnStats copies out

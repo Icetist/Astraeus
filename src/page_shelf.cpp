@@ -1,6 +1,10 @@
 // The shelf: whatever was dropped on the island and, when switched on, everything copied. Cards newest first, pinned ones on top of
 // each filter. Tap a card to copy it, right-click for the rest, carry one onto another to stack them, out of the panel to drop it anywhere.
+#include <windows.h>
+#include <shellapi.h>
+
 #include <cmath>
+#include <thread>
 
 #include "anim.h"
 #include "shelf_ui.h"
@@ -8,6 +12,8 @@
 using namespace shelfui;
 
 namespace {
+
+bool RecycleCard(Model& m, uint64_t id);
 
 constexpr float kRowH = 30; // the search field and the clear button
 constexpr float kChipH = 26;
@@ -189,6 +195,12 @@ void Grid(PageCtx& p, const D2D1_RECT_F& view, bool live) {
     c.PopClip();
     sheet::Fades(c, t, view, off, content);
     if (!alive || v.carrySlot >= 0) return; // one went: the rest moves up next frame; a file carried out of the open stack is the preview's
+    const float* z = m.binZone;
+    if (v.carry && ui.In().released && z[2] > z[0] && Inside({z[0], z[1], z[2], z[3]}, ui.In().mouse)) { // let go on the bin: its files are recycled, the card goes
+        Toast(v, ui.Now(), RecycleCard(m, v.carry) ? L"Sent to the Recycle Bin" : L"Taken off the shelf");
+        v.carry = 0;
+        return;
+    }
     if (v.carry && ui.In().released) { // let go inside the panel: onto a card it stacks, anywhere else nothing happens
         if (target && m.shelf.Merge(v.carry, target)) Toast(v, ui.Now(), L"Stacked");
         v.carry = 0;
@@ -216,16 +228,54 @@ void Ghost(PageCtx& p) { // the carried card, small, under the mouse
     p.ui.Wake();
 }
 
+bool RecycleCard(Model& m, uint64_t id) { // a card's own files to the recycle bin, the card off the shelf; true when anything was recycled
+    const sys::ShelfItem* it = m.shelf.Find(id);
+    if (!it) return false;
+    std::wstring list;
+    for (const auto& f : it->files)
+        if (!f.owned && !f.path.empty()) list += f.path + L'\0'; // the shelf's own copies of pasted images aren't the user's files: they just go with the card
+    m.shelf.Remove(id);
+    if (list.empty()) return false;
+    std::thread([list = list + L'\0'] { // windows' own engine: its prompts, undo from the bin, never gone for good
+        HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        SHFILEOPSTRUCTW op = {};
+        op.wFunc = FO_DELETE;
+        op.pFrom = list.c_str();
+        op.fFlags = FOF_ALLOWUNDO | FOF_WANTNUKEWARNING;
+        SHFileOperationW(&op);
+        if (SUCCEEDED(co)) CoUninitialize();
+    }).detach();
+    return true;
+}
+
 void Hot(PageCtx& p, const D2D1_RECT_F& grid) { // something is being carried over from outside: the shelf lights up to take it
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.shell;
-    float hot = ui.Smooth(Ui::Id("sh.hot"), p.m.shelfHot ? 1.0f : 0, 14);
+    Model& m = p.m;
+    bool card = V().carry && ui.In().down; // a shelf card picked up: the bin takes it too
+    bool show = m.shelfHot || card;
+    float hot = ui.Smooth(Ui::Id("sh.hot"), show ? 1.0f : 0, 14);
+    if (!show) m.binZone[0] = m.binZone[1] = m.binZone[2] = m.binZone[3] = 0, m.binOver = false; // nothing carried: no bin to land in
     if (hot <= 0.01f) return;
-    c.PushClip(grid);
-    c.Glow({(grid.left + grid.right) / 2, grid.bottom}, Width(grid) * 0.6f, Height(grid) * 0.9f, t.accent.Alpha(0.22f * hot));
-    c.PopClip();
-    c.Stroke(Inset(grid, 1, 1), 22, t.accent.Alpha(0.8f * hot), 2);
+    constexpr float kBinW = 170, kBinH = 58, kBinIn = 14; // files carried here go to the recycle bin instead
+    D2D1_RECT_F zone = Rect(grid.right - kBinIn - kBinW, grid.bottom - kBinIn - kBinH, kBinW, kBinH);
+    m.binZone[0] = zone.left, m.binZone[1] = zone.top, m.binZone[2] = zone.right, m.binZone[3] = zone.bottom;
+    if (card) m.binOver = Inside(zone, ui.In().mouse);
+    bool bin = m.binOver;
+    if (m.shelfHot) { // from outside: the whole shelf lights up to take it
+        c.PushClip(grid);
+        c.Glow({(grid.left + grid.right) / 2, grid.bottom}, Width(grid) * 0.6f, Height(grid) * 0.9f, t.accent.Alpha((bin ? 0.08f : 0.22f) * hot));
+        c.PopClip();
+        c.Stroke(Inset(grid, 1, 1), 22, t.accent.Alpha((bin ? 0.3f : 0.8f) * hot), 2);
+    }
+    float over = ui.Smooth(Ui::Id("sh.bin"), bin ? 1.0f : 0, 18);
+    const Color red = {0.93f, 0.33f, 0.36f, 1};
+    c.Fill(zone, kBinH / 2, t.cardHi.Mix(red.Alpha(0.85f), over).Alpha(hot));
+    c.Stroke(zone, kBinH / 2, red.Alpha((0.45f + 0.55f * over) * hot), 1.5f);
+    c.Icon(glyph::Delete, {zone.left + 30, (zone.top + zone.bottom) / 2}, 22 + 4 * over, (over > 0.5f ? Color{1, 1, 1, 1} : red).Alpha(hot), over > 0.5f);
+    c.Text(bin ? L"Let go to recycle" : L"Recycle Bin", {zone.left + 50, zone.top, zone.right - 10, zone.bottom}, Weight::Medium, 12.5f,
+           (over > 0.5f ? Color{1, 1, 1, 1} : t.text).Alpha(hot));
 }
 
 void ToastPill(PageCtx& p) {
@@ -246,6 +296,12 @@ void ToastPill(PageCtx& p) {
 
 }
 
+namespace {
+std::wstring toastAsk; // from outside the frame: shown on the next one
+}
+
+void ShelfToast(const wchar_t* text) { toastAsk = text; }
+
 void ShelfClosed() {
     View& v = V();
     v.preview = v.menu = v.carry = 0;
@@ -261,6 +317,7 @@ void DrawShelf(PageCtx& p) {
     View& v = V();
     const D2D1_RECT_F& a = p.area;
     Tick(m);
+    if (!toastAsk.empty()) Toast(v, ui.Now(), toastAsk.c_str()), toastAsk.clear();
     if (ui.Now() - v.agedAt > kAgeEvery) { // a timer does this too; the clock may have jumped past it in sleep
         v.agedAt = ui.Now();
         m.shelf.Age();
@@ -291,7 +348,6 @@ void DrawShelf(PageCtx& p) {
     Refilter(v, m);
 
     D2D1_RECT_F grid = {a.left, chips.bottom + 12, a.right, a.bottom};
-    Hot(p, grid);
     if (items.empty()) {
         if (!m.shelfHot) c.Stroke(Inset(grid, 1, 1), 22, t.hairTop, 1);
         sheet::Empty(c, t, grid, m.shelfHot ? glyph::Drop : glyph::Shelf, m.shelfHot ? L"Let go to keep it here" : L"Drop files, links or text here",
@@ -301,6 +357,7 @@ void DrawShelf(PageCtx& p) {
     } else {
         Grid(p, grid, live);
     }
+    Hot(p, grid); // over the cards: the bin must stay in sight
     if (v.preview) Preview(p, a, !v.menu && !v.clearMenu && !noting);
     Ghost(p); // over the open card too: a file carried out of it
     if (v.menu || v.clearMenu) Menu(p, a);

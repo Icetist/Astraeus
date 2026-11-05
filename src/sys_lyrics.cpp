@@ -30,6 +30,9 @@ constexpr double kExactOff = 2; // seconds: found by the title alone, or calling
 constexpr double kKugouOff = 2.5; // kugou rounds its lengths to the second
 constexpr double kForeign = 0.1; // a latin title's lyrics with less latin than this share of their letters are another song's
 constexpr auto kVerdictWait = std::chrono::seconds(4); // lyrics found elsewhere wait this long for lrclib to say the song is instrumental
+constexpr double kAgreeSec = 1.0; // two copies' lines this close in time are the same moment of the song
+constexpr double kAgreeMin = 0.7; // copies sharing less of their lines than this are timed to different things
+constexpr size_t kMaxCopies = 12, kMaxVersions = 6; // copies of one song compared, and offered by hand
 
 std::string Utf8(const std::wstring& w) {
     int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
@@ -152,7 +155,7 @@ long long NowDays() { return (long long)(time(nullptr) / 86400); }
 void DiskSave(const Lyrics& d) {
     std::wstring path = DiskPath(d.key);
     if (path.empty()) return;
-    std::string out = std::string(kDiskMagic) + "\n" +ToUtf8(d.key) + "\n" + std::to_string(d.offsetMs) + " " + std::to_string(NowDays()) + " " + std::to_string(d.lines.size()) + "\n";
+    std::string out = std::string(kDiskMagic) + "\n" +ToUtf8(d.key) + "\n" + std::to_string(d.offsetMs) + " " + std::to_string(NowDays()) + " " + std::to_string(d.lines.size()) + (d.chosen ? " 1" : "") + "\n";
     for (const LyricLine& l : d.lines) {
         char head[64];
         snprintf(head, sizeof(head), "%.3f %.3f %zu", l.start, l.end, l.words.size());
@@ -208,12 +211,14 @@ std::shared_ptr<Lyrics> DiskLoad(const std::wstring& key) { // null when not the
     CloseHandle(f);
     size_t a = in.find('\n'), b = a == std::string::npos ? a : in.find('\n', a + 1), c = b == std::string::npos ? b : in.find('\n', b + 1);
     if (c == std::string::npos || in.compare(0, a, kDiskMagic) != 0 || Wide(in.substr(a + 1, b - a - 1)) != key) return nullptr;
-    long long offset = 0, day = 0, count = 0;
-    if (sscanf_s(in.c_str() + b + 1, "%lld %lld %lld", &offset, &day, &count) != 3 || count < 0 || count > (long long)kMaxLines) return nullptr;
-    if (count == 0 && NowDays() - day > kNoneDays) return nullptr; // "none" is only believed for a few days
+    long long offset = 0, day = 0, count = 0, chosen = 0;
+    std::string numbers = in.substr(b + 1, c - b - 1); // this line alone: a fourth number may not be there, and the first lyric line's must not stand in for it
+    if (sscanf_s(numbers.c_str(), "%lld %lld %lld %lld", &offset, &day, &count, &chosen) < 3 || count < 0 || count > (long long)kMaxLines) return nullptr;
+    if (count == 0 && !chosen && NowDays() - day > kNoneDays) return nullptr; // "none" is only believed for a few days, unless it was asked for
     auto doc = std::make_shared<Lyrics>();
     doc->key = key;
     doc->done = true;
+    doc->chosen = chosen != 0;
     doc->offsetMs = (int)(std::clamp)(offset, -5000LL, 5000LL);
     for (size_t pos = c + 1; pos < in.size() && (long long)doc->lines.size() < count;) {
         size_t end = in.find('\n', pos), tab = in.find('\t', pos);
@@ -723,6 +728,39 @@ std::vector<LyricLine> ParseLrc(const std::wstring& lrc) {
 
 }
 
+using Copies = std::vector<std::vector<LyricLine>>;
+
+namespace {
+
+double OneWay(const std::vector<LyricLine>& a, const std::vector<LyricLine>& b) { // the share of a's lines that b has a line at too
+    if (a.empty() || b.empty()) return 0;
+    size_t j = 0, hit = 0;
+    for (const LyricLine& l : a) {
+        while (j + 1 < b.size() && std::fabs(b[j + 1].start - l.start) <= std::fabs(b[j].start - l.start)) ++j;
+        if (std::fabs(b[j].start - l.start) <= kAgreeSec) ++hit;
+    }
+    return (double)hit / a.size();
+}
+
+double Agree(const std::vector<LyricLine>& a, const std::vector<LyricLine>& b) { return (std::max)(OneWay(a, b), OneWay(b, a)); } // one source may split lines another keeps whole
+
+bool SameCopy(const std::vector<LyricLine>& a, const std::vector<LyricLine>& b) { // the service's many uploads of one file
+    return a.size() == b.size() && !a.empty() && std::fabs(a.front().start - b.front().start) < 0.05 && std::fabs(a.back().start - b.back().start) < 0.05;
+}
+
+std::vector<int> ByAgreement(const Copies& all) { // most in step with the others first: a copy cut or timed to something else stands apart from them
+    std::vector<double> score(all.size(), 0);
+    for (size_t i = 0; i < all.size(); ++i)
+        for (size_t j = 0; j < all.size(); ++j)
+            if (i != j) score[i] += Agree(all[i], all[j]);
+    std::vector<int> order(all.size());
+    for (size_t i = 0; i < all.size(); ++i) order[i] = (int)i;
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return score[a] > score[b]; });
+    return order;
+}
+
+}
+
 struct LyricSrc::Impl {
     mutable std::mutex mu;
     std::condition_variable cv;
@@ -730,7 +768,14 @@ struct LyricSrc::Impl {
     struct Ask {
         std::wstring key, title, artist, album;
         double seconds = 0;
+        enum Mode { kLook, kNext, kList, kPick } mode = kLook; // a lookup, or something about this song's versions
+        int pick = 0;
     };
+    std::wstring copiesKey; // the song the copies below were gathered for, the lyrics thread's own
+    Copies copies;
+    std::wstring choicesKey; // what a menu reads of them (guarded by mu)
+    std::vector<LyricChoice> choices;
+    int choiceNow = -2;
     Ask next; // waiting to start, key empty = none
     std::atomic<bool> queued{false}; // a newer song is waiting: a lookup still hoping for word timing gives up
     std::wstring busyKey; // being looked up
@@ -740,6 +785,7 @@ struct LyricSrc::Impl {
     struct Lane { // one per source, so the slower one can be cut off
         std::atomic<bool> halt{false};
         std::atomic<void*> req{nullptr};
+        Copies* gather = nullptr; // set: every copy that fits goes here, the search doesn't stop at the first
     };
     Lane lanes[3]; // lrclib, netease, kugou
     struct Failed {
@@ -775,8 +821,8 @@ struct LyricSrc::Impl {
         return latin >= (latin + other) * kForeign; // a latin title with cjk-only lyrics is someone else's song
     }
 
-    // lrclib: of the candidates that are this song, the synced one closest in length; inst: the closest is instrumental, so none is right
-    static std::vector<LyricLine> Best(const std::string& body, const Match& m, bool& inst, double maxOff = kMaxOff) {
+    // lrclib: of the candidates that are this song, the synced one most in step with the rest, nearest in length on a tie; inst: the closest is instrumental, so none is right
+    static std::vector<LyricLine> Best(const std::string& body, const Match& m, bool& inst, double maxOff = kMaxOff, Copies* gather = nullptr) {
         Val root;
         if (!Json{body}.Parse(root)) return {};
         std::vector<const Val*> all;
@@ -799,11 +845,17 @@ struct LyricSrc::Impl {
             inst = true;
             return {};
         }
+        Copies fit;
         for (const auto& [d, o] : synced) {
+            if (fit.size() >= kMaxCopies) break;
             auto lines = ParseLrc(Wide(o->Text("syncedLyrics")));
-            if (Fits(lines, m, m.Exact(Wide(o->Text("trackName")), Names(Wide(o->Text("artistName")))))) return lines;
+            if (Fits(lines, m, m.Exact(Wide(o->Text("trackName")), Names(Wide(o->Text("artistName")))))) fit.push_back(std::move(lines));
         }
-        return {};
+        if (fit.empty()) return {};
+        std::vector<int> order = ByAgreement(fit);
+        if (gather)
+            for (int i : order) gather->push_back(fit[i]);
+        return std::move(fit[order[0]]);
     }
 
     std::vector<LyricLine> Netease(Lane& ln, const std::wstring& title, const std::wstring& artist, const Match& m, bool& reached, bool& inst) { // strong on hip-hop and pop
@@ -852,11 +904,18 @@ struct LyricSrc::Impl {
             }
             if (const Val* yrc = doc["yrc"]) { // word-timed, when they have it
                 auto words = ParseTimed(Wide(yrc->Text("lyric")), L'(', false);
-                if (Fits(words, m, exact)) return words;
+                if (Fits(words, m, exact)) {
+                    if (!ln.gather) return words;
+                    ln.gather->push_back(std::move(words));
+                    continue;
+                }
             }
             const Val* lrc = doc["lrc"];
             auto lines = lrc ? ParseLrc(Wide(lrc->Text("lyric"))) : std::vector<LyricLine>{};
-            if (Fits(lines, m, exact)) return lines;
+            if (Fits(lines, m, exact)) {
+                if (!ln.gather) return lines;
+                ln.gather->push_back(std::move(lines));
+            }
         }
         return {};
     }
@@ -911,7 +970,8 @@ struct LyricSrc::Impl {
             std::wstring listed = Wide(song.Text("songname"));
             std::vector<std::wstring> singers = Names(Wide(song.Text("singername")));
             double len = song.Number("duration");
-            if (len <= 0 || !m.Title(listed) || !m.Artist(singers) || !m.Length(len, kKugouOff)) continue; // the title, a shared name and the length, all three
+            if (len <= 0 || !m.Title(listed) || !m.Length(len, kKugouOff)) continue; // the title and the length; the name below, where the lyric's own credit can vouch for it
+            bool named = m.Artist(singers); // kugou may list someone by another name ("Ye") and credit the lyric under the one we know
             std::string got;
             if (!Get(ln, L"https://lyrics.kugou.com/search?ver=1&man=yes&client=mobi&keyword=&hash=" + Esc(Wide(song.Text("hash"))) + L"&duration=" +
                              std::to_wstring((long long)std::lround(len * 1000)), got))
@@ -924,10 +984,13 @@ struct LyricSrc::Impl {
                 const Val& c = cands->items[k];
                 std::wstring cs = Wide(c.Text("song")), who = Wide(c.Text("singer"));
                 std::vector<std::wstring> cn = Names(who);
-                if ((!cs.empty() && !m.Title(cs)) || (!who.empty() && !m.Artist(cn)) || !m.Length(c.Number("duration") / 1000, kKugouOff)) continue; // its guess for this hash may be another song
+                if ((!cs.empty() && !m.Title(cs)) || !(who.empty() ? named : m.Artist(cn)) || !m.Length(c.Number("duration") / 1000, kKugouOff)) continue; // its guess for this hash may be another song
                 bool exact = !(m.latin && m.latinBy) && m.Exact(listed, singers) && (cs.empty() || m.Exact(cs, cn.empty() ? singers : cn)); // a latin song by a latin name never takes cjk lines on trust: kugou's machine hums for instrumentals ("Moog City") list exactly so
                 auto lines = KugouKrc(ln, c);
-                if (Fits(lines, m, exact)) return lines;
+                if (Fits(lines, m, exact)) {
+                    if (!ln.gather) return lines;
+                    ln.gather->push_back(std::move(lines));
+                }
             }
         }
         return {};
@@ -939,27 +1002,22 @@ struct LyricSrc::Impl {
         auto ask = [&](const std::wstring& url, double off) { // one search; an instrumental verdict ends the lookup too
             if (!Get(ln, url, body)) return false;
             reached = true;
-            lines = Best(body, m, inst, off);
-            return !lines.empty() || inst;
+            lines = Best(body, m, inst, off, ln.gather);
+            return (!lines.empty() && !ln.gather) || inst;
         };
-        if (!album.empty() && m.seconds > 0) { // exact match first: one small answer
-            std::wstring url = std::wstring(kApi) + L"get?track_name=" + Esc(title) + L"&artist_name=" + Esc(artist) + L"&album_name=" + Esc(album) +
-                               L"&duration=" + std::to_wstring((int)std::lround(m.seconds));
-            if (Get(ln, url, body, 1)) {
-                lines = Best(body, m, inst);
-                if (!lines.empty() || inst) {
-                    reached = true;
-                    return lines;
-                }
-            }
-        }
-        if (ask(std::wstring(kApi) + L"search?track_name=" + Esc(title) + L"&artist_name=" + Esc(artist), kMaxOff)) return lines;
+        if (ask(std::wstring(kApi) + L"search?track_name=" + Esc(title) + L"&artist_name=" + Esc(artist), kMaxOff)) return lines; // every copy, to weigh against each other: one exact hit can be the one bad upload
         if (!reached) return {}; // not answering: the other sources decide
         if (ask(std::wstring(kApi) + L"search?q=" + Esc(artist + L" " + title), kMaxOff)) return lines; // loose words, strict matching
+        if (ln.gather) return {};
         const std::wstring bare = BareTitle(title);
         if (bare != title && ask(std::wstring(kApi) + L"search?track_name=" + Esc(bare) + L"&artist_name=" + Esc(artist), kMaxOff)) return lines;
         if (m.seconds > 0 && ask(std::wstring(kApi) + L"search?track_name=" + Esc(bare), kExactOff)) return lines; // the title alone: only the exact length is trusted
-        return {};
+        if (!album.empty() && m.seconds > 0) { // filed under a name the searches missed: asked by album and exact length, one small answer
+            std::wstring url = std::wstring(kApi) + L"get?track_name=" + Esc(title) + L"&artist_name=" + Esc(artist) + L"&album_name=" + Esc(album) +
+                               L"&duration=" + std::to_wstring((int)std::lround(m.seconds));
+            if (Get(ln, url, body, 1)) lines = Best(body, m, inst);
+        }
+        return lines;
     }
 
     void Keep(std::shared_ptr<Lyrics> doc) { // caller holds mu
@@ -1041,8 +1099,105 @@ struct LyricSrc::Impl {
         for (int k : {0, 1, 2}) // otherwise lrclib's lines are usually the finest
             if (pick < 0 && !out[k].lines.empty()) pick = k;
         if (pick < 0) return {};
+        int one = (pick + 1) % 3, two = (pick + 2) % 3;
+        if (!out[one].lines.empty() && !out[two].lines.empty() && Agree(out[one].lines, out[two].lines) >= kAgreeMin && Agree(out[pick].lines, out[one].lines) < kAgreeMin &&
+            Agree(out[pick].lines, out[two].lines) < kAgreeMin) // the other two tell the same story and this one doesn't: nice word timing doesn't make it right
+            pick = Worded(out[two].lines) && !Worded(out[one].lines) ? two : one;
         for (LyricLine& l : out[pick].lines) Placeholder(l); // lines without word timing still light word by word
         return std::move(out[pick].lines);
+    }
+
+    void Gather(const Ask& a) { // every copy of this song any source has, best first, the same one once
+        const std::wstring title = CleanTitle(a.title), artist = MainArtist(a.artist);
+        const Match song(a.title, a.artist, a.seconds);
+        Copies got[3];
+        auto run = [&](int k) {
+            bool hit = false, inst = false;
+            try {
+                if (k == 0) Lrclib(lanes[0], title, artist, a.album, song, hit, inst);
+                else if (k == 1) Netease(lanes[1], title, artist, song, hit, inst);
+                else Kugou(lanes[2], title, artist, song, hit);
+            } catch (...) {
+                OutputDebugStringW(L"[sys] lyrics source failed\n");
+            }
+        };
+        for (int k = 0; k < 3; ++k) {
+            lanes[k].halt.store(stop.load());
+            lanes[k].req.store(nullptr);
+            lanes[k].gather = &got[k];
+        }
+        std::thread t0(run, 0), t1(run, 1), t2(run, 2);
+        t0.join();
+        t1.join();
+        t2.join();
+        static const wchar_t* const kSources[3] = {L"LRCLIB", L"NetEase", L"Kugou"};
+        Copies all;
+        std::vector<int> from;
+        for (int k : {1, 2, 0}) // word-timed sources first where they tie
+            for (auto& one : got[k]) {
+                if (std::none_of(all.begin(), all.end(), [&](const std::vector<LyricLine>& o) { return SameCopy(o, one); })) {
+                    all.push_back(std::move(one));
+                    from.push_back(k);
+                }
+            }
+        for (Lane& ln : lanes) ln.gather = nullptr;
+        std::vector<int> order = ByAgreement(all);
+        std::vector<LyricChoice> offered;
+        copies.clear();
+        for (int i : order) {
+            if (copies.size() >= kMaxVersions) break;
+            offered.push_back({kSources[from[i]], Worded(all[i]), all[i].size()}); // before every line gets its guessed word beats
+            for (LyricLine& l : all[i]) Placeholder(l);
+            copies.push_back(std::move(all[i]));
+        }
+        copiesKey = a.key;
+        std::lock_guard lock(mu);
+        choices = std::move(offered);
+        choicesKey = a.key;
+    }
+
+    void Serve(const Ask& a) { // gathers once per song; then says which is showing, or moves to the one asked for
+        if (copiesKey != a.key) Gather(a);
+        if (stop.load()) return;
+        std::shared_ptr<const Lyrics> now;
+        {
+            std::lock_guard lock(mu);
+            for (const auto& d : kept)
+                if (d->key == a.key) now = d;
+        }
+        int at = -1, n = (int)copies.size(); // where it is now: -1 somewhere not on the list
+        bool hidden = now && now->chosen && now->lines.empty();
+        for (int i = 0; now && !hidden && i < n && at < 0; ++i)
+            if (SameCopy(now->lines, copies[i])) at = i;
+        if (a.mode == Ask::kList) {
+            std::lock_guard lock(mu);
+            choiceNow = hidden ? -1 : at >= 0 ? at : -2;
+            choicesKey = a.key; // gathered just now or earlier, the list is ready either way
+            busyKey.clear();
+            return;
+        }
+        auto doc = std::make_shared<Lyrics>();
+        doc->key = a.key;
+        doc->done = true;
+        doc->versions = n;
+        int to = a.mode == Ask::kPick ? (a.pick < 0 ? n : (std::min)(a.pick, n)) : hidden ? 0 : at + 1; // the one past the end: no lyrics
+        if (n == 0) { // nothing to offer: it stays as it was, and says so
+            if (now) doc->lines = now->lines, doc->offsetMs = now->offsetMs, doc->chosen = now->chosen;
+            doc->version = -1;
+        } else {
+            doc->chosen = true;
+            doc->version = to >= n ? 0 : to + 1;
+            if (to < n) doc->lines = copies[to];
+        }
+        {
+            std::lock_guard lock(mu);
+            for (auto it = kept.begin(); it != kept.end();)
+                it = (*it)->key == a.key ? kept.erase(it) : it + 1;
+            Keep(doc);
+            choiceNow = n == 0 ? choiceNow : to < n ? to : -1;
+            busyKey.clear();
+        }
+        if (n > 0) DiskSave(*doc);
     }
 
     void Loop() {
@@ -1056,6 +1211,17 @@ struct LyricSrc::Impl {
                 next = {};
                 queued = false;
                 busyKey = a.key;
+            }
+            if (a.mode != Ask::kLook) {
+                try {
+                    Serve(a);
+                } catch (...) {
+                    OutputDebugStringW(L"[sys] lyrics versions failed\n");
+                    std::lock_guard lock(mu);
+                    busyKey.clear();
+                }
+                if (stop.load()) return;
+                continue;
             }
             if (auto disk = DiskLoad(a.key)) { // played before: straight from disk, no network at all
                 std::lock_guard lock(mu);
@@ -1137,6 +1303,45 @@ void LyricSrc::Want(const std::wstring& title, const std::wstring& artist, const
     } catch (...) {
         OutputDebugStringW(L"[sys] lyrics request failed\n");
     }
+}
+
+void LyricSrc::Send(const std::wstring& title, const std::wstring& artist, const std::wstring& album, double seconds, int mode, int pick) {
+    if (title.empty()) return;
+    std::wstring key = Key(title, artist);
+    try {
+        if (!impl) impl = std::make_shared<Impl>();
+        {
+            std::lock_guard lock(impl->mu);
+            Impl::Ask ask{key, title, artist, album, seconds};
+            ask.mode = (Impl::Ask::Mode)mode;
+            ask.pick = pick;
+            if (mode == Impl::Ask::kList) {
+                if (impl->choicesKey != key) impl->choices.clear(), impl->choiceNow = -2; // another song's list isn't this one's
+                impl->choicesKey.clear();
+            }
+            impl->next = std::move(ask); // a press while it's gathering waits its turn: the same thread, right after
+            impl->queued = true;
+        }
+        if (!impl->th.joinable()) impl->th = std::thread([p = impl.get()] { p->Loop(); });
+        impl->cv.notify_one();
+    } catch (...) {
+        OutputDebugStringW(L"[sys] lyrics request failed\n");
+    }
+}
+
+void LyricSrc::NextVersion(const std::wstring& title, const std::wstring& artist, const std::wstring& album, double seconds) { Send(title, artist, album, seconds, Impl::Ask::kNext, 0); }
+
+void LyricSrc::AskVersions(const std::wstring& title, const std::wstring& artist, const std::wstring& album, double seconds) { Send(title, artist, album, seconds, Impl::Ask::kList, 0); }
+
+void LyricSrc::PickVersion(const std::wstring& title, const std::wstring& artist, const std::wstring& album, double seconds, int index) { Send(title, artist, album, seconds, Impl::Ask::kPick, index); }
+
+bool LyricSrc::Versions(const std::wstring& key, std::vector<LyricChoice>& out, int& current) const {
+    if (!impl) return false;
+    std::lock_guard lock(impl->mu);
+    if (impl->choicesKey != key) return false;
+    out = impl->choices;
+    current = impl->choiceNow;
+    return true;
 }
 
 void LyricSrc::SetOffset(const std::wstring& key, int ms) {

@@ -159,21 +159,25 @@ float LyricView::Sweep(const Row& row, double t) const { // characters of the le
 void LyricView::Haze(ID2D1DeviceContext* ctx, const Row& row, D2D1_POINT_2F at, float scale, Color col) { // the baked blur, tinted
     if (!row.haze || col.a < 0.004f) return;
     ink->SetColor(col.D2D());
-    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x, at.y + row.h / 2}));
+    D2D1_MATRIX_3X2_F base;
+    ctx->GetTransform(&base); // the dashboard paints with an offset into its surface
+    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x, at.y + row.h / 2}) * *D2D1::Matrix3x2F::ReinterpretBaseType(&base));
     D2D1_ANTIALIAS_MODE was = ctx->GetAntialiasMode();
     ctx->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED); // opacity masks need it
     D2D1_RECT_F dst = {at.x - pad, at.y - pad, at.x + row.w + pad, at.y + row.h + pad};
     ctx->FillOpacityMask(row.haze.Get(), ink.Get(), &dst, nullptr);
     ctx->SetAntialiasMode(was);
-    ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+    ctx->SetTransform(base);
 }
 
 void LyricView::Text(ID2D1DeviceContext* ctx, const Row& row, D2D1_POINT_2F at, float scale, Color col) {
     if (col.a < 0.004f) return;
     ink->SetColor(col.D2D());
-    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x, at.y + row.h / 2}));
+    D2D1_MATRIX_3X2_F base;
+    ctx->GetTransform(&base);
+    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x, at.y + row.h / 2}) * *D2D1::Matrix3x2F::ReinterpretBaseType(&base));
     Ink(ctx, row, at, ink.Get());
-    ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+    ctx->SetTransform(base);
 }
 
 void LyricView::Sweeping(ID2D1DeviceContext* ctx, Piece& pc, D2D1_POINT_2F at, float chars, float a, Color text, size_t& e) { // one piece, lit up to chars
@@ -213,9 +217,11 @@ void LyricView::Lit(ID2D1DeviceContext* ctx, Row& row, D2D1_POINT_2F at, float s
     }
     if (!stops) return;
     size_t e = 0;
-    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x, at.y + row.h / 2}));
+    D2D1_MATRIX_3X2_F base;
+    ctx->GetTransform(&base);
+    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x, at.y + row.h / 2}) * *D2D1::Matrix3x2F::ReinterpretBaseType(&base));
     Sweeping(ctx, row.lead, at, Sweep(row, t), a, look.text, e);
-    ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+    ctx->SetTransform(base);
 }
 
 void LyricView::Dots(Canvas& c, D2D1_POINT_2F at, float progress, float appear, const Theme& look, float a, double now) {

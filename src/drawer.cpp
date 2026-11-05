@@ -1,10 +1,13 @@
 #include "drawer.h"
+#include "board.h"
 #include "entry.h"
 
+#include "faces.h"
 #include "glyphs.h"
 #include "starfall.h"
 
 #include <dwmapi.h>
+#include <shellapi.h>
 #include <shellscalingapi.h>
 #include <windowsx.h>
 #include <wtsapi32.h>
@@ -52,7 +55,7 @@ double Seconds() {
 
 Drawer::Drawer(const Config& c, Model& m) : cfg(c), model(m) {
     page = prevPage = model.OpenPage(); // where it left off, or the page picked in settings
-    zoomNow = model.uiScale;
+    zoomNow = model.ZoomPct();
     W = cfg.panW + 2 * cfg.fillet; // room for curved shoulders on both sides
     H = cfg.panH;
     accentModeNow = model.AccentMode();
@@ -63,10 +66,16 @@ Drawer::Drawer(const Config& c, Model& m) : cfg(c), model(m) {
     edgeNow = model.Edge();
     screensNow = model.screens;
     screenNow = model.screen;
+    layNow = model.layout;
+    pinNow = model.pinned != 0;
+    floatNow = model.floating != 0;
     shellFrom = shellTo = shellNow = mediaFrom = mediaTo = mediaNow = Make(shellSeed);
 }
 
 Drawer::~Drawer() {
+    UnregisterHotKey(hwnd, kBoardKey);
+    boards.clear();
+    Reserve(false); // the screen's room goes back to the windows
     UnwatchDesk();
     StopShelf();
     volKeys.Stop(); // the volume keys go back to windows at once
@@ -91,11 +100,15 @@ bool Drawer::Create(HINSTANCE instance) {
     hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP, // no focus steal, no gdi surface (dcomp only)
                            wc.lpszClassName, L"Astraeus", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, instance, this); // this -> WM_NCCREATE
     if (!hwnd) return false;
+    access.Attach(hwnd, L"Astraeus panel");
     BOOL off = TRUE;
     DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &off, sizeof(off)); // no dwm fade, we animate ourselves
     WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION); // locked: the pill's bars rest, nobody sees them
     displayNote = RegisterPowerSettingNotification(hwnd, &kDisplayState, DEVICE_NOTIFY_WINDOW_HANDLE); // and the same while the screen is off
     StartShelf(); // files and text dropped on the island land on the shelf
+    if (!RegisterHotKey(hwnd, kBoardKey, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'D')) // a dashboard's screen back to the desktop and again; win+alt+d is windows' own date flyout
+        Log(L"ctrl+alt+d is taken by another app: the dashboard's own button still switches it");
+    RegisterHotKey(hwnd, kBoardFocusKey, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'D'); // the keyboard into a dashboard; taken: it stays mouse only
     WatchPower(); // plugged in, unplugged, running low: windows says so, nothing polls
     SyncHud();
     if (!screensNow) mon = sys::FindScreen(screenNow); // the picked screen, primary if none or unplugged
@@ -287,13 +300,20 @@ void Drawer::OnGreetTimer() {
     GetCursorPos(&pt);
     bool moved = std::abs(pt.x - greetAt.x) > kGreetSlack || std::abs(pt.y - greetAt.y) > kGreetSlack;
     if (!opened) greeting = false; // closed some other way
-    else if (moved) greeting = false, Close(); // the mouse woke up: back up it goes
+    else if (moved) greeting = false, Pinned() ? void() : Close(); // the mouse woke up: back up it goes, unless it's pinned open
     else SetTimer(hwnd, kGreetTimer, kGreetPollMs, nullptr);
 }
 
 void Drawer::KeyOpen() {
-    if (opened) {
+    if (opened && !Pinned()) {
         Close();
+        return;
+    }
+    if (opened) { // pinned: the shortcut only takes the keyboard, the panel stays
+        keys = true;
+        keysFrom = GetForegroundWindow();
+        SetForegroundWindow(hwnd);
+        SetFocus(hwnd);
         return;
     }
     if (hidden) return;
@@ -322,6 +342,7 @@ void Drawer::Close() {
         keys = false;
         if (GetForegroundWindow() == hwnd && keysFrom && IsWindow(keysFrom)) SetForegroundWindow(keysFrom);
     }
+    ui.Unfocus();
     KillTimer(hwnd, kFollowTimer);
     if (cfg.gpuIdleSec > 0) SetTimer(hwnd, kReleaseTimer, (UINT)cfg.gpuIdleSec * 1000 + 1000, nullptr); // freed, or trimmed if the pill stays
     KillTimer(hwnd, kCloseTimer);
@@ -329,9 +350,11 @@ void Drawer::Close() {
     peeking = false;
     opened = false;
     island = false; // the island retracts with the same spring, its shape stays until it's gone
-    model.hexFocus = model.cityFocus = model.tilesEdit = false;
+    model.hexFocus = model.cityFocus = model.tilesEdit = model.faceSearch = false;
+    ++model.pageVisit;
     model.nameFor = -1;
     model.field = Model::kFieldNone;
+    model.CloseFace(); // what was typed in a widget is kept
     if (model.shelfField == Model::kShelfNote) model.CommitShelfNote(); // a note half typed is kept, like a city
     model.shelfField = Model::kShelfNone; // the search text stays for next time, the keyboard goes back
     ShelfClosed();
@@ -357,6 +380,7 @@ void Drawer::ShowSettings() {
 }
 
 void Drawer::Toggle() {
+    if (opened && Pinned()) return; // pinned: it stays where it is
     if (opened) Close();
     else Open();
 }
@@ -385,6 +409,12 @@ void Drawer::Answer() {
 }
 
 void Drawer::OnSecond() {
+    if (model.facesDue) {
+        model.facesDue = false; // set again only if the page draws again
+        Redraw();
+    }
+    SyncBoard();
+    if (Pinned() && !opened && !hidden && !stage && !dragging && !peeking && !PlaceStale() && spring.value <= 0.5f) Open(); // pinned: back open after fullscreen, a re-dock or the player
     if (fullApp && !FullOn(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY))) fullApp = false; // the shell's "it's over" can go missing: never stay hidden on its word alone
     SyncHide(); // a fullscreen app on the panel's screen, or gone from it
     if (++shadeTick >= kShadeSecs) shadeTick = 0, SampleShade();
@@ -430,7 +460,7 @@ void Drawer::Peek(const std::wstring& title, const std::wstring& detail, int ico
     peekTitle = title;
     peekDetail = detail;
     if (opened) {
-        SetPage(Model::kPgTools); // already open, jump to notice page
+        if (!Pinned()) SetPage(Model::kPgTools); // already open, jump to notice page; pinned, it would yank the page from under you all day
         return;
     }
     if (hidden || !EnsureDev()) return;
@@ -614,7 +644,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         islandHot = false;
         input.mouse = {-1e6f, -1e6f}; // park offscreen to clear hover
         SyncRailKeys(false); // off the panel: the arrows go back at once, not on the next frame
-        if ((opened || island) && !dragging && GetCapture() != hwnd) {
+        if ((opened || island) && !dragging && GetCapture() != hwnd && !(opened && Pinned())) { // pinned: it stays open
             bool pill = island && !opened;
             if (!(pill && Stays())) // always: the pill stays put
                 SetTimer(hwnd, kCloseTimer, pill ? model.IslandLingerMs((UINT)cfg.closeMs) : (UINT)cfg.closeMs, nullptr); // close after grace period, the pill can linger
@@ -695,7 +725,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             else if (islandNext) ShowIsland(); // an app below: the pill first, a tap opens the panel
             else Open();
         } else if (wp == kCloseTimer) {
-            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && Stays())) Close();
+            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && Stays()) && !(opened && Pinned())) Close();
         } else if (wp == kTrimTimer) {
             if (island && !opened && !peeking && !dragging && !(devWide && RenewDev())) gfx::GiveBack(); // a resting pill, only its bars move: idle pages go back; after the panel, a fresh device too. d2d's caches stay: cleared under live brushes, the media page's glows came back flat
         } else if (wp == kReleaseTimer) {
@@ -731,7 +761,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         input.pressed = true;
         input.down = true;
         Frame(); // run ui now to see what was hit
-        if (ui.FreePress()) StartDrag(DepthOf(p)); // press on empty area drags panel
+        if (ui.FreePress() && !Pinned()) StartDrag(DepthOf(p)); // press on empty area drags panel; pinned, it doesn't move
         return 0;
     }
     case WM_LBUTTONUP:
@@ -745,7 +775,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         input.down = false;
         ReleaseCapture();
         Redraw();
-        if (!MouseIn() && opened) SetTimer(hwnd, kCloseTimer, (UINT)cfg.closeMs, nullptr); // released outside, leave was suppressed by capture
+        if (!MouseIn() && opened && !Pinned()) SetTimer(hwnd, kCloseTimer, (UINT)cfg.closeMs, nullptr); // released outside, leave was suppressed by capture
         return 0;
     case WM_CAPTURECHANGED:
         if (dragging) EndDrag(); // capture stolen, finish drag cleanly
@@ -761,7 +791,8 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         POINT sp = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}; // wheel messages carry screen coordinates
         ScreenToClient(hwnd, &sp);
         D2D1_POINT_2F p = {sp.x / scale, sp.y / scale};
-        bool rail = opened && (Side() ? p.y - cfg.fillet < kTopRail && DepthOf(p) <= spring.value : p.x - cfg.fillet < kRailW && p.y < spring.value);
+        D2D1_POINT_2F org = BodyOrg((std::clamp)(spring.value, 0.0f, Depth() + overshoot));
+        bool rail = opened && Inside(RailBox(), {p.x - org.x, p.y - org.y}); // the rail as the frame draws it, any edge or layout
         if (msg == WM_MOUSEHWHEEL && opened && !rail) return 0; // a sideways swipe means pages only over the rail
         if (rail || (island && !opened)) {
             WheelPages(msg == WM_MOUSEHWHEEL ? notches : -notches); // wheel down or swipe right: the next page
@@ -774,8 +805,13 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_SETCURSOR:
         SetCursor(LoadCursorW(nullptr, hand ? IDC_HAND : IDC_ARROW)); // hand set by ui over clickables
         return TRUE;
+    case kBarMsg: // pinned: the shell moved bars around, or a fullscreen app came
+        if (wp == ABN_POSCHANGED && barOn) Reserve(true);
+        return 0;
     case WM_DPICHANGED:
     case WM_DISPLAYCHANGE:
+        boards.clear(); // the dashboards are rebuilt for the new screens on the next second
+        sys::ForgetScreenIds();
         FreeDev(); // swapchain size/dpi stale, rebuild lazily
         twinSplit = -1; // a fullscreen pair looks again for its other screen
         if (!screensNow) mon = sys::FindScreen(screenNow); // the picked screen may have just been plugged back in
@@ -786,7 +822,24 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_SETTINGCHANGE:
         if (wp == SPI_SETWORKAREA) Place(), Redraw(); // a taskbar came, went or changed size: the sidebar fits the new room
+        model.ReadAccess(); // high contrast or the text size may be what changed
+        if (model.HighContrast() != theme::Contrast() || model.ZoomPct() != zoomNow) Redraw();
         return DefWindowProcW(hwnd, msg, wp, lp);
+    case WM_THEMECHANGED: // high contrast's colors themselves
+        if (theme::Contrast()) theme::SetContrast(false), Redraw(); // read afresh next frame
+        return 0;
+    case WM_GETOBJECT: {
+        LRESULT out = 0;
+        if (access.OnGetObject(wp, lp, out)) return out;
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
+    case Access::kMsg:
+        access.Apply(ui, wp, lp);
+        Redraw();
+        return 0;
+    case WM_KEYUP:
+        if (wp == VK_RETURN || wp == VK_SPACE) ui.KeyHold(false), Redraw();
+        return 0;
     case WM_APP_CAL:
         if (wp == 1) model.cals.Sync(hwnd, WM_APP_CAL, 0); // a link came in while the last fetch ran: fetched now
         if (model.calOpen) Redraw();
@@ -797,6 +850,9 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_MEDIA:
         model.OnMedia();
         Redraw();
+        return 0;
+    case WM_APP_FEEDS:
+        if (opened && page == Model::kPgWidgets) Redraw();
         return 0;
     case WM_APP_BRIGHT:
         model.OnBright(wp);
@@ -890,6 +946,24 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         else ShelfOut();
         return 0;
     case WM_CHAR: // only reaches us while a field holds the keyboard
+        if (model.faceSearch) { // the widget gallery's search
+            wchar_t ch = (wchar_t)wp;
+            if (ch == VK_ESCAPE) {
+                if (model.faceQuery.empty()) model.faceSearch = false;
+                else model.faceQuery.clear();
+            } else if (ch == VK_BACK) {
+                if (!model.faceQuery.empty()) model.faceQuery.pop_back();
+            } else if (ch >= 32 && model.faceQuery.size() < Model::kFaceQueryMax) {
+                model.faceQuery += ch;
+            }
+            Redraw();
+            return 0;
+        }
+        if (model.faceKeys) {
+            if (!faces::Char(model.facePanel, (wchar_t)wp) && wp == VK_ESCAPE) model.CloseFace();
+            Redraw();
+            return 0;
+        }
         if (model.passFocus) {
             wchar_t ch = (wchar_t)wp;
             if (ch == 22) { // ctrl+v, first line only, appended in place
@@ -979,7 +1053,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_ACTIVATE:
         if (LOWORD(wp) == WA_INACTIVE && keys && opened && !model.Typing() && !Entry::Get().focus) { // clicked away from a panel opened by the keyboard: it goes too
             keys = false;
-            Close();
+            if (!Pinned()) Close(); // pinned: only the keyboard goes back
         }
         return 0;
     case WM_SYSKEYDOWN: // alt held: only a fullscreen key being picked in settings wants it
@@ -995,7 +1069,14 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         if (keys && !model.Typing() && !Entry::Get().focus) { // a panel opened from the shortcut: move with the keys
-            if (wp == VK_ESCAPE) Close();
+            if (KeyNav(wp, lp)) {
+                Redraw();
+                return 0;
+            }
+            if (wp == VK_ESCAPE && Pinned()) { // pinned: esc hands the keyboard back, the panel stays
+                keys = false;
+                if (keysFrom && IsWindow(keysFrom)) SetForegroundWindow(keysFrom);
+            } else if (wp == VK_ESCAPE) Close();
             else if (wp == VK_RIGHT || wp == VK_DOWN) SetPage(model.PageAt(model.SlotOf(page) + 1)); // the rail's order, not the pages' numbers
             else if (wp == VK_LEFT || wp == VK_UP) SetPage(model.PageAt(model.SlotOf(page) - 1));
             else if (wp >= '1' && wp < '1' + (WPARAM)model.pages.size()) SetPage(model.PageAt((int)(wp - '1')));
@@ -1024,6 +1105,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             Redraw();
             return 0;
         }
+        if (model.faceKeys || model.faceSearch) return 0; // their enter and esc arrive as characters
         if (model.field != Model::kFieldNone) {
             if (wp == VK_RETURN) model.CommitField();
             else if (wp == VK_ESCAPE) model.field = Model::kFieldNone, model.fieldEdit.clear();
@@ -1050,6 +1132,14 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         break;
     case WM_HOTKEY: // the arrows, held only while the mouse rests on the rail: the next or previous page, scrolled into view
+        if ((int)wp == kBoardKey) { // ctrl+alt+d: the screen under the mouse, dashboard or desktop
+            BoardKey();
+            return 0;
+        }
+        if ((int)wp == kBoardFocusKey) {
+            if (model.a11yKeys) BoardFocus();
+            return 0;
+        }
         if ((int)wp != kRailKeyPrev && (int)wp != kRailKeyNext) break;
         if (opened) SetPage(model.PageAt(model.SlotOf(page) + ((int)wp == kRailKeyNext ? 1 : -1)));
         Redraw();
@@ -1164,8 +1254,8 @@ void Drawer::Frame() {
         }
     }
     if (PlaceStale() && opened) Close(); // re-dock once it has retracted
-    if (model.uiScale != zoomNow) { // a new size: every dip is bigger or smaller, the window and surfaces are rebuilt for it
-        zoomNow = model.uiScale;
+    if (model.ZoomPct() != zoomNow) { // a new size: every dip is bigger or smaller, the window and surfaces are rebuilt for it
+        zoomNow = model.ZoomPct();
         FreeDev();
         Place();
         BuildStrips();
@@ -1189,8 +1279,13 @@ void Drawer::Frame() {
     FitSurfaces(); // before drawing: a pill alone keeps a small strip, the panel gets its full size back
     if (!ctx || !canvas) return; // resizing failed and dropped the device: the next frame rebuilds it
     canvas->NewFrame();
+    bool hear = access.Listening(); // a screen reader is here: this frame says what it draws
+    canvas->Listen(hear);
+    ui.Listen(hear);
+    ui.Keyboard(keys && model.a11yKeys);
     bool pillCached = false, skyCached = false;
-    if (islandLook && !opened && !peeking && !Side() && !moving && !dragging && !themes && h > 0.5f && std::fabs(h - spring.target) < 0.01f) { // resting pill
+    if (islandLook && !opened && !peeking && !Side() && !moving && !dragging && !themes && h > 0.5f && std::fabs(h - spring.target) < 0.01f &&
+        !(model.vizWave && model.vizOn)) { // resting pill; the waveform runs behind its still parts, so it's drawn whole
         shapeXform = EdgeXform();
         pillCached = PillLayer(h, IslandSpan());
     }
@@ -1251,6 +1346,7 @@ void Drawer::Frame() {
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     ctx->PopAxisAlignedClip();
     HRESULT hr = ctx->EndDraw();
+    if (hear) access.Publish(ui, *canvas, scale, {0, 0}, opened);
     input.pressed = input.released = input.rclick = false;
     input.wheel = 0;
     SyncRailKeys(railHot);

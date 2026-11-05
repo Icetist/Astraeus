@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "access.h"
 #include "anim.h"
 #include "hud.h"
 #include "config.h"
@@ -14,6 +15,8 @@
 #include "stage.h"
 #include "theme.h"
 #include "ui.h"
+
+class Board;
 
 class Drawer {
 public:
@@ -44,8 +47,30 @@ public:
     bool NeedsFrame() const { return needsFrame || stage; } // main loop polls this to keep rendering
     HANDLE FrameWait() const { return stage ? stage->Wait() : frameWait; } // swapchain waitable, paces to vsync
     void Frame();
+    bool BoardNeeds() const; // the display dashboard has a frame to draw
+    HANDLE BoardWait() const; // its own screen's vsync, waited on beside the panel's
+    void BoardFrame();
+    Theme BoardMedia() const; // the song's look, as a dashboard draws it
+    void BoardFocus(); // the keyboard into the dashboard under the mouse
 
 private:
+    std::vector<std::unique_ptr<Board>> boards; // a fullscreen dashboard per screen set to one, none on a screen switched back to the desktop
+    void SyncBoard(); // once a second: they come, go and follow the screens and their settings
+    bool BoardOn(HMONITOR m) const; // a dashboard has that screen now
+    static constexpr int kBoardKey = 0x52A3; // ctrl+alt+d: the screen under the mouse between its dashboard and the desktop
+    static constexpr int kBoardFocusKey = 0x52A4; // ctrl+alt+shift+d: the keyboard into its dashboard
+    void BoardKey();
+    int layNow = Model::kLayHorizontal; // the layout the window is built for
+    bool pinNow = false, floatNow = false; // and the two options
+    bool Tall() const { return Side() || layNow == Model::kLayVertical; } // pages in their narrow column, the rail across the top
+    bool Pinned() const { return pinNow; } // the panel stays open, the screen makes room for it
+    bool Floating() const { return floatNow; } // the panel is a card that glides in clear of the edge
+    void FitSize(); // the panel's size for the layout and screen
+    static constexpr float kFloatGap = 14; // the floating card's gap from the edge
+    static constexpr float kCompactMaxH = 680; // the compact column's height at most
+    bool barOn = false; // pinned: the panel's room is reserved, maximized windows end where it starts
+    void Reserve(bool on); // that reservation, as a shell appbar
+    static constexpr UINT kBarMsg = WM_APP + 62; // the shell's appbar notices
     enum : UINT_PTR { kHoverTimer = 1, kCloseTimer, kReleaseTimer, kPeekTimer, kDevTimer, kFollowTimer, kTrimTimer = 8, kFullTimer, kGreetTimer, kDeskTimer, kAdoptTimer, kPasteTimer }; // all one-shot; 7 is the model's
     static constexpr UINT kAdoptMsg = WM_APP + 60; // a hover strip on another screen asks the panel to come over
     static constexpr float kStrip = 3; // idle bezel height in dips, just enough to catch the mouse
@@ -83,7 +108,9 @@ private:
     float railWheel = 0; // wheel notches over the rail or pill, a page per whole notch
     void WheelPages(float notches); // the rail or the closed pill: next or previous page
     int zoomNow = 100; // the ui scale the window is built for
-    float Zoom() const { return model.uiScale / 100.0f; } // the scale setting is just a bigger dip: everything follows, hit tests too
+    float Zoom() const { return model.ZoomPct() / 100.0f; } // the scale setting and the text size are just a bigger dip: everything follows, hit tests too
+    bool KeyNav(WPARAM key, LPARAM lp); // tab, enter and the arrows, in a panel the keyboard opened; true if it was for them
+    Access access; // what a screen reader sees
     sys::VolumeWatch volWatch; // these three only while the hud option is on
     sys::BrightWatch brightWatch;
     sys::VolumeKeys volKeys;
@@ -99,7 +126,7 @@ private:
     void Resize(float hDip, bool topmost); // window only as tall as visible shape
     D2D1_POINT_2F ToDip(LPARAM lp) const; // mouse px to dip coords
     D2D1_POINT_2F BodyOrg(float h) const; // where panel space starts in the window at depth h, for drawing and hit tests alike
-    D2D1_RECT_F RailBox() const { return Side() ? D2D1_RECT_F{0, 0, CW(), kTopRail} : D2D1_RECT_F{0, 0, kRailW, H}; } // the rail, in panel space
+    D2D1_RECT_F RailBox() const { return Tall() ? D2D1_RECT_F{0, 0, CW(), kTopRail} : D2D1_RECT_F{0, 0, kRailW, H}; } // the rail, in panel space
     void TrackLeave();
     bool MouseIn() const;
 
@@ -128,7 +155,7 @@ private:
     bool Side() const { return edgeNow != 0; } // docked to the left or right edge
     float CW() const { return Side() ? kSideW : W - 2 * cfg.fillet; } // content width
     float CH() const { return Side() ? sideH : H; } // content height: on a side edge a tall sidebar
-    float Depth() const { return Side() ? kSideW : H; } // how far the open panel reaches from its edge
+    float Depth() const { return (Side() ? kSideW : H) + (Floating() ? kFloatGap : 0); } // how far the open panel reaches from its edge, a floating card's gap included
     float Span() const { return Side() ? sideH + 2 * cfg.fillet : W; } // its length along the edge, shoulders included
     void DrawRailTop(const Theme& t); // sidebar: page icons in a row along the top
     static constexpr float kSideW = 400, kSideMaxH = 860, kTopRail = 58; // sidebar size, top rail height
@@ -269,7 +296,7 @@ private:
     float winW = 0; // current window length along the edge in dips
     int edgeNow = 0, screensNow = 0; // placement the window is built for
     std::wstring screenNow; // the picked screen the window is built for
-    bool PlaceStale() const { return model.Edge() != edgeNow || model.screens != screensNow || model.screen != screenNow; }
+    bool PlaceStale() const { return model.Edge() != edgeNow || model.screens != screensNow || model.screen != screenNow || model.layout != layNow || (model.pinned != 0) != pinNow || (model.floating != 0) != floatNow; }
     HMONITOR mon = nullptr; // screen we live on, null = primary
     std::vector<HWND> strips; // hover strips on other screens, all-screens mode only
     D2D1_MATRIX_3X2_F shapeXform = D2D1::Matrix3x2F::Identity(); // this frame's shape placement, the glass mask reuses it
@@ -319,6 +346,7 @@ private:
     void DrawRailTip(const Theme& t);
     int devTries = 0; // failed device builds in a row, retried on a short timer
     int bgNow = 0; // custom look background the themes were built with
+    int pageDrawn = -1; // the page the last frame showed
     int accentModeNow = 0, accentHexNow = 0;
     bool typing = false;
     HWND typingFrom = nullptr; // window that had the keyboard before the hex field took it

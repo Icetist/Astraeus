@@ -1,6 +1,9 @@
 // The drawer's live parts: power pills, the activity bubble, paging by wheel, the volume hud and a reloaded config.
 #include "drawer.h"
 
+#include <shellapi.h>
+
+#include "board.h"
 #include "glyphs.h"
 
 #include <algorithm>
@@ -163,9 +166,169 @@ void Drawer::ShowHud(int icon, float level, const wchar_t* title) {
     Redraw();
 }
 
+void Drawer::FitSize() { // the panel's size: the ini's, or the compact column's, which is the sidebar's width dropping from the top
+    if (layNow == Model::kLayVertical && edgeNow == 0) {
+        W = kSideW + 2 * cfg.fillet;
+        H = (std::min)(kCompactMaxH, (work.bottom - monitor.top) / scale - 2 * cfg.fillet); // from the screen's top: pinned, its own reserved room is out of the work area
+    } else {
+        W = cfg.panW + 2 * cfg.fillet;
+        H = cfg.panH;
+    }
+    shapeC.Reset();
+    shapeH = shapeW = -1;
+}
+
+void Drawer::Reserve(bool on) { // pinned: the shell keeps the panel's room clear, as it does for a taskbar
+    APPBARDATA abd = {sizeof(abd)};
+    abd.hWnd = hwnd;
+    if (!on) {
+        if (barOn) SHAppBarMessage(ABM_REMOVE, &abd);
+        barOn = false;
+        return;
+    }
+    if (!barOn) {
+        abd.uCallbackMessage = kBarMsg;
+        if (!SHAppBarMessage(ABM_NEW, &abd)) return;
+        barOn = true;
+    }
+    MONITORINFO mi = {sizeof(mi)};
+    GetMonitorInfoW(mon ? mon : MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
+    LONG d = (LONG)((Depth() + 2) * scale + 0.5f); // its depth on screen, a hair more so a window's shadow doesn't touch it
+    abd.uEdge = edgeNow == 0 ? ABE_TOP : edgeNow == 1 ? ABE_LEFT : ABE_RIGHT;
+    abd.rc = mi.rcMonitor;
+    SHAppBarMessage(ABM_QUERYPOS, &abd); // other bars already there move it inward
+    if (edgeNow == 0) abd.rc.bottom = abd.rc.top + d;
+    else if (edgeNow == 1) abd.rc.right = abd.rc.left + d;
+    else abd.rc.left = abd.rc.right - d;
+    SHAppBarMessage(ABM_SETPOS, &abd);
+}
+
+void Drawer::SyncBoard() { // each screen set to a dashboard gets one, unless it was switched back to the desktop for now
+    auto away = [&](const std::wstring& n) { return std::find(model.boardsAway.begin(), model.boardsAway.end(), n) != model.boardsAway.end(); };
+    for (auto& b : boards) // its button asked for the desktop: away until the shortcut or settings bring it back
+        if (b && b->Leaving()) model.boardsAway.push_back(b->Name()), b.reset();
+    std::vector<std::pair<HMONITOR, std::wstring>> want;
+    for (const auto& s : model.boards)
+        if (!away(s.screen) && !stage)
+            if (HMONITOR m = sys::FindScreenId(s.screen)) want.push_back({m, s.screen}); // unplugged: no window there, its layout waits for it
+    std::erase_if(boards, [&](const std::unique_ptr<Board>& b) {
+        return !b || !b->Ok() || std::none_of(want.begin(), want.end(), [&](const auto& w) { return w.first == b->Screen() && w.second == b->Name(); });
+    });
+    static int fails = 0; // a device that won't come: tried again now and then, not every second
+    for (const auto& w : want) {
+        if (std::any_of(boards.begin(), boards.end(), [&](const auto& b) { return b->Screen() == w.first; })) continue;
+        if (fails++ % 30) continue;
+        auto b = std::make_unique<Board>(model, w.first, w.second);
+        if (b->Ok()) boards.push_back(std::move(b)), fails = 0;
+    }
+    std::vector<Model::BoardTile> shown; // what's on them all, so polling serves exactly that
+    int up = 0;
+    Theme media = boards.empty() ? Theme{} : BoardMedia(), shell = boards.empty() ? Theme{} : Shell();
+    for (auto& b : boards) {
+        b->Second(shell, media);
+        if (b->Covered()) continue;
+        ++up;
+        shown.insert(shown.end(), b->Tiles().begin(), b->Tiles().end());
+    }
+    model.SetBoardLive(up, std::move(shown));
+}
+
+bool Drawer::BoardOn(HMONITOR m) const {
+    return std::any_of(boards.begin(), boards.end(), [m](const auto& b) { return b->Screen() == m && !b->Covered(); });
+}
+
+void Drawer::BoardKey() { // the screen under the mouse: its dashboard steps aside for the desktop, or comes back
+    POINT pt;
+    GetCursorPos(&pt);
+    HMONITOR m = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+    for (const auto& s : model.boards) {
+        if (sys::FindScreenId(s.screen) != m) continue;
+        auto& away = model.boardsAway;
+        auto it = std::find(away.begin(), away.end(), s.screen);
+        if (it == away.end()) away.push_back(s.screen);
+        else away.erase(it);
+        SyncBoard(); // now, not on the next second
+        SyncHide();
+        return;
+    }
+}
+
+bool Drawer::BoardNeeds() const {
+    return !Unseen() && std::any_of(boards.begin(), boards.end(), [](const auto& b) { return b->Needs(); });
+}
+
+HANDLE Drawer::BoardWait() const { // the first one with a frame due paces the loop; the others draw with it when their own screen is ready
+    for (const auto& b : boards)
+        if (b->Needs()) return b->Wait();
+    return nullptr;
+}
+
+void Drawer::BoardFocus() {
+    POINT pt;
+    GetCursorPos(&pt);
+    HMONITOR m = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+    Board* pick = nullptr;
+    for (auto& b : boards)
+        if (!b->Covered() && (!pick || b->Screen() == m)) pick = b.get();
+    if (pick) pick->TakeKeys();
+}
+
+bool Drawer::KeyNav(WPARAM key, LPARAM lp) {
+    if (!model.a11yKeys) return false;
+    bool shift = GetKeyState(VK_SHIFT) < 0, first = !(lp & (1 << 30)); // not a held key's repeat
+    switch (key) {
+    case VK_TAB:
+        ui.Tab(shift ? -1 : 1);
+        return true;
+    case VK_RETURN:
+    case VK_SPACE:
+        if (!ui.Focused()) return false;
+        if (first) ui.FireFocus(), ui.KeyHold(true);
+        return true;
+    case VK_LEFT:
+    case VK_RIGHT:
+    case VK_UP:
+    case VK_DOWN: {
+        if (!ui.Focused()) return false; // no control picked yet: the arrows still change pages
+        int dir = key == VK_RIGHT || key == VK_UP ? 1 : -1;
+        if (ui.SliderFocused()) ui.StepFocus(dir);
+        else ui.Tab(key == VK_RIGHT || key == VK_DOWN ? 1 : -1);
+        return true;
+    }
+    case VK_ESCAPE:
+        if (ui.Focused()) { // one step back at a time: the control, then an open sheet, then the panel
+            ui.Unfocus();
+            return true;
+        }
+        if (model.settingsOpen) return model.CloseSettings(), true;
+        if (model.btOpen) return model.CloseBt(), true;
+        if (model.wifiOpen) return model.CloseWifi(), true;
+        if (model.calOpen) return model.CloseCal(), true;
+        if (model.mixerOpen) return model.CloseMixer(), true;
+        return false;
+    case 'S':
+        if (!model.settingsOpen) ui.Unfocus(), model.OpenSettings(); // settings hang off the rail's right click: this is the keyboard's way in
+        return true;
+    default:
+        return false;
+    }
+}
+
+Theme Drawer::BoardMedia() const { return mediaNow.glass ? Theme::From(Seed{mediaSeed.hue, mediaSeed.chroma, 0}) : mediaNow; } // glass has nothing to blur behind a whole screen: its dark twin
+
+void Drawer::BoardFrame() {
+    Theme media = BoardMedia();
+    Theme shell = Shell();
+    bool first = true;
+    for (auto& b : boards) {
+        if (!b->Needs()) continue;
+        if (first || WaitForSingleObject(b->Wait(), 0) == WAIT_OBJECT_0) b->Frame(shell, media); // the pacing one was signalled; the rest only when theirs is
+        first = false;
+    }
+}
+
 void Drawer::Reconfig() {
-    W = cfg.panW + 2 * cfg.fillet; // the ini's sizes, as if it had just started
-    H = cfg.panH;
+    FitSize(); // the ini's sizes, as if it had just started
     shapeC.Reset();
     shapeH = shapeW = -1;
     FreeDev();

@@ -1,24 +1,22 @@
-## Astraeus 2.4.0
+## Astraeus 2.5.0
 
 ### New
-- **A full audio mixer.** Every app on every output, with live level meters, its own output device, and the microphone's volume and mute. No virtual audio devices needed.
-- **Mixer groups.** Up to 8, each with a name, color and icon. Set volume, mute and output for the whole group, with each app still adjustable inside it.
-- **Chat mix.** One slider balances your game group against your chat group.
-- **Ducking.** Chosen groups lower automatically while another group plays.
-- **Mixer profiles.** Save the whole mix and switch between profiles from the Mixer or with a shortcut.
-- **Mixer shortcuts** with an on-screen note: Ctrl+Alt+M mutes the mic, Ctrl+Alt+P picks the next profile, Ctrl+Alt+[ and ] move the chat mix, and Ctrl+Alt+1 to 8 mute a group. Turn them on in the Mixer's options.
-- **Workspaces (experimental).** A Tools tile and a pill widget that show your workspaces and switch between them, from a tiling window manager when one is running, otherwise Windows' own virtual desktops. When a supported tiling manager is installed, the tile is added on its own.
-- **To-do list and server monitor** as new tabs on the Tools page. Servers are checked once a minute.
-- **More tiles:** keyboard language, recycle bin, and pending Windows and app updates.
-- **More pill widgets:** workspace, keyboard language, the window in front, and free disk space.
-- **Visualizer opacity.** One slider for how see-through the bars are, on the Media page and in the fullscreen player, shared with HaloBar. It replaces the album art strength slider; the art now shows at full strength.
+- **A Widgets page.** More than 80 widgets in a searchable gallery: clocks, weather, timers, notes, system rings, stocks, and accounts you connect with your own keys. Make each one small, wide or large, and drag them where you want them.
+- **A display dashboard.** Give a whole screen to a grid of tiles you arrange yourself, with its own layout for each monitor.
+- **Accessibility.** High contrast, a text size that can follow Windows, full keyboard navigation, and support for Narrator, NVDA and JAWS. Find it under **Settings → Advanced**.
+- **Pick your lyrics.** If a song's lyrics are wrong, move the mouse in the fullscreen player and use the small icon in the top right corner to choose another version, or none. Your choice is remembered for that song.
+- **Other media playing.** Right-click the album cover on the Media page to see everything else that's playing and switch to it.
+- **The album cover thumps with the beat** in the fullscreen player. Turn it off in the Visualizer card under **Settings → Advanced**.
+- **More visualizer options.** A waveform across the player, and **Any volume**, which keeps the visualizer moving when Windows plays quietly.
+- **More ways to show the panel.** A narrow column layout, a panel that stays pinned open, and a floating card clear of the screen edge.
+- **Report a problem.** **Settings → Advanced** copies a short report to your clipboard, with your name taken out. Nothing is sent: you read it, then paste it where you choose.
 
 ### Better
-- **The mixer is lighter.** It reads levels only while it's open or while a group, ducking or a shortcut needs it.
-- **Mixer sliders stay visible on every theme**, Starfall included.
+- **Lyrics line up more often.** Astraeus now compares the copies it finds from each source and passes over one that disagrees with the others, so a copy with missing lines no longer wins.
+- **Starts sooner at sign-in.** Astraeus no longer waits in line behind Windows' other startup apps.
 
-> [!NOTE]
-> Workspaces is experimental. Tell us if it misses a workspace change or shows the wrong one.
+### Privacy
+Widgets only connect to the service they show, only while the panel is open and the widget is on your Widgets page. Keys you enter are encrypted with Windows, and Export leaves them out. The full list is in the [Privacy section](https://github.com/Icetist/Astraeus#-privacy).
 
 > [!NOTE]
 > The executable is not code-signed yet, so Windows SmartScreen may show an "unknown publisher" warning the first time. Click **More info → Run anyway**.

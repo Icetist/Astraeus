@@ -2,6 +2,8 @@
 
 #include <iphlpapi.h>
 #include <icmpapi.h>
+#include "faces.h"
+#include "feeds.h"
 #include "glyphs.h"
 #include "pages.h"
 #include "picker.h"
@@ -31,6 +33,9 @@ constexpr wchar_t kHaloKey[] = L"Software\\HaloBar"; // halobar's own settings, 
 constexpr wchar_t kHaloClass[] = L"HaloBar"; // its window: there means it's running
 constexpr int kMaxDockReach = 400; // pixels: past this the value is junk, not a dock
 
+constexpr float kQuietFloor = 0.02f; // below this it's silence, not quiet music: nothing is blown up from it
+constexpr float kForget = 0.996f; // per read, a few seconds to let go of a loud moment
+constexpr float kFullHead = 0.85f; // the loudest peak lands just under full, so the gain slider still has room
 constexpr wchar_t kPagesVal[] = L"PageOrder", kTilesVal[] = L"ToolTiles"; // saved by name: a new page or tile later never shifts the old ones
 std::vector<std::wstring> SplitLines(const std::wstring& s) {
     std::vector<std::wstring> out;
@@ -40,7 +45,7 @@ std::vector<std::wstring> SplitLines(const std::wstring& s) {
     return out;
 }
 
-const wchar_t* const kPageKeys[Model::kPageIds] = {L"home", L"media", L"system", L"network", L"tools", L"shelf"};
+const wchar_t* const kPageKeys[Model::kPageIds] = {L"home", L"media", L"system", L"network", L"tools", L"shelf", L"widgets"};
 const wchar_t* const kTileKeys[Model::kToolTiles] = {L"screenshot", L"color", L"awake", L"notifications", L"dnd", L"saver", L"airplane", L"settings", L"workspaces", L"language", L"bin", L"updates"};
 constexpr wchar_t kNoneVal[] = L"none"; // every tile taken off: an empty text would read as never set
 
@@ -120,7 +125,14 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     std::wstring tl = sys::ReadText(kTilesVal);
     tiles = tl.empty() ? std::vector<int>{kTlSnip, kTlColor, kTlAwake, kTlDnd, kTlSettings} : ParseList(tl, kTileKeys, kToolTiles); // the tiles the tools page always had
     stageHide = flag(L"StageHide", 1);
+    stageThump = flag(L"StageThump", 1);
     uiScale = (std::clamp)(sys::ReadNum(L"UiScale", 100), 80, 130);
+    a11yContrast = (std::clamp)(sys::ReadNum(L"A11yContrast", kContrastAuto), (int)kContrastAuto, (int)kContrastOff);
+    a11yFollow = flag(L"A11yFollowText", 1);
+    a11yText = (std::clamp)(sys::ReadNum(L"A11yText", kTextMin), kTextMin, kTextMax);
+    a11yKeys = flag(L"A11yKeys", 1);
+    a11yReader = flag(L"A11yReader", 1);
+    ReadAccess();
     lyricScale = (std::clamp)(sys::ReadNum(L"LyricScale", 100), kLyricMin, kLyricMax);
     bgOpacity = (std::clamp)(sys::ReadNum(L"BgOpacity", kMaxOpacity), kMinOpacity, kMaxOpacity);
     pillAlways = flag(L"PillAlways", 0);
@@ -144,6 +156,12 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     appKeyOnly = flag(L"AppKeyOnly", 0);
     appHoverMs = (std::clamp)(sys::ReadNum(L"AppHoverMs", kAppHoverMs), 0, kAppHoverMax);
     hud = flag(L"Hud", 0); // experimental: off unless asked for
+    vizWave = flag(L"VizWave", 0);
+    vizFull = flag(L"VizFull", 0);
+    layout = (std::clamp)(sys::ReadNum(L"Layout", kLayHorizontal), 0, kLayouts - 1);
+    pinned = flag(L"Pinned", 0);
+    floating = flag(L"Floating", 0);
+    LoadBoard();
     shelfCapture = flag(L"ShelfCapture", 0); // off unless asked for: the shelf holds only what's dropped on it
     shelfHistory = (std::clamp)(sys::ReadNum(L"ShelfHistory", sys::Shelf::kHistDef), sys::Shelf::kHistMin, sys::Shelf::kHistMax);
     shelfExpire = (std::clamp)(sys::ReadNum(L"ShelfExpire", sys::Shelf::kExpireNever), 0, sys::Shelf::kExpireNever);
@@ -180,23 +198,63 @@ void Model::Start(HWND hwnd) {
     shelf.Start(hwnd, WM_APP_SHELF); // a kept shelf comes back
     if (accentMode == kAccentWindows) winAccent.Watch(hwnd, WM_APP_ACCENT);
     if (portable) ReadBattery();
-    tiler = sys::FindTiler(); // a tiling manager here: its workspaces tile comes on, unless taken off since
-    if (tiler != sys::Tiler::kNone && std::find(tiles.begin(), tiles.end(), (int)kTlWork) == tiles.end() && !sys::ReadNum(L"WorkTileOff", 0)) {
-        tiles.insert(tiles.begin(), kTlWork);
-        SetTiles(tiles);
+    CheckTiler(); // a tiling manager here: its workspaces tile comes on, unless taken off since
+    { // the widgets picked, by name: a catalogue that grows never shifts them
+        std::wstring saved = sys::ReadText(L"Widgets");
+        for (size_t a = 0; a < saved.size();) {
+            size_t e = (std::min)(saved.find(L',', a), saved.size());
+            size_t colon = (std::min)(saved.find(L':', a), e); // "key" or "key:size"
+            std::string key;
+            for (size_t i = a; i < colon; ++i) key += (char)saved[i];
+            int k = faces::Find(key.c_str());
+            if (k >= 0 && std::find(faceOn.begin(), faceOn.end(), k) == faceOn.end()) {
+                faceOn.push_back(k);
+                if (colon + 1 < e) faceSize[k] = (std::clamp)(saved[colon + 1] - L'0', 0, 2);
+            }
+            a = e + 1;
+        }
     }
+    SyncFaces();
     Sample(0); // seed cpu/net baselines, pushes nothing
     worker = std::thread([this] { Worker(); });
 }
 
 void Model::SetLive(bool active, bool processes, bool ping) {
-    shown = active; // ui thread: Tick samples every second only while shown
     if (!active) CloseMixer(); // the audio sessions and icons go with the panel
+    bool woke = active != panelLive;
+    panelLive = active;
+    if (woke) {
+        if (active) CheckTiler(); // installed or removed while it was away
+        SyncFaces();
+    }
+    panelProcs = active && processes;
+    panelPing = active && ping;
+    ApplyLive();
+}
+
+void Model::SetBoardLive(int up, std::vector<BoardTile> shownTiles) {
+    boardsUp = up;
+    boardShown = std::move(shownTiles);
+    ApplyLive();
+}
+
+namespace sys {
+void GpuWanted(int every); // sys_stats.cpp: seconds between reads of windows' costly gpu counter, 0 to close it
+}
+
+void Model::ApplyLive() { // the panel's wishes and the dashboards', together
+    constexpr int kBoardGpuSec = 5; // a dashboard's gpu gauge: a look every few seconds
+    sys::GpuWanted(panelProcs ? 1 : boardsUp > 0 && BoardHas(kBdGpu) ? kBoardGpuSec : 0); // the system page reads it every second, nobody else at all
+    bool up = boardsUp > 0, gauges = up && (BoardHas(kBdCpu) || BoardHas(kBdGpu) || BoardHas(kBdRam) || BoardHas(kBdProcs)); // the gauges come from the worker's sample
+    bool list = panelProcs || (up && BoardHas(kBdProcs)); // walking every process is the costly part: only where a list shows it
+    bool active = panelLive || up, processes = panelProcs || gauges, ping = panelPing;
+    shown = panelLive || (up && (BoardHas(kBdCpu) || BoardHas(kBdRam) || BoardHas(kBdNet))); // ui thread: graphs sampled every second only while one shows
     {
         std::lock_guard<std::mutex> guard(lock);
         bool wakeNow = active && ((processes && !wantProcs) || (ping && !wantPing)); // wake only if the system or network page just came up
         pollOn = active;
         wantProcs = active && processes;
+        wantList = active && list;
         wantPing = active && ping;
         if (!wakeNow) return; // otherwise next 1s cycle picks it up
     }
@@ -205,15 +263,17 @@ void Model::SetLive(bool active, bool processes, bool ping) {
 
 void Model::Worker() {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL); // stats never starve ui
+    THREAD_POWER_THROTTLING_STATE eco{THREAD_POWER_THROTTLING_CURRENT_VERSION, THREAD_POWER_THROTTLING_EXECUTION_SPEED, THREAD_POWER_THROTTLING_EXECUTION_SPEED};
+    SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &eco, sizeof(eco)); // walking the process list runs on efficient cores and low clocks
     std::unique_lock<std::mutex> lk(lock);
     while (!quit) {
         wake.wait(lk, [this] { return quit || (pollOn && (wantProcs || wantPing)); }); // asleep unless the system page (gauges, processes) or the network page (latency) shows
         if (quit) break;
-        bool procsNow = wantProcs, pingNow = wantPing; // snapshot, flags may change while unlocked
+        bool procsNow = wantProcs, pingNow = wantPing, listNow = wantList; // snapshot, flags may change while unlocked
         lk.unlock(); // slow sampling runs without lock
         sys::Stats s = procsNow ? statSrc.Sample() : sys::Stats{}; // the gpu counter is costly: only where its gauge is
         std::vector<sys::ProcRow> top;
-        if (procsNow) top = procSrc.Top(6); // top 6 procs, only on sys page
+        if (listNow) top = procSrc.Top(6); // top 6 procs, only where a list shows them
         float ping = -2;
         if (pingNow) { // one echo to a public resolver, only while the network page shows
             if (icmp == INVALID_HANDLE_VALUE) icmp = IcmpCreateFile();
@@ -227,7 +287,7 @@ void Model::Worker() {
         lk.lock();
         newStats = s;
         newPing = ping;
-        if (procsNow) newProcs = std::move(top);
+        if (listNow) newProcs = std::move(top);
         ready = true;
         PostMessageW(notify, WM_APP_STATS, 0, 0); // ui thread pulls via OnStats
         wake.wait_for(lk, std::chrono::seconds(1), [this, procsNow] { return quit || (wantProcs && !procsNow); }); // 1s cadence, early wake if procs newly wanted
@@ -286,7 +346,8 @@ void Model::Sample(int seconds) {
     MEMORYSTATUSEX m = {sizeof(m)}; // dwLength must be set first
     if (GlobalMemoryStatusEx(&m))
         for (int k = 0; k < seconds; ++k) ramHist.Push(m.dwMemoryLoad / 100.0f); // percent -> 0..1
-    net = netSrc.Sample(shown); // rates are averaged over the gap by the sampler's own clock
+    static int netInfo = 0; // the adapter and the wi-fi name: every second while the panel shows them, else every ten
+    net = netSrc.Sample(panelLive || ++netInfo % 10 == 0); // rates are averaged over the gap by the sampler's own clock
     for (int k = 0; k < seconds; ++k) {
         upHist.Push((float)net.upBps);
         downHist.Push((float)net.downBps);
@@ -323,6 +384,7 @@ void Model::ReadAudio() {
 
 void Model::OnMedia() {
     hasTrack = media.Snapshot(track);
+    media.Sources(mediaSources, mediaPin);
     if (fullLyrics && hasTrack && track.music && track.duration > 0) lyrics.Want(track.title, track.artist, track.album, track.duration / 1e7); // ready before fullscreen opens; no-op once known
 }
 
@@ -486,12 +548,12 @@ void Model::SetTiles(const std::vector<int>& order) {
 }
 
 const wchar_t* Model::PageName(int id) {
-    static const wchar_t* const kNames[kPageIds] = {L"Home", L"Media", L"System", L"Network", L"Tools", L"Shelf"};
+    static const wchar_t* const kNames[kPageIds] = {L"Home", L"Media", L"System", L"Network", L"Tools", L"Shelf", L"Widgets"};
     return kNames[(std::clamp)(id, 0, kPageIds - 1)];
 }
 
 int Model::PageGlyph(int id) {
-    static const int kGlyphs[kPageIds] = {glyph::Overview, glyph::Music, glyph::System, glyph::Network, glyph::Tools, glyph::Shelf};
+    static const int kGlyphs[kPageIds] = {glyph::Overview, glyph::Music, glyph::System, glyph::Network, glyph::Tools, glyph::Shelf, glyph::Dashboard};
     return kGlyphs[(std::clamp)(id, 0, kPageIds - 1)];
 }
 
@@ -512,6 +574,7 @@ void Model::OpenSettings() {
     CloseCal();
     CloseMixer();
     settingsOpen = true;
+    CheckTiler();
     screenList = sys::ListScreens(); // monitors may have changed since last time
     PollShared(); // the halobar swatch shows what it wears now
 }
@@ -638,8 +701,26 @@ void Model::DeskKey(int k) {
     if (desk.osd) deskSay = say;
 }
 
+void Model::CheckTiler() {
+    constexpr ULONGLONG kTilerEveryMs = 60 * 1000; // one process list a minute at most, and only as the panel or settings opens
+    ULONGLONG now = GetTickCount64();
+    if (tilerAt && now - tilerAt < kTilerEveryMs) return;
+    tilerAt = now;
+    sys::Tiler found = sys::FindTiler();
+    if (found == tiler) return;
+    bool had = tiler != sys::Tiler::kNone;
+    tiler = found;
+    if (!had && std::find(tiles.begin(), tiles.end(), (int)kTlWork) == tiles.end() && !sys::ReadNum(L"WorkTileOff", 0)) { // just found: the tile comes on
+        tiles.insert(tiles.begin(), kTlWork);
+        SetTiles(tiles);
+    }
+    if (notify) SyncExtras();
+}
+
 bool Model::WantsWs() const {
+    if (tiler == sys::Tiler::kNone) return false; // no tiling manager: nothing reads desktops on its behalf
     if (pillLeft == kWWork || pillRight == kWWork) return true;
+    if (boardsUp && BoardHas(kBdWork)) return true;
     return std::find(tiles.begin(), tiles.end(), (int)kTlWork) != tiles.end();
 }
 
@@ -794,7 +875,21 @@ bool Model::PollShared() {
     return (Following() || settingsOpen) && halo != was; // open settings repaint too: the halobar swatch, and whether it's offered at all
 }
 
+void Model::ReadAccess() {
+    constexpr int kWinTextMax = 225; // the most windows' own slider goes
+    HIGHCONTRASTW hc = {sizeof(hc)};
+    sysContrast = SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0) && (hc.dwFlags & HCF_HIGHCONTRASTON);
+    DWORD pct = 100, size = sizeof(pct);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Accessibility", L"TextScaleFactor", RRF_RT_REG_DWORD, nullptr, &pct, &size) != ERROR_SUCCESS) pct = 100; // missing: never changed
+    sysText = (std::clamp)((int)pct, 100, kWinTextMax);
+}
+
+bool Model::HighContrast() const { return a11yContrast == kContrastOn || (a11yContrast == kContrastAuto && sysContrast); }
+
+int Model::TextPct() const { return (std::max)(a11yText, a11yFollow ? sysText : 100); }
+
 int Model::Look() const {
+    if (HighContrast()) return 0; // no glass under it: everything solid
     if (!Following()) return look;
     return halo.look >= 0 ? halo.look : 0; // halobar follows us while we follow it: dark ends the loop
 }
@@ -879,18 +974,79 @@ void Model::CyclePower() {
     if (set(&next) == ERROR_SUCCESS) pwrMode = ReadPower(); // re-read, os may refuse
 }
 
+static void SaveFaces(const std::vector<int>& on, const std::map<int, int>& sizes) {
+    std::wstring all;
+    for (int k : on) {
+        for (const char* p = faces::Info(k).key; *p; ++p) all += (wchar_t)*p; // keys are plain ascii
+        if (auto it = sizes.find(k); it != sizes.end()) all += L':', all += (wchar_t)(L'0' + it->second); // never chosen: nothing, so it keeps following its default
+        all += L',';
+    }
+    sys::SaveText(L"Widgets", all);
+}
+
+void Model::SetFaceSize(int kind, int size) {
+    faceSize[kind] = (std::clamp)(size, 0, 2);
+    SaveFaces(faceOn, faceSize);
+}
+
+void Model::PlaceFaces(const std::vector<int>& order) {
+    faceOn = order;
+    SaveFaces(faceOn, faceSize);
+}
+
+void Model::ToggleFace(int kind) {
+    auto it = std::find(faceOn.begin(), faceOn.end(), kind);
+    if (it != faceOn.end()) {
+        faceOn.erase(it);
+    } else {
+        faceOn.push_back(kind);
+        if (!HasPage(kPgWidgets)) { // the first one brings its page onto the rail
+            std::vector<int> next = pages;
+            next.push_back(kPgWidgets);
+            SetPages(next);
+        }
+    }
+    SaveFaces(faceOn, faceSize);
+    SyncFaces();
+}
+
+void Model::OpenFace(int kind) {
+    faces::OpenPanel(kind);
+    facePanel = kind;
+    faceKeys = faces::WantsKeys(kind);
+    if (faceKeys && notify) SetForegroundWindow(notify);
+}
+
+void Model::CloseFace() {
+    if (facePanel >= 0) faces::ClosePanel();
+    facePanel = -1;
+    faceKeys = false;
+}
+
+void Model::SyncFaces() {
+    if (!notify) return;
+    feeds::Start(notify, WM_APP_FEEDS, L"Astraeus");
+    std::vector<std::string> ids = faces::Feeds(faceOn);
+    if (!panelLive) ids.erase(std::remove_if(ids.begin(), ids.end(), [](const std::string& id) { return id != "screen"; }), ids.end()); // nothing's in sight: only screen time needs to keep noting
+    feeds::Want(ids);
+    if (!wx.place.empty() && feeds::Setting("sky.place") != wx.place) feeds::SetSetting("sky.place", wx.place);
+}
+
+void Model::SetOutTo(const std::wstring& id) {
+    if (id == outId || !sys::SetOut(id)) return;
+    outId = id;
+    spk.Refresh(); // rebind volume + meter to new default
+    if (vizOn) meter.Refresh();
+    ReadAudio();
+}
+
 void Model::CycleOut() {
     outs = sys::ListOuts(outId);
     if (outs.size() < 2) return;
     size_t current = 0;
     for (size_t i = 0; i < outs.size(); ++i)
         if (outs[i].id == outId) current = i;
-    const sys::OutDev& next = outs[(current + 1) % outs.size()];
-    if (!sys::SetOut(next.id)) return;
-    outId = next.id;
-    spk.Refresh(); // rebind volume + meter to new default
-    if (vizOn) meter.Refresh();
-    ReadAudio();
+    SetOutTo(outs[(current + 1) % outs.size()].id);
 }
 
 void Model::StartTimer(int seconds) {
@@ -925,10 +1081,21 @@ void Model::Bands(float (&out)[sys::Spectrum::kBands]) {
     spectrumAsked = GetTickCount64();
     if (!spectrum) spectrum = std::make_unique<sys::Spectrum>();
     spectrum->Read(out);
+    if (!vizFull) return;
+    static float peak = kQuietFloor; // the bands' recent loudest, slowly forgotten: quiet playback fills the range as loud does
+    float m = 0;
+    for (float v : out) m = (std::max)(m, v);
+    peak = (std::max)({m, peak * kForget, kQuietFloor});
+    for (float& v : out) v = (std::min)(1.0f, v / peak);
 }
 
 bool Model::Levels(float& left, float& right) {
     bool ok = meter.Read(left, right);
+    if (vizFull) { // windows turned down, or the app is: the levels are measured against their own recent loudest instead
+        static float peak = kQuietFloor;
+        peak = (std::max)({left, right, peak * kForget, kQuietFloor});
+        left = (std::min)(1.0f, left / peak * kFullHead), right = (std::min)(1.0f, right / peak * kFullHead);
+    }
     float g = VizGain();
     left = (std::min)(1.0f, left * g), right = (std::min)(1.0f, right * g); // the sensitivity slider: louder or calmer, never past full
     return ok;
@@ -1005,7 +1172,7 @@ std::wstring Model::PillWidget(int which, int& icon) const {
         icon = glyph::Ram;
         return std::to_wstring((int)std::lround(ramHist.Last() * 100)) + L"%";
     case kWWork: {
-        if (wsNow.current < 0 || wsNow.current >= (int)wsNow.list.size()) return L"";
+        if (tiler == sys::Tiler::kNone || wsNow.current < 0 || wsNow.current >= (int)wsNow.list.size()) return L"";
         icon = glyph::Workspaces;
         const std::wstring& name = wsNow.list[wsNow.current].name;
         return name.size() > kPillWordMax ? name.substr(0, kPillWordMax - 1) + L"…" : name;

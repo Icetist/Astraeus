@@ -25,6 +25,11 @@ struct Track {
     double Progress() const;
 };
 
+struct MediaSource { // an app reporting media to windows
+    std::wstring id, app, title, artist;
+    bool playing = false, music = false, followed = false;
+};
+
 class Media {
 public:
     Media();
@@ -34,6 +39,9 @@ public:
 
     void Start(HWND notify, UINT msg); // posts msg to notify on changes
     bool Snapshot(Track& track) const; // false = no active session
+    void Sources(std::vector<MediaSource>& out, std::wstring& pinned) const;
+    void Follow(const std::wstring& id); // stay on this app; empty: go back to following whatever's playing
+    void RefreshSources(); // what the others are playing now: asked as their list opens, not kept up the whole time
 
     void TogglePlay();
     void Next();

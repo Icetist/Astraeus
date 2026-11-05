@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <vector>
 
+#include "access.h"
 #include "gfx.h"
 #include "glyphs.h"
 #include "version.h"
@@ -45,8 +47,11 @@ struct Menu {
     ComPtr<ID2D1HwndRenderTarget> rt; // plain hwnd target, no swapchain needed
     ComPtr<ID2D1Bitmap> logo; // the app's own icon for the header, made with the target
     std::unique_ptr<Canvas> canvas;
+    Access access; // what a screen reader sees
 };
 Menu* g = nullptr; // one menu at a time, null while hidden
+float zoomNext = 1; // the text size setting
+bool readerNext = true;
 Upd upd = Upd::Idle; // outlives the menu: reopening it mid-check still shows the check
 std::wstring updTag;
 
@@ -185,6 +190,24 @@ void Paint() {
         g->logo.Reset();
         g->rt.Reset();
     }
+    if (g->access.Listening()) { // the rows, as a screen reader asks for them
+        RECT at = {};
+        GetWindowRect(g->hwnd, &at);
+        std::vector<Access::Item> items;
+        for (int i = 0; i < kCount; ++i) {
+            const Item& it = kItems[i];
+            if (it.cmd == kSepCmd) continue;
+            Access::Item a;
+            a.id = i + 1; // 0 is the window
+            a.role = it.cmd == kStartup ? Access::kToggle : Access::kButton;
+            a.on = g->startup;
+            a.name = it.cmd == kUpdate ? UpdLabel() : it.label;
+            float y = Top(i);
+            a.px = {at.left + (LONG)(kPad * g->scale), at.top + (LONG)(y * g->scale), at.left + (LONG)((kW - kPad) * g->scale), at.top + (LONG)((y + kRow) * g->scale)};
+            items.push_back(std::move(a));
+        }
+        g->access.Publish(std::move(items), g->hover >= 0 ? g->hover + 1 : 0);
+    }
 }
 
 void Pick(int i) {
@@ -237,6 +260,20 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONUP:
         Pick(HitAt(GET_Y_LPARAM(lp) / g->scale)); // act on release, like native menus
         return 0;
+    case WM_GETOBJECT: {
+        LRESULT out = 0;
+        if (g && g->access.OnGetObject(wp, lp, out)) return out;
+        break;
+    }
+    case Access::kMsg: { // a screen reader picked a row
+        uint32_t id = 0;
+        float value = 0;
+        int act = g ? g->access.Request(wp, lp, id, value) : Access::kNudge;
+        if (g && act == Access::kFire && id) Pick((int)id - 1);
+        else if (g && act == Access::kFocus && id) g->hover = (int)id - 1;
+        if (g) InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
     case WM_KEYDOWN:
         if (wp == VK_ESCAPE) DestroyWindow(hwnd); // esc closes
         else if (wp == VK_DOWN) Step(1);
@@ -276,6 +313,11 @@ COLORREF Ref(Color c) { return RGB((int)(c.r * 255), (int)(c.g * 255), (int)(c.b
 
 }
 
+void SetAccess(float zoom, bool reader) {
+    zoomNext = zoom;
+    readerNext = reader;
+}
+
 void Show(HWND owner, const Theme& t, bool startup) {
     if (g) DestroyWindow(g->hwnd);
     static ATOM cls = [] {
@@ -306,7 +348,9 @@ void Show(HWND owner, const Theme& t, bool startup) {
         g = nullptr;
         return;
     }
-    g->scale = GetDpiForWindow(g->hwnd) / 96.0f; // dpi of the monitor under the cursor
+    g->access.Attach(g->hwnd, L"Astraeus menu");
+    g->access.Enable(readerNext);
+    g->scale = GetDpiForWindow(g->hwnd) / 96.0f * zoomNext; // dpi of the monitor under the cursor, times the text size
     int w = (int)(kW * g->scale + 0.5f), h = (int)(Height() * g->scale + 0.5f);
     const RECT& wa = mi.rcWork;
     int x = (std::min)((int)p.x, (int)wa.right - w); // keep fully on screen
@@ -491,7 +535,7 @@ void Ask(HWND owner, const Theme& t) {
         q = nullptr;
         return;
     }
-    q->scale = GetDpiForWindow(q->hwnd) / 96.0f;
+    q->scale = GetDpiForWindow(q->hwnd) / 96.0f * zoomNext;
     int w = (int)(kAskW * q->scale + 0.5f), h = (int)(kAskH * q->scale + 0.5f);
     const RECT& wa = mi.rcWork;
     DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;

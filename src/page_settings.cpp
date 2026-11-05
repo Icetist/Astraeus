@@ -27,6 +27,7 @@ constexpr float kTapSlop = 3; // moved less than this: a tap, the color stays
 constexpr float kHandleR = 9; // a wheel handle's dot
 constexpr float kPresetHalfH = 13; // a preset dot takes a press this far above and below its center
 int wheelPick = 0; // custom wheel: the handle being edited, 0 accent, 1 background
+constexpr int kHandles = 2;
 float settingsScroll = 0; // wanted scroll of the cards, eased by Scroll
 constexpr float kMinRow = 196; // cards never squeeze below this: the page scrolls instead
 constexpr float kLyricsRow = 112; // the lyrics card is a single switch, a shorter row
@@ -198,8 +199,8 @@ ID2D1Bitmap* WheelBmp(ID2D1RenderTarget* rt) { // hue around, saturation outward
 
 int& Pick(Model& m, int which) { return which == 0 ? m.accentHex : m.customBg; }
 
-Hsv handles[2]; // each handle's place on the wheel, kept apart from its hex so black doesn't lose its hue
-int handleFor[2] = {-1, -1}; // the hex each place belongs to
+Hsv handles[kHandles]; // each handle's place on the wheel, kept apart from its hex so black doesn't lose its hue
+int handleFor[kHandles] = {-1, -1}; // the hex each place belongs to
 
 Hsv Handle(Model& m, int which) {
     int hex = Pick(m, which) & 0xFFFFFF;
@@ -232,6 +233,7 @@ void Wheel(PageCtx& p, D2D1_POINT_2F o, float R, bool live) {
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
+    constexpr int count = kHandles;
     Hsv sel = Handle(m, wheelPick);
     ID2D1RenderTarget* rt = c.Target();
     c.Glow(o, R * 1.4f, R * 1.4f, Color::Rgb((uint32_t)m.accentHex).Alpha(0.18f));
@@ -250,9 +252,10 @@ void Wheel(PageCtx& p, D2D1_POINT_2F o, float R, bool live) {
     if (ui.IsActive(id) && ui.In().pressed) { // grab the handle under the press, or move the selected one here
         wheelGrab = {};
         wheelHeld = false;
-        float best = kHandleR + 2 + kGrabSlack; // the nearer handle wins where the two overlap
-        for (int k = 0; k < 2; ++k) {
-            int w = k == 0 ? wheelPick : 1 - wheelPick; // the one on top first
+        float best = kHandleR + 2 + kGrabSlack; // the nearer handle wins where they overlap
+        int topWas = wheelPick;
+        for (int k = 0; k < count; ++k) {
+            int w = k == 0 ? topWas : k <= topWas ? k - 1 : k; // the one on top first
             D2D1_POINT_2F q = spot(w);
             float d = std::hypot(ps.x - q.x, ps.y - q.y);
             if (d < best) best = d, wheelPick = w, wheelGrab = {q.x - ps.x, q.y - ps.y}, wheelHeld = true; // taken where it sits: it moves with the mouse, no jump
@@ -267,8 +270,9 @@ void Wheel(PageCtx& p, D2D1_POINT_2F o, float R, bool live) {
         x.s = (std::min)(1.0f, std::hypot(dx, dy) / R);
         Store(m, wheelPick, x, ui.In().released);
     }
-    for (int k = 0; k < 2; ++k) { // the other handle first, so the one being edited sits on top
-        int w = k == 0 ? 1 - wheelPick : wheelPick;
+    for (int k = 0; k <= count; ++k) { // the others first, so the one being edited sits on top
+        int w = k == count ? wheelPick : k;
+        if (k < count && w == wheelPick) continue;
         D2D1_POINT_2F q = spot(w);
         float big = w == wheelPick ? 1.0f : 0.0f;
         Color col = Color::Rgb((uint32_t)(Pick(m, w) & 0xFFFFFF));
@@ -718,7 +722,7 @@ void DrawSettings(PageCtx& p, float k) {
     if (pageWheel && ui.In().wheel != 0 && Inside(grid, ui.In().mouse)) scrolledAt = ui.Now();
     float scroll = Scroll(ui, "set.scroll", settingsScroll, grid, content, pageWheel);
     D2D1_RECT_F view = grid;
-    live = live && (Inside(view, ui.In().mouse) || ui.Captured()); // cards scrolled out of view can't be hit through the header; a slider being dragged keeps following past it
+    live = live && (Inside(view, ui.In().mouse) || ui.Captured() || ui.Keyed()); // cards scrolled out of view can't be hit through the header; a slider being dragged keeps following past it; the keyboard's reach has nothing to do with the mouse
     c.PushClip(view);
     grid.top -= scroll;
     if (!frame.tall) { // five instruments: three across, then notifications and a wide island

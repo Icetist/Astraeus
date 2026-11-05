@@ -461,8 +461,16 @@ IDWriteTextLayout* Canvas::Layout(const std::wstring& s, IDWriteTextFormat* f, f
     return it->second.layout.Get();
 }
 
+void Canvas::Say(const std::wstring& s, int glyph, const D2D1_RECT_F& r) {
+    D2D1::Matrix3x2F m;
+    rt->GetTransform(&m);
+    D2D1_POINT_2F a = m.TransformPoint({r.left, r.top}), b = m.TransformPoint({r.right, r.bottom});
+    words.push_back({s, glyph, {a.x, a.y, b.x, b.y}});
+}
+
 void Canvas::NewFrame() {
     ++frame;
+    words.clear();
     if (frame % 120 != 0) return; // sweep every 120 frames, not every frame
     for (auto it = layouts.begin(); it != layouts.end();) {
         if (frame - it->second.lastUse > kLayTtl) it = layouts.erase(it); // evict unused after ttl
@@ -521,6 +529,7 @@ void Canvas::StrokeGeo(ID2D1Geometry* geometry, Color c, float width, bool kept)
 
 void Canvas::Text(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c, Align a) {
     if (s.empty()) return;
+    if (listening) Say(s, 0, r);
     IDWriteTextFormat* f = gfx::TextFmt(w, size, a);
     IDWriteTextLayout* l = f ? Layout(s, f, Width(r), Height(r), 0) : nullptr; // cached layout, no reshaping per frame
     if (l) rt->DrawTextLayout({r.left, r.top}, l, Brush(c), D2D1_DRAW_TEXT_OPTIONS_CLIP); // clip to rect
@@ -545,6 +554,7 @@ float Canvas::Measure(const std::wstring& s, Weight w, float size) {
 
 void Canvas::TextSp(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c, float spacing, Align a) {
     if (s.empty()) return;
+    if (listening) Say(s, 0, r);
     IDWriteTextFormat* f = gfx::TextFmt(w, size, a);
     IDWriteTextLayout* l = f ? Layout(s, f, Width(r), Height(r), spacing) : nullptr;
     if (l) rt->DrawTextLayout({r.left, r.top}, l, Brush(c), D2D1_DRAW_TEXT_OPTIONS_CLIP);
@@ -552,6 +562,7 @@ void Canvas::TextSp(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float
 
 void Canvas::Icon(int glyph, D2D1_POINT_2F center, float size, Color c, bool filled) {
     wchar_t ch = (wchar_t)glyph; // codepoints are bmp, fits one wchar
+    if (listening) Say(L"", glyph, {center.x - size / 2, center.y - size / 2, center.x + size / 2, center.y + size / 2});
     IDWriteTextFormat* f = gfx::IconFmt(size, filled);
     if (!f) return;
     IDWriteTextLayout* l = Layout(std::wstring(1, ch), f, 2 * size, 2 * size, 0); // 2x box, centered format does the rest; cached like text, drawtext would reshape every frame

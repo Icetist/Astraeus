@@ -1,5 +1,6 @@
 // Where the drawer lives: its screen and edge, the hover strips on the other screens, and stepping aside for fullscreen apps.
 #include "drawer.h"
+#include "board.h"
 
 #include <dwmapi.h>
 #include <shellscalingapi.h>
@@ -39,6 +40,10 @@ void Drawer::Place() {
     UINT dpiX = 96, dpiY = 96;
     scale = (SUCCEEDED(GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &dpiX, &dpiY)) ? dpiX / 96.0f : GetDpiForWindow(hwnd) / 96.0f) * Zoom(); // the target screen's dpi, times the size setting
     monitor = mi.rcMonitor; // full rect, not work area, so it sits on the top edge
+    if (model.TextPct() > 100) { // bigger text: as big as it asks, as long as the panel still fits the screen
+        float fit = (std::min)((monitor.right - monitor.left) / (cfg.panW + 2 * cfg.fillet), (monitor.bottom - monitor.top) / cfg.panH);
+        scale = (std::min)(scale, (std::max)(fit, dpiX / 96.0f));
+    }
     DWM_TIMING_INFO ti = {sizeof(ti)};
     if (SUCCEEDED(DwmGetCompositionTimingInfo(nullptr, &ti)) && ti.rateRefresh.uiDenominator > 0) { // 144hz+ screens would otherwise run ambient at 72-120 fps
         constexpr double kAmbientFps = 30, kPillFps = 15; // the pill's bars are 14 dips tall: lively at 15, half the cost of 30
@@ -50,6 +55,8 @@ void Drawer::Place() {
     reachUsed = model.haloReach;
     if (reachUsed > 0) work.bottom = (std::min)(work.bottom, mi.rcMonitor.bottom - (LONG)reachUsed); // halobar's dock floats without reserving room: kept clear of it too
     sideH = (std::min)(kSideMaxH, (work.bottom - work.top) / scale - 2 * cfg.fillet - kSideMargin); // sidebar fits between the taskbars
+    FitSize(); // the layout's size, for this screen
+    if (barOn || Pinned()) Reserve(Pinned()); // pinned: its room on this screen; unpinned: given back
     fastSync = 1; // a new screen, maybe a new refresh rate: judge it afresh
     framesSeen = framesLate = 0;
     Resize(wantH > 0 ? wantH : kStrip, false); // the depth asked for, not the right edge's padded window
@@ -150,6 +157,9 @@ void Drawer::ApplyPlace() {
     edgeNow = model.Edge();
     screensNow = model.screens;
     screenNow = model.screen;
+    layNow = model.layout;
+    pinNow = model.pinned != 0;
+    floatNow = model.floating != 0;
     if (!screensNow) mon = sys::FindScreen(screenNow); // one screen: the picked one, primary if none
     island = islandLook = false; // a resting pill goes with the old edge; the next second brings it back on the new one
     spring = anim::Spring{};
@@ -257,6 +267,8 @@ void Drawer::SyncHide() {
     // windows sends its fullscreen notice for the main screen only: it hides the panel there, any other screen is checked directly
     bool onMain = mon == MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
     bool hide = cfg.hideFull && ((fullApp && onMain) || FullOn(mon));
+    HMONITOR here = mon ? mon : MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+    hide = hide || (BoardOn(here) && !stage); // a dashboard owns this screen: the island steps aside, as for a game
     if (hide && !hidden && !stage)
         if (HMONITOR to = Refuge()) return Hop(to); // every screen: a game took this one, the pill carries on next door
     if (hide == hidden) return;

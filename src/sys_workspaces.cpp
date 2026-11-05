@@ -5,6 +5,7 @@
 #include <winhttp.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -18,6 +19,8 @@ namespace {
 
 constexpr wchar_t kTilingExe[] = L"komorebi.exe", kTilingCli[] = L"komorebic.exe"; // the pipe-based manager and its command line
 constexpr wchar_t kTilingWsExe[] = L"glazewm.exe"; // the socket-based one
+constexpr wchar_t kTilingCliExe[] = L"leopardwm.exe", kTilingCliTool[] = L"leopardwm-cli.exe"; // the one read through its command line
+constexpr wchar_t kFancyExe[] = L"fancywm.exe", kAmethystExe[] = L"amethystwindows.exe"; // these two tile on windows' own virtual desktops
 constexpr INTERNET_PORT kTilingWsPort = 6123;
 constexpr wchar_t kDesksKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VirtualDesktops";
 constexpr DWORD kLookMs = 3000; // how often the desktops source checks whether a tiling manager started
@@ -273,6 +276,8 @@ struct Workspaces::Impl {
     std::wstring cli; // the pipe manager's command line tool, while it runs
     HINTERNET socket = nullptr; // the socket manager's connection, while open
     std::vector<std::wstring> wsNames; // the socket manager's own names, by position: what its focus command takes
+    std::vector<int> cliSlots; // the command line manager's workspace numbers, by position
+    std::atomic<HANDLE> cliRead{nullptr}, cliProc{nullptr}; // its subscription: stopping ends the child, which wakes the read
 
     void Publish(WsState next) {
         {
@@ -293,6 +298,7 @@ struct Workspaces::Impl {
             std::wstring tiling = ProcPath(kTilingExe);
             if (!tiling.empty()) RunTiling(tiling);
             else if (!ProcPath(kTilingWsExe).empty()) RunTilingWs();
+            else if (std::wstring cliExe = ProcPath(kTilingCliExe); !cliExe.empty()) RunTilingCli(cliExe);
             else RunDesktops();
             if (WaitForSingleObject(stop, kRetryMs) == WAIT_OBJECT_0) break;
         }
@@ -344,7 +350,7 @@ struct Workspaces::Impl {
             DWORD r = WaitForMultipleObjects(2, waits, FALSE, kLookMs);
             if (r == WAIT_OBJECT_0) break;
             if (r == WAIT_OBJECT_0 + 1) Publish(ReadDesktops());
-            else if (!ProcPath(kTilingExe).empty() || !ProcPath(kTilingWsExe).empty()) break; // a tiling manager started: it takes over
+            else if (!ProcPath(kTilingExe).empty() || !ProcPath(kTilingWsExe).empty() || !ProcPath(kTilingCliExe).empty()) break; // a tiling manager started: it takes over
         }
         CloseHandle(ev);
         RegCloseKey(key);
@@ -418,6 +424,75 @@ struct Workspaces::Impl {
         }
         std::lock_guard<std::mutex> lock(sendMu);
         cli.clear();
+    }
+
+    // ---- the command line manager: one line of json per change from its subscribe command, the whole state asked for again on each ----
+    void TakeTilingCli(const J& doc) {
+        const J& root = doc["records"].type == J::kArr ? doc : doc["snapshot"].type == J::kObj ? doc["snapshot"] : doc["data"];
+        const J& records = root["records"];
+        if (records.type != J::kArr) return;
+        std::string mon = root["focused_monitor_device_name"].s;
+        int active = 0;
+        for (const J& r : records.a)
+            if (r["kind"].s == "monitor" && (mon.empty() || r["monitor_device_name"].s == mon)) {
+                if (mon.empty()) mon = r["monitor_device_name"].s; // none focused yet: the first screen speaks
+                active = r["active_workspace_index"].Int();
+            }
+        WsState s;
+        s.source = WsState::kTilingCli;
+        std::vector<int> slots;
+        for (const J& r : records.a) {
+            if (r["kind"].s != "workspace" || r["monitor_device_name"].s != mon || (int)slots.size() >= kMaxSpaces) continue;
+            int at = r["workspace_index"].Int();
+            std::wstring name = r["name"].type == J::kStr && !r["name"].s.empty() ? Wide(r["name"].s) : std::to_wstring(at + 1);
+            bool busy = std::any_of(records.a.begin(), records.a.end(), [&](const J& w) { return w["kind"].s == "window" && w["monitor_device_name"].s == mon && w["workspace_index"].Int() == at; });
+            if (at == active) s.current = (int)s.list.size();
+            slots.push_back(at);
+            s.list.push_back({name, busy});
+        }
+        {
+            std::lock_guard<std::mutex> lock(sendMu);
+            cliSlots = std::move(slots);
+        }
+        Publish(std::move(s));
+    }
+
+    void RunTilingCli(const std::wstring& exe) {
+        std::wstring tool = exe.substr(0, exe.find_last_of(L"\\/") + 1) + kTilingCliTool;
+        if (GetFileAttributesW(tool.c_str()) == INVALID_FILE_ATTRIBUTES) tool = kTilingCliTool; // elsewhere on the path
+        {
+            std::lock_guard<std::mutex> lock(sendMu);
+            cli = tool;
+        }
+        auto ask = [&] {
+            J doc;
+            if (ParseJson(Capture(Quote(tool) + L" query workspaces"), doc)) TakeTilingCli(doc);
+        };
+        ask();
+        SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+        HANDLE rd = nullptr, wr = nullptr;
+        HANDLE proc = nullptr;
+        if (CreatePipe(&rd, &wr, &sa, 0)) {
+            SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+            bool ok = Spawn(Quote(tool) + L" subscribe --events workspace_state", wr, &proc);
+            CloseHandle(wr);
+            cliRead = rd; // Stop closes the child, which ends the blocking read below
+            cliProc = proc;
+            char buf[4096];
+            DWORD got = 0;
+            while (ok && !Stopping() && ReadFile(rd, buf, sizeof(buf), &got, nullptr) && got)
+                if (memchr(buf, '\n', got)) ask(); // a frame ended: something moved
+            cliRead = nullptr;
+            cliProc = nullptr;
+            if (proc) {
+                TerminateProcess(proc, 0); // the subscription, if it's still there
+                CloseHandle(proc);
+            }
+            CloseHandle(rd);
+        }
+        std::lock_guard<std::mutex> lock(sendMu);
+        cli.clear();
+        cliSlots.clear();
     }
 
     // ---- the socket manager: a websocket on localhost, asked again on each event ----
@@ -503,22 +578,63 @@ struct Workspaces::Impl {
     }
 };
 
+namespace {
+
+Tiler RunningTiler() { // one look at the process list, however many managers there are to ask about
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return Tiler::kNone;
+    Tiler seen = Tiler::kNone;
+    PROCESSENTRY32W pe{sizeof(pe)};
+    for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) {
+        Tiler t = !_wcsicmp(pe.szExeFile, kTilingExe) ? Tiler::kPipe : !_wcsicmp(pe.szExeFile, kTilingWsExe) ? Tiler::kSocket : !_wcsicmp(pe.szExeFile, kTilingCliExe) ? Tiler::kCli
+                : !_wcsicmp(pe.szExeFile, kFancyExe) ? Tiler::kFancy : !_wcsicmp(pe.szExeFile, kAmethystExe) ? Tiler::kAmethyst : Tiler::kNone;
+        if (t != Tiler::kNone && (seen == Tiler::kNone || (int)t < (int)seen)) seen = t; // the order the worker prefers them in
+    }
+    CloseHandle(snap);
+    return seen;
+}
+
+bool StorePackage(const wchar_t* pattern) { // a store-installed app keeps a folder under the user's packages
+    wchar_t base[MAX_PATH] = {};
+    if (!GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH)) return false;
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW((std::wstring(base) + L"\\Packages\\" + pattern).c_str(), &fd);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    FindClose(f);
+    return true;
+}
+
+}
+
 Tiler FindTiler() {
-    if (!ProcPath(kTilingExe).empty()) return Tiler::kPipe;
-    if (!ProcPath(kTilingWsExe).empty()) return Tiler::kSocket;
+    if (Tiler running = RunningTiler(); running != Tiler::kNone) return running;
     wchar_t found[MAX_PATH];
-    if (SearchPathW(nullptr, kTilingCli, nullptr, MAX_PATH, found, nullptr)) return Tiler::kPipe; // on the path: scoop, winget and cargo all put it there
-    if (SearchPathW(nullptr, kTilingWsExe, nullptr, MAX_PATH, found, nullptr)) return Tiler::kSocket;
+    auto onPath = [&](const wchar_t* exe) { return SearchPathW(nullptr, exe, nullptr, MAX_PATH, found, nullptr) != 0; }; // scoop, winget and cargo all put them there
+    if (onPath(kTilingCli)) return Tiler::kPipe;
+    if (onPath(kTilingWsExe)) return Tiler::kSocket;
+    if (onPath(kTilingCliTool)) return Tiler::kCli;
     wchar_t pf[MAX_PATH] = {}, home[MAX_PATH] = {};
     GetEnvironmentVariableW(L"ProgramFiles", pf, MAX_PATH);
     GetEnvironmentVariableW(L"USERPROFILE", home, MAX_PATH);
     auto has = [](const std::wstring& path) { return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES; };
     if (has(std::wstring(pf) + L"\\komorebi\\bin\\" + kTilingExe) || has(std::wstring(home) + L"\\scoop\\shims\\" + kTilingExe)) return Tiler::kPipe;
     if (has(std::wstring(pf) + L"\\glzr.io\\GlazeWM\\" + kTilingWsExe) || has(std::wstring(home) + L"\\scoop\\shims\\" + kTilingWsExe)) return Tiler::kSocket;
+    if (has(std::wstring(pf) + L"\\LeopardWM\\" + kTilingCliExe) || has(std::wstring(home) + L"\\scoop\\shims\\" + kTilingCliExe)) return Tiler::kCli;
+    if (StorePackage(L"*FancyWM*") || onPath(kFancyExe)) return Tiler::kFancy;
+    if (StorePackage(L"*Amethyst*") || onPath(kAmethystExe)) return Tiler::kAmethyst;
     return Tiler::kNone;
 }
 
-const wchar_t* TilerName(Tiler t) { return t == Tiler::kPipe ? L"Komorebi" : t == Tiler::kSocket ? L"GlazeWM" : L"Windows desktops"; }
+const wchar_t* TilerName(Tiler t) {
+    switch (t) {
+    case Tiler::kPipe: return L"Komorebi";
+    case Tiler::kSocket: return L"GlazeWM";
+    case Tiler::kCli: return L"LeopardWM";
+    case Tiler::kFancy: return L"FancyWM";
+    case Tiler::kAmethyst: return L"AmethystWindows";
+    default: return L"Windows desktops";
+    }
+}
 
 Workspaces::Workspaces() = default;
 Workspaces::~Workspaces() { Stop(); }
@@ -539,6 +655,7 @@ void Workspaces::Stop() {
         std::lock_guard<std::mutex> lock(impl->sendMu);
         if (impl->socket) WinHttpWebSocketClose(impl->socket, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, nullptr, 0); // wakes a blocked receive
     }
+    if (HANDLE sub = impl->cliProc.load()) TerminateProcess(sub, 0); // its pipe closes: the worker's read returns
     if (impl->worker.joinable()) impl->worker.join();
     CloseHandle(impl->stop);
     impl.reset();
@@ -563,6 +680,15 @@ void Workspaces::Focus(int index) {
             tool = impl->cli;
         }
         if (!tool.empty()) Spawn(Quote(tool) + L" focus-workspace " + std::to_wstring(index));
+    } else if (s.source == WsState::kTilingCli) {
+        std::wstring tool;
+        int slot = -1;
+        {
+            std::lock_guard<std::mutex> lock(impl->sendMu);
+            tool = impl->cli;
+            if (index < (int)impl->cliSlots.size()) slot = impl->cliSlots[index];
+        }
+        if (!tool.empty() && slot >= 0) Spawn(Quote(tool) + L" workspace " + std::to_wstring(slot + 1)); // it counts from one
     } else if (s.source == WsState::kTilingWs) {
         std::wstring id;
         {

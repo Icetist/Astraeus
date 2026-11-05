@@ -41,8 +41,13 @@ bool Same(const uint8_t* a, const uint8_t* b, size_t n) { // no early exit
 }
 
 bool Open(const std::string& pw, std::string& out) { // the check first, then the box: only the right text opens it
-    uint8_t k[kKeyLen];
-    bool ok = Derive(pw, kSaltA, k) && Same(k, kCheck, kKeyLen) && Derive(pw, kSaltB, k);
+    uint8_t k[kKeyLen], c[kKeyLen];
+    bool second = false;
+    std::thread other([&] { second = Derive(pw, kSaltB, k); }); // both at once, on two cores: half the wait
+    bool ok = Derive(pw, kSaltA, c) && Same(c, kCheck, kKeyLen);
+    other.join();
+    ok = ok && second;
+    SecureZeroMemory(c, sizeof(c));
     BCRYPT_ALG_HANDLE alg = nullptr;
     BCRYPT_KEY_HANDLE key = nullptr;
     ok = ok && BCryptOpenAlgorithmProvider(&alg, BCRYPT_AES_ALGORITHM, nullptr, 0) == 0 &&

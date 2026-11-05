@@ -256,7 +256,8 @@ void WorkTile(PageCtx& p, const D2D1_RECT_F& r) { // every workspace as a chip: 
     c.Fill(r, 18, t.cardHi.Alpha(0.35f).Mix(t.cardHi, 0.25f * hov));
     c.StrokeV(r, 18, t.hairTop, t.hairBot, 1);
     c.Icon(glyph::Workspaces, {r.left + 22, r.top + 22}, 18, t.textDim);
-    sys::Tiler from = s.source == sys::WsState::kTiling ? sys::Tiler::kPipe : s.source == sys::WsState::kTilingWs ? sys::Tiler::kSocket : s.source == sys::WsState::kDesktops ? sys::Tiler::kNone : m.tiler;
+    sys::Tiler from = s.source == sys::WsState::kTiling ? sys::Tiler::kPipe : s.source == sys::WsState::kTilingWs ? sys::Tiler::kSocket : s.source == sys::WsState::kTilingCli ? sys::Tiler::kCli
+                    : s.source == sys::WsState::kDesktops && !sys::TilesOnDesktops(m.tiler) ? sys::Tiler::kNone : m.tiler;
     std::wstring head = hov > 0.5f ? std::wstring(L"For ") + sys::TilerName(from) : L"Workspaces"; // the hover says whose workspaces these are
     c.Text(head, Rect(r.left + 40, r.top + 12, Width(r) - 50, 20), Weight::Medium, 12.5f, hov > 0.5f ? t.accentHi : t.text);
     if (s.list.empty()) {

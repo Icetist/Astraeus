@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -23,6 +24,38 @@ public:
         bool down = false;
         bool clicked = false;
     };
+    enum class Role : uint8_t { Button, Toggle, Slider };
+    struct Item { // a control this frame: the mouse's target, the keyboard's stop, a screen reader's element
+        uint32_t id = 0;
+        D2D1_RECT_F r{};
+        Role role = Role::Button;
+        bool on = false, stop = true;
+        float value = 0;
+        std::wstring name, valueText; // only with a reader here
+    };
+
+    // the keyboard, and a screen reader pressing on its behalf
+    void Tab(int dir); // the next or previous control, in the order they're drawn
+    void Fire(uint32_t id) { fire = id; } // pressed, next frame
+    void FireFocus() { fire = focus; }
+    void KeyHold(bool on) { keyHeld = on; } // enter or space stays down: a hold-to-confirm fills
+    void FocusOn(uint32_t id) { focus = id; reveal = true; }
+    void Unfocus() { focus = 0; keyHeld = false; reveal = false; }
+    uint32_t Focused() const { return focus; }
+    bool SliderFocused() const;
+    void StepFocus(int dir) { stepId = focus; stepDir = dir; }
+    void SetValue(uint32_t id, float v) { setId = id; setTo = v; }
+    void Keyboard(bool on) { keyboard = on; } // the keyboard is in this window
+    bool Keyed() const { return keyboard || listening || focus != 0 || fire != 0 || setId != 0; } // the keyboard or a reader works here: controls out of the mouse's reach still answer
+    bool KeyMove(uint32_t id, float& value, float step); // this slider's share of the keyboard this frame; true when value changed
+    void Mark(Role role, bool on = false, float value = 0); // what the control just registered is
+    void Name(const std::wstring& name, const std::wstring& valueText = L""); // and what to call it, when its words aren't drawn on it
+    void NoStop(); // the same control as the next one: its words, say; no stop of its own
+    void Listen(bool on) { listening = on; }
+    void DrawFocus(Color ring, Color edge); // before End
+    void Reveal(const D2D1_RECT_F& view, float shown, float& target); // a scrolling list brings the focused control into view
+    const std::vector<Item>& Items() const { return hits; }
+    const D2D1_MATRIX_3X2_F& BaseXf() const { return frameXf; }
 
     void Begin(Canvas& canvas, const Input& input, float dt, double now);
     void End();
@@ -40,6 +73,7 @@ public:
     bool Captured() const { return active != 0; } // a widget owns the mouse
     bool IsActive(uint32_t id) const { return active == id; }
     void Block(bool on) { blocked = on; } // ignore input, e.g. page under an overlay
+    bool Blocked() const { return blocked; }
     bool RClick(const D2D1_RECT_F& r) const { return !blocked && in.rclick && Inside(r, in.mouse); }
     bool FreePress() const { return in.pressed && active == 0 && !claimed; } // press on empty space, e.g. close panel
 
@@ -61,7 +95,11 @@ public:
 private:
     void AddHit(uint32_t id, const D2D1_RECT_F& r);
 
-    std::vector<std::pair<uint32_t, D2D1_RECT_F>> hits, nextHits; // last frame / being built
+    std::vector<Item> hits, nextHits; // last frame / being built
+    uint32_t focus = 0, fire = 0, stepId = 0, setId = 0;
+    int stepDir = 0;
+    float setTo = 0;
+    bool keyHeld = false, reveal = false, listening = false, keyboard = false;
     uint32_t lastHover = 0;
     D2D1_MATRIX_3X2_F frameXf = D2D1::IdentityMatrix();
     Canvas* canvas = nullptr;

@@ -208,12 +208,15 @@ void SaveText(const wchar_t* name, const std::wstring& value);
 
 struct Screen {
     std::wstring name; // device name, e.g. \\.\DISPLAY2, how a pick is remembered
+    std::wstring id; // the monitor itself, the same after a replug: a dashboard's layout is kept under it
     RECT rc{};
     bool primary = false;
     int number = 0; // the number windows display settings shows
 };
 std::vector<Screen> ListScreens();
 HMONITOR FindScreen(const std::wstring& name); // null if that screen isn't connected
+HMONITOR FindScreenId(const std::wstring& id); // by Screen::id, null if that monitor isn't connected
+void ForgetScreenIds(); // the displays changed
 float Brightness(const RECT& r); // average luminance 0..1 of what's on screen there, from one tiny downscaled copy
 
 void SetEco(bool on); // efficiency mode + low memory priority while idle

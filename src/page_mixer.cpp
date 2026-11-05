@@ -69,7 +69,7 @@ bool Strip(PageCtx& p, const D2D1_RECT_F& r, const D2D1_RECT_F& view, uint32_t i
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.shell;
-    bool live = (Inside(view, ui.In().mouse) || ui.IsActive(id)) && p.m.nameFor < 0; // a fader being dragged keeps following past the view's edge
+    bool live = (Inside(view, ui.In().mouse) || ui.IsActive(id) || ui.Keyed()) && p.m.nameFor < 0; // a fader being dragged keeps following past the view's edge; the keyboard reaches them all
     float cx = (r.left + r.right) / 2;
     float hover = ui.Smooth(id + 20, live && Inside(r, ui.In().mouse) ? 1.0f : 0, 16);
     bool tinted = s.tint.a > 0;
@@ -93,6 +93,7 @@ bool Strip(PageCtx& p, const D2D1_RECT_F& r, const D2D1_RECT_F& view, uint32_t i
     D2D1_RECT_F track = {fx - kTrackW / 2, top, fx + kTrackW / 2, (std::max)(top + 20, bottom)};
     D2D1_RECT_F grab = {fx - 22, track.top - kKnobR, fx + 22, track.bottom + kKnobR};
     bool moved = live && ui.Slider(id, {grab.left, track.top, grab.right, track.bottom}, level, true);
+    if (live) ui.Name(s.name, w::Pct(level));
     if (live && Inside(grab, ui.In().mouse)) { // the wheel over a fader moves it, 5% a notch
         float n = ui.Wheel(grab);
         if (n != 0) level = (std::clamp)(level + n * kWheelStep, 0.0f, 1.0f), moved = true;
@@ -351,6 +352,28 @@ void Options(PageCtx& p, const D2D1_RECT_F& r) { // ducking depth, shortcuts, th
     c.Text(L"A profile keeps each group's level, mute and output, and the chat mix.", Rect(x, y, w, 16), Weight::Light, 10.5f, t.textLow);
 }
 
+constexpr float kOutRowH = 34; // the outputs, across the top of the strips
+
+float OutRow(PageCtx& p, const D2D1_RECT_F& body) { // every output as a chip: a tap makes it the default, so every app following the default goes with it; returns the height used
+    Model& m = p.m;
+    if (m.outs.size() < 2) return 0;
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    constexpr float kH = 26, kGap = 6, kLabelW = 54;
+    c.Icon(glyph::Speaker, {body.left + 10, body.top + kH / 2}, 15, t.textDim);
+    c.Text(L"Output", Rect(body.left + 22, body.top, kLabelW, kH), Weight::Regular, 11.5f, t.textDim);
+    float x = body.left + 22 + kLabelW;
+    for (size_t i = 0; i < m.outs.size(); ++i) {
+        std::wstring label = Short(m.outs[i].name, 24);
+        float cw = c.Measure(label, Weight::Medium, 11) + 26;
+        if (x + cw > body.right) break;
+        if (w::Chip(ui, t, Ui::Id("mix.outs", (int)i), Rect(x, body.top, cw, kH), label, m.outs[i].id == m.outId)) m.SetOutTo(m.outs[i].id);
+        x += cw + kGap;
+    }
+    return kOutRowH;
+}
+
 void Header(PageCtx& p, const D2D1_RECT_F& s) {
     Ui& ui = p.ui;
     Canvas& c = ui.C();
@@ -358,13 +381,12 @@ void Header(PageCtx& p, const D2D1_RECT_F& s) {
     Model& m = p.m;
     float hy = s.top + 30;
     c.Text(L"Mixer", Rect(s.left + 24, s.top + 12, 200, 28), Weight::Semi, 21, t.text);
-    std::wstring out = m.mixer.Device(); // laptops never list outputs, so ask the mixer's own device
-    for (const auto& d : m.outs)
-        if (d.id == m.outId) out = d.name;
-    if (out.empty()) out = L"No output";
-    Ui::Hit h = m.outs.size() > 1 ? ui.Button(Ui::Id("mix.out"), Rect(s.left + 24, s.top + 40, 220, 16)) : Ui::Hit{};
-    c.Text(out + (m.outs.size() > 1 ? L"  ›" : L""), Rect(s.left + 24, s.top + 40, 240, 16), Weight::Light, 12, h.hover ? t.text : t.textDim);
-    if (h.clicked) m.CycleOut(); // every app that follows the default goes with it
+    if (m.outs.size() < 2) { // one output: nothing to choose, its name says where the sound goes
+        std::wstring out = m.mixer.Device(); // laptops never list outputs, so ask the mixer's own device
+        for (const auto& d : m.outs)
+            if (d.id == m.outId) out = d.name;
+        c.Text(out.empty() ? L"No output" : out, Rect(s.left + 24, s.top + 40, 240, 16), Weight::Light, 12, t.textDim);
+    }
     if (w::IconBtn(ui, t, Ui::Id("mix.close"), {s.right - 30, hy}, 30, glyph::Close, 18)) m.CloseMixer();
     if (w::IconBtn(ui, t, Ui::Id("mix.opts"), {s.right - 64, hy}, 30, opts ? glyph::Check : glyph::Tune, 17)) opts = !opts, m.deskEdit = -1;
     float cx = s.right - 96;
@@ -417,7 +439,8 @@ void DrawMixer(PageCtx& p, float k) {
         return;
     }
     bool chat = m.desk.Chatting();
-    D2D1_RECT_F view = {body.left, body.top, body.right, body.bottom - (chat ? kChatH + 10 : 0)};
+    float outsH = OutRow(p, body);
+    D2D1_RECT_F view = {body.left, body.top + outsH, body.right, body.bottom - (chat ? kChatH + 10 : 0)};
     const auto& apps = m.mixer.Apps();
     float total = 2 * (kStripW + kStripGap); // master and mic
     for (int g = 0; g < (int)m.desk.groups.size(); ++g) {

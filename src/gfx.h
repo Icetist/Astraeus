@@ -70,6 +70,13 @@ public:
     ID2D1StrokeStyle* RoundCaps() const { return rndCaps.Get(); }
     void Glow(D2D1_POINT_2F center, float rx, float ry, Color c, const D2D1_ROUNDED_RECT* in = nullptr); // radial falloff, cached per color; in: kept inside a card's rounded corners
     void NewFrame(); // advances frame counter, sweeps stale layouts
+    struct Word { // something written or an icon drawn, for a screen reader; TextOnce's typed text is never among them
+        std::wstring text;
+        int glyph; // 0: words
+        D2D1_RECT_F r; // on the target
+    };
+    void Listen(bool on) { listening = on; } // a reader is here: remember this frame's words
+    const std::vector<Word>& Words() const { return words; }
     void FillV(const D2D1_RECT_F& r, float radius, Color top, Color bottom); // V = vertical gradient, H = horizontal
     void StrokeV(const D2D1_RECT_F& r, float radius, Color top, Color bottom, float width);
     void FillH(const D2D1_RECT_F& r, float radius, Color left, Color right);
@@ -119,6 +126,9 @@ private:
     ComPtr<ID2D1DeviceContext1> dc1; // null on a target without realizations: kept draws go the plain way
     std::vector<Real> reals;
     uint32_t frame = 0;
+    void Say(const std::wstring& s, int glyph, const D2D1_RECT_F& r);
+    bool listening = false;
+    std::vector<Word> words;
 };
 
 inline D2D1_RECT_F Rect(float x, float y, float w, float h) { return {x, y, x + w, y + h}; }

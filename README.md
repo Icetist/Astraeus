@@ -67,6 +67,10 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 - **A rail that scrolls.** With more than five pages on, the rail shows five and scrolls instead of squeezing them in: small arrows show where the rest are, the wheel moves it one page at a time, and Up and Down switch pages while the mouse is over it (Left and Right when Astraeus sits on a side edge).
 - **The island.** Over a maximized window, or tiled windows that fill the screen, a small pill shows what's playing instead of dropping the whole panel over your work. It can stay a moment, minutes, or always while music plays. With **Pill on the desktop** (on by default) it also stays up whenever no app window is under it, after Win+D or once the last window closes; it goes again when a window comes back under it. Turn on **Always show the pill** and it stays up with the clock between two small widgets of your choice (weather, battery, CPU, memory or network); it repaints only when one of them changes, once a minute for the clock. Windows notifications can arrive as pills too, and when HaloBar is running with its notification pills on they always do, in place of its own. Do Not Disturb, in Settings and on the Tools page, quiets them, and is shared with HaloBar.
 - **Volume and brightness pill (experimental).** Off by default. Switch on **Replace Windows volume popup** and a pill shows every volume and brightness change. While it's on, Astraeus takes the volume keys before Windows sees them, so Windows' own volume popup stays away; the brightness keys still bring up Windows' popup alongside it.
+- **A Widgets page.** More than 80 widgets to choose from a searchable gallery: clocks, weather, timers, notes, system rings, stocks, and accounts you connect with your own keys. Each one can be small, wide or large, and you arrange them by dragging.
+- **A display dashboard.** Give a whole screen to a grid of tiles you arrange yourself, with its own layout for each monitor.
+- **Accessibility.** High contrast, a text size that can follow Windows, full keyboard navigation, and support for Narrator, NVDA and JAWS. See **Settings → Advanced → Accessibility**.
+- **Report a problem.** **Settings → Advanced** copies a short report to your clipboard, with your name taken out. Nothing is sent: you read it, then paste it where you choose.
 - **A hello at sign-in.** When it starts with Windows, the Home page drops down to greet you and goes back up the moment you move the mouse.
 - **Gets out of the way.** Hides itself when a game or video goes fullscreen. When it's on every screen, the pill moves straight to a screen without a game.
 - **Stays up to date.** New releases install themselves in the background, and only after their SHA-256 matches the one published with the release. **Check for updates** in the tray menu looks right away. See [Updates](#updates).
@@ -255,6 +259,12 @@ Astraeus has no accounts, no analytics and no telemetry. It talks to the network
 | Calendar | The private calendar links you added | Nothing beyond the request | At launch and when you open the calendar; nothing runs on a timer | Remove the calendar |
 | Updates | `api.github.com` and this repository's release downloads | Nothing beyond the request | 30 seconds after launch, then every 3 hours | `AutoUpdate = false` |
 | Server monitor on the Tools page | Only the servers you add | One ping, or a plain request for web addresses | Once a minute while any server is listed | Remove the servers |
+| Weather widgets | `geocoding-api.open-meteo.com` and `api.open-meteo.com` | Your city and its coordinates | Only while the panel is open and the widget is on your Widgets page, at most every 30 minutes | Remove the widget |
+| Stock widgets | `query1.finance.yahoo.com` | The tickers you chose | Only while the panel is open and the widget is on your Widgets page, every 5 minutes | Remove the widget |
+| Metric widget | `api.coinbase.com` | The pair you chose, like BTC-USD | Only while the panel is open and the widget is on your Widgets page, every 2 minutes | Remove the widget |
+| Currency widget | `open.er-api.com` | The currency you convert from | Only while the panel is open and the widget is on your Widgets page, every 6 hours | Remove the widget |
+| LeetCode widget | `leetcode.com` | The username you entered | Only while the panel is open and the widget is on your Widgets page, every 15 minutes | Remove the widget |
+| Account widgets, only the ones you connect | That service only: Stripe, Polar, Dodo Payments, Shopify, Lemon Squeezy, Paddle, Gumroad, Plausible, Dub, DataFast, Resend, Linear, Supabase, Gmail, GitHub, YouTube, X, TikTok or Instagram | The key, token or password you entered for it, and the store, site, project, channel or username if it needs one | Only while the panel is open and the widget is on your Widgets page, every 15 minutes | Remove the widget |
 | Updates tile on the Tools page | winget's own package source, through winget itself; Windows updates are read from what Windows already knows, with no download | Nothing beyond the request | A minute after launch, then every 6 hours, only while the tile is on the Tools page | Remove the tile |
 
 What stays on your PC:
@@ -264,6 +274,9 @@ What stays on your PC:
 - **`%LOCALAPPDATA%\Astraeus`** holds the lyrics cache (`lyrics`, the last 300 songs), your calendar links (`accounts`, encrypted with Windows so only your Windows user can read them, and shared with HaloBar), and `shelf.txt` only if **Keep after restart** is on the Shelf page.
 - **Notification pills** read Windows' own notification list on your PC while they're switched on. Nothing from it leaves the machine.
 - **Workspaces** talk only to a tiling window manager running on your own PC, over a local pipe or `localhost`, or read Windows' own virtual desktops.
+- **Widget keys and passwords** are encrypted with Windows so only your Windows user can read them, and kept in the registry with the rest of each widget's settings and your notes. **Export** leaves all of these out, so widgets need connecting again on another PC.
+- **Screen Time** notes the app in front every 15 seconds, only while that widget is on your Widgets page, in `%LOCALAPPDATA%\Astraeus\screentime.txt`.
+- **A problem report** is only ever copied to your clipboard. It holds your version, PC specs, a short list of plain settings and recent lines from `astraeus.log`, with your user name, PC name and home folder replaced. Read it before you share it.
 - **The mixer's groups and profiles, your to-dos and your server list** live in the registry under `HKCU\Software\Astraeus`.
 
 ## ✍️ Code signing policy

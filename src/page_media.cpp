@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 #include "anim.h"
 #include "glyphs.h"
@@ -16,8 +17,9 @@ void Wave(PageCtx& p, const D2D1_RECT_F& r, float fraction, bool playing, bool c
     const Theme& t = p.media;
     uint32_t id = Ui::Id("md.seek");
     float v = !known ? 1.0f : preview >= 0 ? preview : fraction; // unknown length: whole line waves, no playhead
-    if (canSeek && known && ui.Slider(id, r, v, false)) preview = v; // preview seek while dragging; no length, no place to seek to
-    if (ui.IsActive(id) && ui.In().released) { // commit seek on release only
+    bool moved = canSeek && known && ui.Slider(id, r, v, false);
+    if (moved) preview = v; // preview seek while dragging; no length, no place to seek to
+    if ((ui.IsActive(id) && ui.In().released) || (moved && !ui.IsActive(id))) { // commit seek on release only; the keyboard's step at once
         p.m.media.Seek(v);
         preview = -1;
     }
@@ -38,10 +40,18 @@ void Wave(PageCtx& p, const D2D1_RECT_F& r, float fraction, bool playing, bool c
 
 constexpr int kBlobs = 5; // a few big soft blobs across the media card
 Swell vizSwell;
+Waveform vizWave;
 
 void DrawViz(PageCtx& p, const D2D1_RECT_F& r) { // soft light swelling up from the bottom of the card: bass on the left, treble on the right
     if (!p.m.vizOn || !p.m.hasTrack) return;
     Ui& ui = p.ui;
+    if (p.m.vizWave) { // or bars the whole width of the card, behind the art and the words
+        if (!StepWave(vizWave, p.m, ui.Dt(), p.m.track.playing)) return;
+        ui.KeepAlive();
+        D2D1_ROUNDED_RECT card = D2D1::RoundedRect(r, 24, 24);
+        DrawWave(ui.C(), vizWave, Inset(r, 18, Height(r) * 0.12f), p.media, 0.55f, &card);
+        return;
+    }
     if (!StepSwell(vizSwell, p.m, ui.Dt(), p.m.track.playing, kBlobs)) return; // nothing glowing: no work
     ui.KeepAlive(); // animate until fully faded
     D2D1_ROUNDED_RECT card = D2D1::RoundedRect(r, 24, 24); // the light stays inside the card's rounded corners
@@ -116,6 +126,37 @@ bool StepSwell(Swell& s, Model& m, float dt, bool playing, int blobs) {
     return alive || s.heat > 0.003f;
 }
 
+bool StepWave(Waveform& w, Model& m, float dt, bool playing) {
+    float raw[sys::Spectrum::kBands] = {};
+    if (playing) m.Bands(raw);
+    constexpr float kFirst = 2, kSpan = 52; // ~40 Hz to ~10 kHz, as the glow uses
+    bool alive = false;
+    for (int i = 0; i < Waveform::kBars; ++i) {
+        float at = kFirst + kSpan * std::pow(i / (float)(Waveform::kBars - 1), 1.25f); // a little more room for the low end, where the beat is
+        int b = (int)at;
+        float f = at - b, want = raw[b] * (1 - f) + raw[(std::min)(b + 1, sys::Spectrum::kBands - 1)] * f;
+        float& g = w.gain[i];
+        g = (std::max)(want, g - dt * 0.15f); // its own recent loudest: every bar uses its whole height
+        want = anim::Clamp01((want / (std::max)(g, 0.16f) * m.VizGain() - 0.15f) / 0.85f);
+        float& v = w.level[i];
+        v += (want - v) * (std::min)(1.0f, dt * (want > v ? 22.0f : 6.0f)); // up fast, down soon after
+        alive = alive || v > 0.005f;
+    }
+    return alive;
+}
+
+void DrawWave(Canvas& c, const Waveform& w, const D2D1_RECT_F& r, const Theme& t, float alpha, const D2D1_ROUNDED_RECT* in) {
+    float slot = Width(r) / Waveform::kBars, bw = (std::max)(2.0f, slot * 0.52f), cy = (r.top + r.bottom) / 2, half = Height(r) / 2;
+    if (in) c.Glow({(r.left + r.right) / 2, cy}, Width(r) * 0.55f, half * 1.4f, t.accent.Alpha(0.10f * alpha), in); // a breath of light behind the bars
+    for (int i = 0; i < Waveform::kBars; ++i) {
+        float v = w.level[i];
+        float edge = std::sin(kPi * (i + 0.5f) / Waveform::kBars); // the ends taper, like a wave rolling in and out
+        float hh = (std::max)(bw / 2, half * v * (0.35f + 0.65f * edge));
+        float x = r.left + slot * (i + 0.5f);
+        c.Fill({x - bw / 2, cy - hh, x + bw / 2, cy + hh}, bw / 2, t.accent.Mix(t.accentHi, v).Alpha(alpha * (0.35f + 0.65f * v)));
+    }
+}
+
 void DrawSwell(Canvas& c, const Swell& s, int blobs, const D2D1_RECT_F& r, const Theme& t, double now, const D2D1_ROUNDED_RECT* in) {
     float w = Width(r), h = Height(r), slot = w / blobs, tm = (float)now; // two glow colors, alpha varies: the brush cache stays tiny
     if (s.heat > 0.003f) c.Glow({(r.left + r.right) / 2, r.bottom}, w * 0.70f, h * (0.25f + 0.45f * s.heat), t.accent.Alpha(0.12f + 0.33f * s.heat), in); // warm wash along the floor
@@ -150,11 +191,85 @@ void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale, const Theme& t) {
            t.accentHi.Alpha(0.05f + 0.32f * rr), &card);
 }
 
-D2D1_RECT_F ArtHover(PageCtx& p, const D2D1_RECT_F& art) { // hover: the cover lifts and a tip offers fullscreen, a click goes there
+// what else is playing: a small list over the page, from a right click on the cover. the page itself stays as it is
+constexpr float kMenuW = 310, kMenuHead = 30, kMenuRow = 50, kMenuNote = 30, kMenuBack = 34, kMenuPad = 6, kMenuInset = 8, kMenuThumb = 36;
+bool menuOpen = false;
+D2D1_POINT_2F menuAt{};
+int menuNth = 0; // each opening fades in afresh
+int menuVisit = 0; // the page visit it belongs to
+
+void SourceMenu(PageCtx& p) {
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.media;
+    Model& m = p.m;
+    const Input& in = ui.In();
+    std::vector<const sys::MediaSource*> rows; // the one showing, then what's sounding, then the paused
+    for (const auto& s : m.mediaSources) rows.push_back(&s);
+    std::stable_sort(rows.begin(), rows.end(), [](const sys::MediaSource* a, const sys::MediaSource* b) { return a->followed != b->followed ? a->followed : a->playing > b->playing; });
+    int fit = (std::max)(1, (int)((Height(p.area) - 2 * kMenuInset - kMenuHead - 2 * kMenuPad - kMenuBack) / kMenuRow));
+    if ((int)rows.size() > fit) rows.resize((size_t)fit);
+    bool pinned = !m.mediaPin.empty(), alone = rows.size() < 2;
+    float h = kMenuHead + rows.size() * kMenuRow + (alone ? kMenuNote : 0) + (pinned && !alone ? kMenuBack : 0) + kMenuPad;
+    float wide = (std::min)(kMenuW, Width(p.area) - 2 * kMenuInset);
+    float x = (std::clamp)(menuAt.x, p.area.left + kMenuInset, (std::max)(p.area.left + kMenuInset, p.area.right - wide - kMenuInset));
+    float y = (std::clamp)(menuAt.y, p.area.top + kMenuInset, (std::max)(p.area.top + kMenuInset, p.area.bottom - h - kMenuInset));
+    D2D1_RECT_F box = Rect(x, y, wide, h);
+    if (in.rclick || (in.pressed && !Inside(box, in.mouse))) { // anywhere else: it goes, and that click does nothing more
+        menuOpen = false;
+        return;
+    }
+    float a = ui.SmoothFrom(Ui::Id("md.menu", menuNth), 1, 0, 20);
+    c.Glow({(box.left + box.right) / 2, box.top + h * 0.6f}, Width(box) * 0.75f, h * 0.8f, Color{0, 0, 0, 0.45f * a});
+    c.Target()->PushLayer(D2D1::LayerParameters(Inset(box, -2, -2), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), a), nullptr);
+    c.Fill(box, 16, t.cardHi.Alpha(1));
+    c.StrokeV(box, 16, t.hairTop, t.hairBot, 1);
+    c.TextSp(L"PLAYING NOW", Rect(box.left + 14, box.top + 10, Width(box) - 28, 14), Weight::Medium, 10, t.textLow, 1.4f);
+    float ry = box.top + kMenuHead;
+    const sys::MediaSource* pick = nullptr;
+    for (size_t i = 0; i < rows.size(); ++i, ry += kMenuRow) {
+        const sys::MediaSource& s = *rows[i];
+        D2D1_RECT_F row = Rect(box.left + kMenuPad, ry, Width(box) - 2 * kMenuPad, kMenuRow - 2);
+        Ui::Hit hit = ui.Button(Ui::Id("md.src", (int)i), row);
+        std::wstring title = s.title.empty() ? s.app : s.title, state = s.playing ? L"Playing" : L"Paused";
+        ui.Name(title + L", " + s.app + L", " + state);
+        if (s.followed || hit.hover) c.Fill(row, 11, s.followed ? t.accent.Alpha(hit.hover ? 0.22f : 0.14f) : t.text.Alpha(0.07f));
+        D2D1_POINT_2F thumb = {row.left + 7 + kMenuThumb / 2, (row.top + row.bottom) / 2};
+        c.Fill(Rect(thumb.x - kMenuThumb / 2, thumb.y - kMenuThumb / 2, kMenuThumb, kMenuThumb), 9, t.track.Alpha(1));
+        c.Icon(glyph::Music, thumb, 19, s.playing ? t.accentHi : t.textDim);
+        float tx = row.left + 7 + kMenuThumb + 10, tw = row.right - tx - (s.followed ? 30 : 8);
+        c.Text(title, Rect(tx, row.top + 6, tw, 19), Weight::Medium, 13, t.text);
+        std::wstring sub = (s.artist.empty() ? s.app : s.artist + L"  ·  " + s.app) + L"  ·  " + state;
+        c.Text(sub, Rect(tx, row.top + 25, tw, 16), Weight::Light, 11, t.textDim);
+        if (s.followed) c.Icon(glyph::Check, {row.right - 16, thumb.y}, 16, t.accentHi);
+        if (hit.clicked) pick = &s;
+    }
+    if (alone) c.Text(L"Nothing else is playing", Rect(box.left, ry, Width(box), kMenuNote), Weight::Light, 11.5f, t.textLow, Align::Center);
+    else if (pinned) {
+        D2D1_RECT_F back = Rect(box.left + kMenuPad, ry, Width(box) - 2 * kMenuPad, kMenuBack - 2);
+        Ui::Hit hit = ui.Button(Ui::Id("md.src.auto"), back);
+        if (hit.hover) c.Fill(back, 10, t.text.Alpha(0.07f));
+        c.Text(L"Go back to following what's playing", back, Weight::Regular, 12, t.textDim, Align::Center);
+        if (hit.clicked) m.media.Follow(L""), menuOpen = false;
+    }
+    c.Target()->PopLayer();
+    if (pick) {
+        if (!pick->followed) m.media.Follow(pick->id); // the page and its lyrics move over to it
+        menuOpen = false;
+    }
+}
+
+D2D1_RECT_F ArtHover(PageCtx& p, const D2D1_RECT_F& art) { // hover: the cover lifts and a tip offers fullscreen, a click goes there; a right click lists what else is playing
     if (!p.m.hasTrack) return art;
     uint32_t id = Ui::Id("md.art");
     Ui::Hit h = p.ui.Button(id, art);
     if (h.clicked) p.wantStage = true;
+    if (p.ui.RClick(art)) {
+        menuOpen = true;
+        menuAt = p.ui.In().mouse;
+        ++menuNth;
+        p.m.media.RefreshSources();
+    }
     float lift = p.ui.Smooth(id + 1, h.hover ? 1.0f : 0, 14);
     if (lift > 0.01f) {
         p.hint = L"Fullscreen?";
@@ -256,7 +371,22 @@ void MediaTall(PageCtx& p) { // sidebar: big centered art, everything else stack
     OnDot(p, "md.repeat", {cx + 132, cy}, has && tr.repeat != 0);
 }
 
+static void DrawMediaBody(PageCtx& p);
+
 void DrawMedia(PageCtx& p) {
+    Ui& ui = p.ui;
+    if (ui.Blocked() || menuVisit != p.m.pageVisit) menuOpen = false; // a sheet over the page, or left and come back
+    menuVisit = p.m.pageVisit;
+    bool menu = menuOpen;
+    if (menu) ui.Block(true); // while it's up the page under it takes no clicks
+    DrawMediaBody(p);
+    if (menu) {
+        ui.Block(false);
+        SourceMenu(p);
+    }
+}
+
+static void DrawMediaBody(PageCtx& p) {
     if (Height(p.area) > Width(p.area)) {
         MediaTall(p);
         return;

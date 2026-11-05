@@ -14,14 +14,15 @@ struct Workspace {
 };
 
 struct WsState {
-    enum Source { kNone, kDesktops, kTiling, kTilingWs }; // windows' virtual desktops, a tiling manager over a pipe or over a socket
+    enum Source { kNone, kDesktops, kTiling, kTilingWs, kTilingCli }; // windows' virtual desktops, a tiling manager over a pipe, a socket or its command line
     int source = kNone;
     std::vector<Workspace> list;
     int current = -1;
 };
 
-enum class Tiler { kNone, kPipe, kSocket }; // which tiling manager this pc has: the pipe one or the socket one
-Tiler FindTiler(); // a quick look: running now, or installed where they usually go; a few file checks, no scan
+enum class Tiler { kNone, kPipe, kSocket, kCli, kFancy, kAmethyst }; // which tiling manager this pc has; the last two tile on windows' own virtual desktops, read as desktops
+Tiler FindTiler(); // a quick look: running now, or installed where they usually go; one process list and a few file checks, no scan
+inline bool TilesOnDesktops(Tiler t) { return t == Tiler::kFancy || t == Tiler::kAmethyst; }
 const wchar_t* TilerName(Tiler t); // what the tile's hover calls it
 
 class Workspaces {

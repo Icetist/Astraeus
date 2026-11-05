@@ -31,6 +31,12 @@ struct Swell { // soft blobs of light that rise from the bottom and swell with t
     float level[kMax] = {}, gain[kMax] = {}, heat = 0; // eased blob sizes, each blob's recent loudest, overall warmth
 };
 bool StepSwell(Swell& s, Model& m, float dt, bool playing, int blobs); // true while anything still glows
+struct Waveform { // bars across the player, mirrored about its middle: bass on the left, treble on the right
+    static constexpr int kBars = 48;
+    float level[kBars] = {}, gain[kBars] = {};
+};
+bool StepWave(Waveform& w, Model& m, float dt, bool playing); // true while any bar still stands
+void DrawWave(Canvas& c, const Waveform& w, const D2D1_RECT_F& r, const Theme& t, float alpha, const D2D1_ROUNDED_RECT* in = nullptr);
 void DrawSwell(Canvas& c, const Swell& s, int blobs, const D2D1_RECT_F& r, const Theme& t, double now, const D2D1_ROUNDED_RECT* in = nullptr); // glows up from r's bottom, in: kept inside a card
 void WaveLine(Canvas& c, float a0, float a1, float cy, float amp, double now, Color col, float width, float wavelen); // the played part of the seek line, rippling
 
@@ -40,8 +46,12 @@ void DrawSys(PageCtx& p);
 void DrawNet(PageCtx& p);
 void DrawTools(PageCtx& p);
 void DrawShelf(PageCtx& p); // files and notes dropped on the island
+void DrawWidgetsPage(PageCtx& p); // the widgets picked in settings
+float WidgetsCardH(const Model& m, float w); // settings' card that picks them
+void WidgetsCard(PageCtx& p, const D2D1_RECT_F& r, bool live);
 void ForgetShelfArt(); // the device is going: drop the shelf's preview bitmaps
 void ShelfClosed(); // the panel went up: the shelf's menus and open card go with it
+void ShelfToast(const wchar_t* text); // a word at the bottom of the shelf page, on its next frame
 void FlipArt(PageCtx& p, const D2D1_RECT_F& r, float radius, float iconPx); // album art that turns over on a track change
 float DrawPrefs(PageCtx& p, const D2D1_RECT_F& area, bool live, bool tall); // the newer settings cards, returns their height
 void DrawBt(PageCtx& p, float t); // bluetooth menu overlay, t = open anim 0..1

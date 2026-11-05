@@ -161,7 +161,10 @@ void Bars(Canvas& c, const Theme& t, float x, float bottom, int quality, Color l
 float Scroll(Ui& ui, const char* id, float& target, const D2D1_RECT_F& view, float content, bool wheel) {
     float maxS = (std::max)(0.0f, content - Height(view));
     target = (std::clamp)(target - (wheel ? ui.Wheel(view) : 0.0f) * 60, 0.0f, maxS); // 60 dips per notch
-    return ui.Smooth(Ui::Id(id), target, 18);
+    float shown = ui.Smooth(Ui::Id(id), target, 18);
+    ui.Reveal(view, shown, target); // the keyboard moved to something out of view
+    target = (std::clamp)(target, 0.0f, maxS);
+    return shown;
 }
 
 void Fades(Canvas& c, const Theme& t, const D2D1_RECT_F& view, float scroll, float content) {
@@ -187,6 +190,7 @@ int Segmented(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, cons
     for (int i = 0; i < n; ++i) {
         D2D1_RECT_F cell = {r.left + seg * i, r.top, r.left + seg * (i + 1), r.bottom};
         Ui::Hit h = live ? ui.Button(Ui::Id(id, i), cell) : Ui::Hit{};
+        if (live) ui.Mark(Ui::Role::Toggle, i == cur);
         if (h.clicked && i != cur) picked = i;
         c.Text(labels[i], cell, Weight::Medium, 11.5f, i == cur ? t.onAccent : t.textDim.Mix(t.text, h.hover ? 0.6f : 0), Align::Center);
     }
@@ -227,13 +231,19 @@ bool Knob(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const wchar
     float pad = kThumbR + kThumbGrow + 1, cy = (grab.top + r.bottom) / 2 + 1;
     float x0 = r.left + pad, x1 = r.right - pad; // the thumb stays inside the row
     Ui::Hit h = live ? ui.Button(id, grab) : Ui::Hit{};
+    if (live) {
+        ui.Mark(Ui::Role::Slider, false, v);
+        ui.Name(label, value);
+    }
     bool dragging = ui.IsActive(id) && (in.down || in.released);
     bool changed = false;
+    bool keyed = live && ui.KeyMove(id, v, step); // arrows: a step each, saved at once
     if (dragging && x1 > x0) { // a press jumps there, a drag follows
         float f = anim::Clamp01((in.mouse.x - x0) / (x1 - x0));
         if (std::fabs(f - v) >= 0.0005f) v = f, changed = true;
     }
     released = ui.IsActive(id) && in.released;
+    if (keyed) changed = released = true;
     if (live && !ui.Captured()) {
         if (float notches = ui.Wheel(grab)) { // a notch is a step, saved at once
             float was = v;

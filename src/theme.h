@@ -26,6 +26,8 @@ struct Theme {
 
 namespace theme {
 constexpr int kStarfall = 5; // the look's number; 4 is taken by following halobar
+void SetContrast(bool on); // every look comes out in windows' high contrast colors, or strong plain ones
+bool Contrast();
 Color Hsl(float h, float s, float l, float a = 1);
 Seed FromCol(Color c);
 float Luma(Color c); // relative luminance, 0 black .. 1 white

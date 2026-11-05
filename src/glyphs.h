@@ -31,5 +31,6 @@ constexpr int VolumeDown = 0xE04D; // hud
 constexpr int Translate = 0xE8E2, Update = 0xE923, Box = 0xE835, BoxOn = 0xE834, Server = 0xE875, Window = 0xE069, Workspaces = 0xE9B0, Clear = 0xE14C; // the tools tiles and lists
 constexpr int Chat = 0xE311, Movie = 0xE02C, Web = 0xE80B, Work = 0xE8F9, More = 0xE5CF, Less = 0xE5CE, Tune = 0xE429; // the mixer's groups
 inline constexpr int kGroupIcons[8] = {Pad, Chat, Music, Movie, Web, Bell, Work, Speaker}; // by DeskGroup::icon
+constexpr int Schedule = 0xE8B5, Calendar = 0xEBCC, Lyrics = 0xEC0B, Dashboard = 0xE871, Resize = 0xF707, Layout = 0xE8F1; // the display dashboard and the layouts
 constexpr int Shelf = 0xE1A1, File = 0xE873, Note = 0xF1FC, Image = 0xE3F4, Folder = 0xE2C7, Drop = 0xF090; // the shelf
 }

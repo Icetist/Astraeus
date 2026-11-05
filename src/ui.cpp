@@ -2,6 +2,7 @@
 
 #include <d2d1_1helper.h>
 
+#include <algorithm>
 #include <cmath>
 
 #include "anim.h"
@@ -29,6 +30,92 @@ void Ui::End() {
     hits.swap(nextHits); // double buffer: hit test uses last frame's rects
     nextHits.clear();
     lastHover = HitAt(in.mouse);
+    fire = stepId = setId = 0; // keyboard presses last one frame
+    stepDir = 0;
+    if (focus && std::none_of(hits.begin(), hits.end(), [this](const Item& h) { return h.id == focus && h.stop; })) reveal = false; // gone with its page or sheet
+}
+
+void Ui::Tab(int dir) {
+    std::vector<const Item*> stops;
+    for (const Item& h : hits)
+        if (h.stop) stops.push_back(&h);
+    if (stops.empty()) return;
+    int at = -1;
+    for (int i = 0; i < (int)stops.size(); ++i)
+        if (stops[i]->id == focus) at = i;
+    int n = (int)stops.size();
+    at = at < 0 ? (dir > 0 ? 0 : n - 1) : (at + dir + n) % n; // lost its place: from the ends, and round again
+    focus = stops[at]->id;
+    reveal = true;
+}
+
+bool Ui::SliderFocused() const {
+    return std::any_of(hits.begin(), hits.end(), [this](const Item& h) { return h.id == focus && h.role == Role::Slider; });
+}
+
+bool Ui::KeyMove(uint32_t id, float& value, float step) {
+    bool moved = false;
+    if (id == setId) value = anim::Clamp01(setTo), moved = true;
+    if (id == stepId && stepDir) {
+        float was = value;
+        value = anim::Clamp01(value + stepDir * step);
+        moved = value != was;
+    }
+    if (moved) animating = true;
+    return moved;
+}
+
+void Ui::Mark(Role role, bool on, float value) {
+    if (nextHits.empty()) return;
+    Item& it = nextHits.back();
+    it.role = role;
+    it.on = on;
+    it.value = value;
+}
+
+void Ui::Name(const std::wstring& name, const std::wstring& valueText) {
+    if (!listening || nextHits.empty()) return;
+    nextHits.back().name = name;
+    nextHits.back().valueText = valueText;
+}
+
+void Ui::NoStop() {
+    if (!nextHits.empty()) nextHits.back().stop = false;
+}
+
+void Ui::DrawFocus(Color ring, Color edge) {
+    if (!focus) return;
+    for (const Item& h : nextHits) {
+        if (h.id != focus || !h.stop) continue;
+        D2D1_MATRIX_3X2_F was;
+        canvas->Target()->GetTransform(&was);
+        canvas->Target()->SetTransform(frameXf);
+        D2D1_RECT_F r = Inset(h.r, -3, -3);
+        float rad = (std::min)((std::min)(Width(r), Height(r)) / 2, 12.0f);
+        canvas->Stroke(r, rad, edge, 4.5f); // two tones: it shows over any color
+        canvas->Stroke(r, rad, ring, 2.5f);
+        canvas->Target()->SetTransform(was);
+        return;
+    }
+}
+
+void Ui::Reveal(const D2D1_RECT_F& view, float shown, float& target) {
+    if (!reveal || !focus) return;
+    D2D1::Matrix3x2F m, inv = *D2D1::Matrix3x2F::ReinterpretBaseType(&frameXf);
+    canvas->Target()->GetTransform(&m);
+    if (!inv.Invert()) return;
+    D2D1::Matrix3x2F toFrame = m * inv;
+    D2D1_POINT_2F a = toFrame.TransformPoint({view.left, view.top}), b = toFrame.TransformPoint({view.right, view.bottom});
+    for (const Item& h : hits) {
+        if (h.id != focus) continue;
+        float mid = (h.r.left + h.r.right) / 2;
+        if (mid < a.x || mid > b.x) return; // not in this list: the rail, say
+        constexpr float kAir = 14; // a little room around it
+        if (h.r.top < a.y + kAir) target = shown - (a.y + kAir - h.r.top);
+        else if (h.r.bottom > b.y - kAir) target = shown + (h.r.bottom - b.y + kAir);
+        else reveal = false; // in view
+        return;
+    }
 }
 
 void Ui::AddHit(uint32_t id, const D2D1_RECT_F& r) {
@@ -38,12 +125,15 @@ void Ui::AddHit(uint32_t id, const D2D1_RECT_F& r) {
     D2D1::Matrix3x2F toLocal = m * inv; // map hit rect back to frame space
     D2D1_POINT_2F a = toLocal.TransformPoint({r.left, r.top});
     D2D1_POINT_2F b = toLocal.TransformPoint({r.right, r.bottom}); // corners only, assumes no rotation
-    nextHits.push_back({id, D2D1_RECT_F{a.x, a.y, b.x, b.y}});
+    Item item;
+    item.id = id;
+    item.r = {a.x, a.y, b.x, b.y};
+    nextHits.push_back(std::move(item));
 }
 
 uint32_t Ui::HitAt(D2D1_POINT_2F p) const {
     for (auto it = hits.rbegin(); it != hits.rend(); ++it) // reverse: last drawn is on top
-        if (Inside(it->second, p)) return it->first;
+        if (Inside(it->r, p)) return it->id;
     return 0;
 }
 
@@ -94,11 +184,16 @@ Ui::Hit Ui::Button(uint32_t id, const D2D1_RECT_F& r) {
     h.down = active == id && in.down;
     if (active == id && in.released) h.clicked = Inside(r, in.mouse); // click only if released inside
     if (h.hover) hand = true; // hand cursor
+    if (id == fire) h.clicked = true, animating = true; // the keyboard or a reader pressed it: what it changed shows next frame
+    if (id == focus && keyHeld) h.down = h.hover = true;
     return h;
 }
 
 bool Ui::Slider(uint32_t id, const D2D1_RECT_F& r, float& value, bool vertical) {
     Hit h = Button(id, r);
+    Mark(Role::Slider, false, value);
+    constexpr float kKeyStep = 0.05f; // 5% a press, as a wheel notch
+    if (KeyMove(id, value, kKeyStep)) return true;
     if (active != id || !(in.down || in.released)) return false; // only while dragging
     (void)h;
     float f = vertical ? 1 - (in.mouse.y - r.top) / Height(r) : (in.mouse.x - r.left) / Width(r); // vertical: bottom = 0
@@ -219,6 +314,7 @@ bool Pill(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, 
     if (iconTap) *iconTap = iconHit.clicked;
     D2D1_RECT_F track = {r.left + h + 10, r.top, r.right - 50, r.bottom}; // 50px reserved for percent label
     bool changed = ui.Slider(id, track, value, false);
+    ui.Name(glyph == glyph::Bright ? L"Brightness" : L"Volume", off ? std::wstring(L"Muted") : Pct(value));
     float notches = ui.Wheel(r);
     if (notches != 0) {
         value = anim::Clamp01(value + notches * 0.05f); // 5% per wheel notch
@@ -356,6 +452,7 @@ void Spark(Canvas& c, const D2D1_RECT_F& r, const std::vector<float>& values, ui
 
 bool Chip(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const std::wstring& label, bool selected) {
     Ui::Hit h = ui.Button(id, r);
+    ui.Mark(Ui::Role::Toggle, selected);
     float sel = ui.Smooth(id, selected ? 1.0f : 0, 14);
     float hover = ui.Smooth(id + 1, h.hover ? 1.0f : 0, 16);
     Canvas& c = ui.C();
@@ -370,6 +467,7 @@ bool Chip(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const std::
 bool Switch(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, bool on, bool enabled) {
     D2D1_RECT_F r = {c.x - 23, c.y - 13, c.x + 23, c.y + 13};
     Ui::Hit h = enabled ? ui.Button(id, r) : Ui::Hit{};
+    if (enabled) ui.Mark(Ui::Role::Toggle, on);
     float k = ui.Smooth(id, on ? 1.0f : 0, 18); // knob travel 0..1
     float hover = ui.Smooth(id + 1, h.hover ? 1.0f : 0, 16);
     float a = enabled ? 1.0f : 0.4f;

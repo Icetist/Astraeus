@@ -12,6 +12,7 @@ enum Backup : UINT { kExport = 120, kImport, kReset }; // from the settings shee
 enum class Upd { Idle, Checking, Downloading, Current, Failed, Installed, Updated }; // Updated: first run after a swap // what the update row says
 
 void Show(HWND owner, const Theme& t, bool startup); // themed menu at the cursor, built on demand, freed on close
+void SetAccess(float zoom, bool reader); // the text size and whether screen readers see them, for what opens next
 void Ask(HWND owner, const Theme& t); // themed start-with-windows prompt, yes posts kStartup
 void SetUpdate(Upd state, const std::wstring& tag = L""); // the update row follows the check, live if the menu is open
 std::wstring UpdateText(); // the same words the menu's update row shows, for settings' button

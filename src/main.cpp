@@ -6,6 +6,7 @@
 #include <shobjidl.h>
 #include <wrl/client.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -25,9 +26,11 @@ constexpr int kHotId = 1; // the open-the-panel shortcut
 constexpr UINT_PTR kSecTimer = 1;
 constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"; // per-user autostart
 constexpr const wchar_t* kBootArg = L"--boot"; // on the startup entry: a launch at sign-in, which greets with the home page
+constexpr const wchar_t* kLogonArg = L"--logon"; // on the logon task too: it obeys the startup entry's switch
 constexpr const wchar_t* kApprovedKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
 constexpr int kBootTries = 20; // at sign-in the gpu, the shell and the screens can lag behind us: ~a minute of tries before giving up
 constexpr DWORD kBootWaitMs = 3000;
+constexpr DWORD kTaskGoneMs = 2000; // long enough for the scheduler to take the task away before this short-lived launch ends
 constexpr unsigned kShellFastTicks = 120; // tray icon and fullscreen notices: retried every second for two minutes, then every half minute
 constexpr unsigned kShellSlowTicks = 30;
 constexpr LONGLONG kLogMax = 256 << 10; // astraeus.log starts over past this
@@ -39,6 +42,11 @@ constexpr UINT_PTR kIniTimer = 2; // astraeus.ini changed: read it once the edit
 constexpr UINT kIniSettleMs = 300;
 constexpr int kIniTries = 20; // ~6 s of a file that can't be opened, then it waits for the next change
 using namespace tray; // menu command ids
+}
+namespace sys {
+void LogonTask(const std::wstring& name, const std::wstring& exe, const std::wstring& args, bool on); // sys_logon.cpp
+}
+namespace {
 
 struct App {
     std::wstring dir, cfgPath, exePath;
@@ -149,11 +157,14 @@ void SetBoot(const std::wstring& exe) { // point the run key at exe and clear an
     RegSetKeyValueW(HKEY_CURRENT_USER, kApprovedKey, L"Astraeus", REG_BINARY, flags, sizeof(flags));
 }
 
+void SyncLogon() { sys::LogonTask(L"Astraeus", BootExe(), std::wstring(kBootArg) + L" " + kLogonArg, StartupOn()); } // follows the startup entry, task manager's switch included
+
 void Restart(const std::wstring& exe);
 void SetStartup(bool on) {
     std::wstring dst = InstallDir();
     if (!on) {
         RegDeleteKeyValueW(HKEY_CURRENT_USER, kRunKey, L"Astraeus");
+        SyncLogon();
         return;
     }
     if (!Install(dst)) { // nothing safe to point at
@@ -161,6 +172,7 @@ void SetStartup(bool on) {
         return;
     }
     SetBoot(dst + L"\\Astraeus.exe");
+    SyncLogon();
     if (_wcsicmp(app->dir.c_str(), dst.c_str()) != 0) Restart(dst + L"\\Astraeus.exe"); // switch over to the installed copy
 }
 
@@ -320,7 +332,13 @@ void Notify(const wchar_t* title, const wchar_t* text) {
     Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
+void SyncTrayAccess() {
+    constexpr float kMenuMax = 1.5f; // a menu has a screen edge to stay inside
+    tray::SetAccess((std::min)(app->model->TextPct() / 100.0f, kMenuMax), app->model->a11yReader != 0);
+}
+
 void ShowMenu() {
+    SyncTrayAccess();
     tray::Show(app->host, app->drawer->Shell(), StartupOn()); // themed popup, picks arrive as WM_COMMAND
 }
 
@@ -544,10 +562,12 @@ void Run() {
     for (;;) {
         Drawer& d = *app->drawer;
         if (d.NeedsFrame() && !d.FrameWait()) d.Frame(); // no waitable yet, draw once to create it
-        HANDLE waits[2];
+        HANDLE waits[3];
         DWORD n = 0;
         HANDLE frame = d.NeedsFrame() ? d.FrameWait() : nullptr; // only wait on vsync while animating
         if (frame) waits[n++] = frame;
+        HANDLE dash = d.BoardNeeds() ? d.BoardWait() : nullptr; // the dashboard paces itself on its own screen
+        if (dash) waits[n++] = dash;
         if (app->iniWatch != INVALID_HANDLE_VALUE) waits[n++] = app->iniWatch; // a write to astraeus.ini wakes us, nothing polls it
         DWORD r = MsgWaitForMultipleObjectsEx(n, n ? waits : nullptr, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE); // sleep until vsync or input, 0 cpu idle
         if (r < WAIT_OBJECT_0 + n && waits[r - WAIT_OBJECT_0] == app->iniWatch) { // the folder changed: settle, then look at the ini
@@ -555,6 +575,7 @@ void Run() {
             SetTimer(app->host, kIniTimer, kIniSettleMs, nullptr);
         }
         if (frame && r == WAIT_OBJECT_0) d.Frame(); // then fall through: glass commits its blur outline from queued messages, it must not wait a frame
+        if (dash && r < WAIT_OBJECT_0 + n && waits[r - WAIT_OBJECT_0] == dash) d.BoardFrame();
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) { // drain all queued input
             if (msg.message == WM_QUIT) return;
             TranslateMessage(&msg);
@@ -570,9 +591,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     HeapSetInformation(nullptr, HeapOptimizeResources, &heap, sizeof(heap)); // heaps hand freed memory back sooner
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); // crisp on mixed dpi monitors
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL); // smoother animation under load
+    const wchar_t* line = GetCommandLineW();
+    bool boot = wcsstr(line, kBootArg) != nullptr;
+    if (wcsstr(line, kLogonArg) && !StartupOn()) { // the logon task, after task manager's switch went off: nothing to start, and no task next time
+        sys::LogonTask(L"Astraeus", L"", L"", false);
+        Sleep(kTaskGoneMs);
+        return 0;
+    }
     HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\Astraeus.Native");
-    if (!mutex || WaitForSingleObject(mutex, 3000) == WAIT_TIMEOUT) { // wait for old instance on restart, else bail
-        if (HWND running = FindWindowW(L"AstraeusHost", nullptr)) PostMessageW(running, WM_COMMAND, tray::kWake, 0); // opened by hand while it runs: that one shows itself
+    if (!mutex || WaitForSingleObject(mutex, boot ? 0 : 3000) == WAIT_TIMEOUT) { // wait for old instance on restart, else bail; the second of the logon task and the startup entry just leaves, at once
+        if (HWND running = boot ? nullptr : FindWindowW(L"AstraeusHost", nullptr)) PostMessageW(running, WM_COMMAND, tray::kWake, 0); // opened by hand while it runs: that one shows itself
         return 0;
     }
     if (FAILED(OleInitialize(nullptr))) return 1; // an sta for wic and the shell, plus ole for the shelf's drag and drop
@@ -607,9 +635,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     if (!made) return 1;
     state.model->Start(state.drawer->Hwnd()); // background pollers post to drawer
     UndoRename(); // before the startup entry is read
+    SyncTrayAccess();
     if (!StartupOn()) tray::Ask(app->host, state.drawer->Shell()); // asks every launch while off
     else SyncBoot(), MarkBoot();
-    if (wcsstr(GetCommandLineW(), kBootArg)) state.drawer->Greet(); // started with windows: the home page says hello until the mouse moves
+    SyncLogon();
+    if (boot) state.drawer->Greet(); // started with windows: the home page says hello until the mouse moves
     StartShortcut(); // after the boot copy is settled, so the shortcut points at it
     if (sys::FinishUpdate()) { // first run after a swap
         if (!state.model->quiet) state.drawer->Peek(L"Astraeus updated", L"Now on version " APP_VER_W, glyph::Sparkle); // do not disturb: the tray still says so

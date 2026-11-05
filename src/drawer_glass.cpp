@@ -53,7 +53,7 @@ struct ShapeSource // hands our d2d outline to composition as a clip path
     }
 };
 
-WUC::CompositionSurfaceBrush Pinned(const WUC::Compositor& comp, const WUC::ICompositionSurface& surface) { // 1:1 pixels, top-left
+WUC::CompositionSurfaceBrush PixelBrush(const WUC::Compositor& comp, const WUC::ICompositionSurface& surface) { // 1:1 pixels, top-left
     auto b = comp.CreateSurfaceBrush(surface);
     b.Stretch(WUC::CompositionStretch::None);
     b.HorizontalAlignmentRatio(0);
@@ -104,7 +104,7 @@ bool Drawer::OpenGlass(const DXGI_SWAP_CHAIN_DESC1& desc) {
         frost.IsVisible(false); // until the first frame hands us a shape
         auto content = g->comp.CreateSpriteVisual(); // everything we draw, on top of the blur
         content.Size(size);
-        content.Brush(Pinned(g->comp, g->surface));
+        content.Brush(PixelBrush(g->comp, g->surface));
         auto root = g->comp.CreateContainerVisual();
         root.Size(size);
         g->frost = frost;
@@ -152,7 +152,7 @@ bool Drawer::GlassRenew(ID2D1Device* dev) {
         winrt::check_hresult(glass->comp.as<abi::ICompositorInterop>()->CreateGraphicsDevice(dev, reinterpret_cast<abi::ICompositionGraphicsDevice**>(winrt::put_abi(glass->gfx))));
         glass->surface = glass->gfx.CreateDrawingSurface({(float)surfW, (float)surfH}, winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
                                                          winrt::Windows::Graphics::DirectX::DirectXAlphaMode::Premultiplied);
-        glass->content.Brush(Pinned(glass->comp, glass->surface)); // lands in the same batch as the frame drawn into it next
+        glass->content.Brush(PixelBrush(glass->comp, glass->surface)); // lands in the same batch as the frame drawn into it next
         glass->filled = false; // a new surface is drawn whole first
         return true;
     } catch (...) {
@@ -253,7 +253,7 @@ bool Stage::OpenGlass(UINT pxW, UINT pxH) {
         frost.Brush(g->comp.CreateHostBackdropBrush());
         auto content = g->comp.CreateSpriteVisual();
         content.Size(size);
-        content.Brush(Pinned(g->comp, main));
+        content.Brush(PixelBrush(g->comp, main));
         auto root = g->comp.CreateContainerVisual();
         root.Size(size);
         root.Children().InsertAtBottom(frost);

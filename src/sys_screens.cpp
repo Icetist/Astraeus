@@ -2,7 +2,30 @@
 
 #include <cwctype>
 
+#include <map>
+
 namespace sys {
+
+namespace {
+std::map<std::wstring, std::wstring> idOf; // asking windows is the slow part of a once-a-second look: kept until the displays change
+
+const std::wstring& IdOf(const std::wstring& device) { // the monitor itself, by make, model and port: \\.\DISPLAY2 can name another one after a replug
+    auto it = idOf.find(device);
+    if (it != idOf.end()) return it->second;
+    DISPLAY_DEVICEW dd = {};
+    dd.cb = sizeof(dd);
+    bool got = EnumDisplayDevicesW(device.c_str(), 0, &dd, EDD_GET_DEVICE_INTERFACE_NAME) && dd.DeviceID[0];
+    return idOf[device] = got ? dd.DeviceID : device; // a driver that won't say: the device name is all there is
+}
+}
+
+void ForgetScreenIds() { idOf.clear(); }
+
+HMONITOR FindScreenId(const std::wstring& id) {
+    for (const Screen& s : ListScreens())
+        if (s.id == id) return FindScreen(s.name);
+    return nullptr;
+}
 
 std::vector<Screen> ListScreens() {
     std::vector<Screen> out;
@@ -12,6 +35,7 @@ std::vector<Screen> ListScreens() {
         if (!GetMonitorInfoW(m, &mi)) return TRUE;
         Screen s;
         s.name = mi.szDevice;
+        s.id = IdOf(s.name);
         s.rc = mi.rcMonitor;
         s.primary = (mi.dwFlags & MONITORINFOF_PRIMARY) != 0;
         size_t i = s.name.size(); // windows' own number, the one display settings shows: \\.\DISPLAY2 -> 2

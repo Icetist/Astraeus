@@ -2,12 +2,52 @@
 #include "drawer.h"
 
 #include <ole2.h>
+#include <shellapi.h>
 #include <shlobj.h>
+
+#include <algorithm>
 #include <shobjidl.h>
+
+#include <thread>
+#include <vector>
+
+#include "glyphs.h"
 
 namespace {
 constexpr UINT kPasteDelayMs = 60; // the app in front settles with the keyboard before ctrl+v is sent
 constexpr size_t kQueryMax = 80; // the shelf's search field
+
+std::vector<std::wstring> Files(IDataObject* data) { // the paths a drag carries, if it carries files
+    std::vector<std::wstring> out;
+    FORMATETC fmt = {CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+    STGMEDIUM med = {};
+    if (!data || FAILED(data->GetData(&fmt, &med))) return out;
+    if (HDROP drop = (HDROP)GlobalLock(med.hGlobal)) {
+        UINT n = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+        for (UINT i = 0; i < n; ++i) {
+            wchar_t path[MAX_PATH * 4] = {};
+            if (DragQueryFileW(drop, i, path, (UINT)std::size(path))) out.push_back(path);
+        }
+        GlobalUnlock(med.hGlobal);
+    }
+    ReleaseStgMedium(&med);
+    return out;
+}
+
+void Recycle(std::vector<std::wstring> files) { // into the recycle bin, through windows' own copy engine: its progress, its prompts, undo from the bin
+    std::thread([files = std::move(files)] {
+        HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+        std::wstring list;
+        for (const auto& f : files) list += f + L'\0';
+        list += L'\0'; // the list ends with two nulls
+        SHFILEOPSTRUCTW op = {};
+        op.wFunc = FO_DELETE;
+        op.pFrom = list.c_str();
+        op.fFlags = FOF_ALLOWUNDO | FOF_WANTNUKEWARNING; // the bin, never gone for good: too big for the bin, windows asks first
+        SHFileOperationW(&op);
+        if (SUCCEEDED(co)) CoUninitialize();
+    }).detach();
+}
 }
 
 struct Drawer::DropSink final : IDropTarget {
@@ -34,13 +74,26 @@ struct Drawer::DropSink final : IDropTarget {
 
     HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data, DWORD, POINTL pt, DWORD* effect) override {
         ok = d && !d->dragSelf && sys::Shelf::Accepts(data) && d->DropEnter();
+        FORMATETC fmt = {CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        files = ok && data->QueryGetData(&fmt) == S_OK; // only files can go in the bin
         *effect = ok ? DROPEFFECT_COPY : DROPEFFECT_NONE; // copy: a file is only remembered by its path, the source keeps it
         POINT p = {pt.x, pt.y};
         if (helper && d) helper->DragEnter(d->hwnd, data, &p, *effect); // d is gone once the drawer is: ole may still call in
         return S_OK;
     }
+    void Track(POINTL pt) { // over the shelf's recycle bin or not: it lights up
+        if (!d || !ok) return;
+        POINT p = {pt.x, pt.y};
+        ScreenToClient(d->hwnd, &p);
+        D2D1_POINT_2F org = d->BodyOrg((std::clamp)(d->spring.value, 0.0f, d->Depth() + d->overshoot));
+        float x = p.x / d->scale - org.x, y = p.y / d->scale - org.y;
+        const float* z = d->model.binZone;
+        bool over = files && z[2] > z[0] && x >= z[0] && x < z[2] && y >= z[1] && y < z[3];
+        if (over != d->model.binOver) d->model.binOver = over, d->Redraw();
+    }
     HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL pt, DWORD* effect) override {
-        *effect = ok ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+        Track(pt);
+        *effect = ok ? DROPEFFECT_COPY : DROPEFFECT_NONE; // copy even into the bin: the source never deletes anything on our word
         POINT p = {pt.x, pt.y};
         if (helper) helper->DragOver(&p, *effect);
         return S_OK;
@@ -63,6 +116,7 @@ struct Drawer::DropSink final : IDropTarget {
     Drawer* d; // cleared before the drawer goes, ole may still hold a reference
     LONG refs = 1;
     bool ok = false; // this drag carries something the shelf takes
+    bool files = false; // and it's files
     ComPtr<IDropTargetHelper> helper;
 };
 
@@ -109,7 +163,17 @@ void Drawer::DropLeave() {
 
 void Drawer::DropDone(IDataObject* data) {
     model.shelfHot = false;
-    model.shelf.Add(data);
+    if (model.binOver) { // let go over the bin: recycled, not kept
+        model.binOver = false;
+        std::vector<std::wstring> files = Files(data);
+        if (!files.empty()) {
+            size_t n = files.size();
+            Recycle(std::move(files));
+            ShelfToast(n == 1 ? L"Sent to the Recycle Bin" : (std::to_wstring(n) + L" items sent to the Recycle Bin").c_str());
+        }
+    } else {
+        model.shelf.Add(data);
+    }
     TrackLeave(); // the drag kept mouse messages from us: the panel learns where the mouse is now
     if (!MouseIn()) SetTimer(hwnd, kCloseTimer, (UINT)cfg.closeMs, nullptr);
     Redraw();

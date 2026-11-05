@@ -22,11 +22,36 @@ constexpr float kRailHiHalf = 26; // the top rail's active highlight, half its w
 constexpr float kArrowHalf = 11, kArrowLen = 3; // its hit box half size; its arms' reach: small
 constexpr float kArrowRate = 14; // chevrons fade in and out at this rate
 
+// the idle pill along a line from x0, inner long, centered on cy: time and date, or the clock between two widgets. the side pill draws it turned
+void IdleLine(Canvas& c, Model& m, const Theme& t, const Theme& mt, float x0, float inner, float cy, float a) {
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t clock[32] = {}, day[48] = {};
+    GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &st, nullptr, clock, 32);
+    GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &st, L"ddd d MMM", day, 48, nullptr);
+    int gl = 0, gr = 0;
+    std::wstring left = m.pillAlways ? m.PillWidget(m.pillLeft, gl) : L"", right = m.pillAlways ? m.PillWidget(m.pillRight, gr) : L"";
+    if (left.empty() && right.empty()) {
+        c.Text(std::wstring(clock) + L"  ·  " + day, Rect(x0, cy - 8, inner, 16), Weight::Medium, 11.5f, t.text.Alpha(a), Align::Center);
+        return;
+    }
+    c.Text(clock, Rect(x0 + kWidgetW, cy - 8, inner - 2 * kWidgetW, 16), Weight::Medium, 11.5f, t.text.Alpha(a), Align::Center);
+    auto widget = [&](const std::wstring& text, int g, bool atRight) { // icon and value, hugging the pill's ends
+        if (text.empty()) return;
+        float ix = atRight ? x0 + inner - kWidgetW + 7 : x0 + 7;
+        c.Icon(g, {ix, cy}, 13, mt.accentHi.Alpha(a), true);
+        c.Text(text, Rect(ix + 9, cy - 7, kWidgetW - 14, 14), Weight::Medium, 10, t.textDim.Alpha(a));
+    };
+    widget(left, gl, false);
+    widget(right, gr, true);
+}
+
 // a chevron pointing (dx, dy) toward pages out of view; shown only while there are some. true when clicked
 bool RailArrow(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F at, float dx, float dy, bool more) {
     float v = ui.Smooth(id, more ? 1.0f : 0, kArrowRate);
     if (v < 0.01f) return false; // gone: nothing to click either
     Ui::Hit h = more ? ui.Button(id + 1, {at.x - kArrowHalf, at.y - kArrowHalf, at.x + kArrowHalf, at.y + kArrowHalf}) : Ui::Hit{};
+    if (more) ui.Name(dx + dy < 0 ? L"Earlier pages" : L"More pages");
     float hover = ui.Smooth(id + 2, h.hover ? 1.0f : 0, 16);
     Canvas& c = ui.C();
     if (hover > 0.01f) c.Dot(at, kArrowHalf - 1, t.text.Alpha(0.08f * hover * v));
@@ -361,6 +386,14 @@ Theme Drawer::Make(Seed s) const {
 }
 
 void Drawer::SyncLook() {
+    access.Enable(model.a11yReader != 0);
+    bool strong = model.HighContrast();
+    if (strong != theme::Contrast()) { // high contrast came or went: at once, a fade through it would be the hardest part to see
+        theme::SetContrast(strong);
+        shellNow = shellFrom = shellTo = Make(shellSeed);
+        mediaNow = mediaFrom = mediaTo = Make(mediaSeed);
+        shellT = mediaT = 1;
+    }
     int look = model.Look(), bg = model.CustomBg(); // halobar's while following it
     if (look == lookNow && bg == bgNow) return;
     bool rebuild = (look == 2) != (lookNow == 2) && ctx; // glass draws through a different pipeline
@@ -439,6 +472,12 @@ ComPtr<ID2D1Geometry> Drawer::BuildShape(float h, float w) const {
     float f = (std::min)(cfg.fillet, h / 2), r = (std::min)(cfg.corner, h / 2); // shrink radii when short so arcs don't overlap
     float left = (Span() - w) / 2;
     float xr = left + w - cfg.fillet, xl = left + cfg.fillet; // panel edges inside the fillet margins
+    if (Floating() && !islandLook && !peeking) { // a card clear of the edge: it slides in from past it, rounded all round
+        float top = h - Depth() + kFloatGap, rr = (std::min)(cfg.corner, (xr - xl) / 2);
+        ComPtr<ID2D1RoundedRectangleGeometry> card;
+        if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect({xl, top, xr, h}, rr, rr), &card))) return nullptr;
+        return card;
+    }
     s->BeginFigure({xl - f, 0}, D2D1_FIGURE_BEGIN_FILLED);
     s->AddLine({xr + f, 0});
     s->AddArc({{xr, f}, {f, f}, 0, D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, D2D1_ARC_SIZE_SMALL}); // concave shoulder, looks like dripping from bezel
@@ -482,7 +521,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
         model.SetLive(opened, page == Model::kPgSystem, page == Model::kPgNetwork);
     }
     bool sheetUp = model.btOpen || model.wifiOpen || model.settingsOpen || model.calOpen || model.mixerOpen;
-    float backA = ui.Smooth(Ui::Id("md.back"), coverBack && page == Model::kPgMedia && !sheetUp ? 1.0f : 0, kBackRate); // fades with the page, a sheet hides it
+    float backA = ui.Smooth(Ui::Id("md.back"), coverBack && page == Model::kPgMedia && !sheetUp && !theme::Contrast() ? 1.0f : 0, kBackRate); // fades with the page, a sheet hides it; high contrast keeps plain ground under the words
     if (backA > 0.004f && coverBack) { // the cover across the whole panel, under the rail and the page, inside the panel's free corners
         D2D1_RECT_F bleed = edgeNow == 0 ? D2D1_RECT_F{0, -cfg.corner, panelW, panelH} : edgeNow == 1 ? D2D1_RECT_F{-cfg.corner, 0, panelW, panelH}
                                                                                          : D2D1_RECT_F{0, 0, panelW + cfg.corner, panelH}; // the docked side runs past the clip: square there
@@ -495,7 +534,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
         if (shellNow.stars) starfall::Seam(*canvas, a, b, shellNow);
         else canvas->Line(a, b, shellNow.line, 1, false);
     };
-    if (Side()) { // sidebar: icons along the top, under them the divider
+    if (Tall()) { // sidebar or compact: icons along the top, under them the divider
         divider({20, kTopRail}, {panelW - 20, kTopRail});
         DrawRailTop(shellNow);
     } else {
@@ -504,7 +543,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
     }
     bool fieldFocus = model.Typing() || Entry::Get().focus || StagePrefs::Get().capture || ui.Captured(); // a text field, a key being picked or a slider held keeps its arrows
     railHot = opened && !fieldFocus && Inside(RailBox(), local.mouse);
-    D2D1_RECT_F area = Side() ? D2D1_RECT_F{14, kTopRail + 10, panelW - 14, panelH - 14} : D2D1_RECT_F{kRailW + 14, 18, panelW - 20, H - 20};
+    D2D1_RECT_F area = Tall() ? D2D1_RECT_F{14, kTopRail + 10, panelW - 14, panelH - 14} : D2D1_RECT_F{kRailW + 14, 18, panelW - 20, H - 20};
 
     if (pageT < 1) pageT = (std::min)(1.0f, pageT + dt / 0.38f); // 380ms page switch
     float e = anim::EaseOut(pageT);
@@ -528,6 +567,8 @@ void Drawer::DrawBody(float h, float dt, double now) {
     pc.coverPrev = art && pc.flip < 0.5f ? coverPrev.Get() : nullptr;
     if (pc.flip > 0.999f) coverPrev.Reset(); // turned: the old one can go
     pc.backdrop = backA;
+    if (page != pageDrawn) pageDrawn = page, ++model.pageVisit;
+    if (page != Model::kPgWidgets) model.faceSearch = false; // left the gallery: the keyboard goes back
     ui.Block(sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f || csheet > 0.01f || msheet > 0.01f); // page under a sheet takes no input
     if (under > 0.001f) { // a sheet that has taken over hides the page, skip drawing it
         switch (page) {
@@ -536,6 +577,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
         case Model::kPgSystem: DrawSys(pc); break;
         case Model::kPgNetwork: DrawNet(pc); break;
         case Model::kPgTools: DrawTools(pc); break;
+        case Model::kPgWidgets: DrawWidgetsPage(pc); break;
         default: DrawShelf(pc); break;
         }
     }
@@ -569,6 +611,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
         pc.wantClose = pc.wantClose || mc.wantClose;
     }
     DrawRailTip(shellNow); // over the page and its sheets
+    ui.DrawFocus(shellNow.accentHi, shellNow.onAccent.Alpha(1));
 
     ui.End();
     hand = ui.Hand(); // picked up by WM_SETCURSOR
@@ -579,7 +622,17 @@ void Drawer::DrawBody(float h, float dt, double now) {
     hintFade = pc.hint ? pc.hintFade : 0;
     hintRect = {pc.hintRect.left + org.x, pc.hintRect.top + org.y, pc.hintRect.right + org.x, pc.hintRect.bottom + org.y};
     DrawHint(h);
-    if (pc.wantClose) Close(); // page asked to close, after drawing finishes
+    if (pc.wantClose && Pinned()) { // pinned: the sheets and the keyboard go, the panel stays
+        model.CloseBt();
+        model.CloseWifi();
+        model.CloseSettings();
+        model.CloseCal();
+        if (keys && keysFrom && IsWindow(keysFrom)) SetForegroundWindow(keysFrom);
+        keys = false;
+        if (model.pickPending) model.pickPending = false, model.StartPicker(); // nothing to wait for: it never goes up
+    } else if (pc.wantClose) {
+        Close(); // page asked to close, after drawing finishes
+    }
     if (pc.wantStage) OpenStage();
     if (pc.wantPage >= 0) SetPage(pc.wantPage);
 }
@@ -680,7 +733,7 @@ void Drawer::DrawPeek(float h) {
     float a = anim::Clamp01((h - 26) / 30); // fade text in as banner drops
     if (a <= 0) return;
     D2D1_RECT_F area = edgeNow == 0 ? Rect(0, 0, W, h) : edgeNow == 1 ? Rect(0, cfg.fillet, h, CH()) : Rect(winH - h, cfg.fillet, h, CH()); // visible part
-    float cx = (area.left + area.right) / 2 + (Side() ? 60 : 0), cy = Side() ? area.top + 70 : (area.top + area.bottom) / 2 + 2; // sidebar: near the top
+    float cx = (area.left + area.right) / 2 + (Tall() ? 60 : 0), cy = Tall() ? area.top + 70 : (area.top + area.bottom) / 2 + 2; // sidebar: near the top
     canvas->Dot({cx - 112, cy}, 17, t.accent.Alpha(0.18f * a));
     canvas->Icon(peekIcon ? peekIcon : glyph::Timer, {cx - 112, cy}, 21, t.accentHi.Alpha(a), true);
     if (peekLevel >= 0) { // the hud: what changed, a bar and the number
@@ -731,33 +784,20 @@ bool Drawer::DrawIsland(float h, float dt, double now) {
     if (still) canvas->Line({cx - hw / 2, h - 3.5f}, {cx + hw / 2, h - 3.5f}, t.text.Alpha((islandHot ? 0.75f : 0.30f) * a), 2.5f);
 
     if (!music) { // nothing playing: time and date, or the clock between two widgets
-        if (!still) return false;
-        SYSTEMTIME st;
-        GetLocalTime(&st);
-        wchar_t clock[32] = {}, day[48] = {};
-        GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &st, nullptr, clock, 32);
-        GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &st, L"ddd d MMM", day, 48, nullptr);
-        int gl = 0, gr = 0;
-        std::wstring left = model.pillAlways ? model.PillWidget(model.pillLeft, gl) : L"", right = model.pillAlways ? model.PillWidget(model.pillRight, gr) : L"";
-        if (left.empty() && right.empty()) {
-            canvas->Text(std::wstring(clock) + L"  ·  " + day, Rect(x0, cy - 8, inner, 16), Weight::Medium, 11.5f, t.text.Alpha(a), Align::Center);
-            return false;
-        }
-        canvas->Text(clock, Rect(x0 + kWidgetW, cy - 8, inner - 2 * kWidgetW, 16), Weight::Medium, 11.5f, t.text.Alpha(a), Align::Center);
-        auto widget = [&](const std::wstring& text, int g, bool atRight) { // icon and value, hugging the pill's ends
-            if (text.empty()) return;
-            float ix = atRight ? x0 + inner - kWidgetW + 7 : x0 + 7;
-            canvas->Icon(g, {ix, cy}, 13, mt.accentHi.Alpha(a), true);
-            canvas->Text(text, Rect(ix + 9, cy - 7, kWidgetW - 14, 14), Weight::Medium, 10, t.textDim.Alpha(a));
-        };
-        widget(left, gl, false);
-        widget(right, gr, true);
+        if (still) IdleLine(*canvas, model, t, mt, x0, inner, cy, a);
         return false;
     }
 
     D2D1_RECT_F art = Rect(x0, cy - 10, 20, 20); // cover thumbnail, rounded like an app icon
     const float barsW = 22; // mini visualizer on the right, or the expand chevron on hover
     float tx = art.right + 7, tw = inner - (tx - x0) - barsW - 6;
+    bool wave = model.vizWave && model.vizOn; // the waveform look: bars the whole width of the pill, behind the cover and the song
+    if (wave) {
+        static Waveform pillWave;
+        bool alive = StepWave(pillWave, model, dt, model.track.playing);
+        if (alive) DrawWave(*canvas, pillWave, Rect(x0 - 6, cy - 13, inner + 12, 26), mt, 0.6f * a);
+        moving = alive && !Unseen();
+    }
     if (still) {
         if (cover) {
             canvas->Art(cover.Get(), coverBlur.Get(), art, 5, a);
@@ -776,9 +816,9 @@ bool Drawer::DrawIsland(float h, float dt, double now) {
         Color ink = mt.accentHi.Alpha(a);
         canvas->Line({ccx - 6, cy - 3}, {ccx, cy + 3}, ink, 2);
         canvas->Line({ccx, cy + 3}, {ccx + 6, cy - 3}, ink, 2);
-        return false;
+        return wave && moving; // the waveform keeps moving under the chevron
     }
-    for (int i = 0; bars && model.vizOn && i < 4; ++i) {
+    for (int i = 0; bars && model.vizOn && !wave && i < 4; ++i) { // the waveform already moves behind it all
         float v = islandBars[i], bh = 3 + 11 * v;
         canvas->Fill(Rect(bx + i * 6, cy - bh / 2, 3.5f, bh), 1.75f, mt.accent.Mix(mt.accentHi, v).Alpha(a));
     }
@@ -889,18 +929,16 @@ bool Drawer::DrawIslandSide(float h, float a) {
     float hw = islandHot ? 26.0f : 16.0f;
     canvas->Line({X(h - 3.5f), mid - hw / 2}, {X(h - 3.5f), mid + hw / 2}, t.text.Alpha((islandHot ? 0.75f : 0.30f) * a), 2.5f);
 
-    if (!model.pillMusic || !model.hasTrack || model.track.title.empty()) { // nothing playing: the time, hours over minutes
-        SYSTEMTIME st;
-        GetLocalTime(&st);
-        wchar_t hh[4], mm[4];
-        swprintf_s(hh, L"%02d", st.wHour);
-        swprintf_s(mm, L"%02d", st.wMinute);
-        canvas->Text(hh, {X(dc) - 14, mid - 17, X(dc) + 14, mid - 1}, Weight::Medium, 12, t.text.Alpha(a), Align::Center);
-        canvas->Text(mm, {X(dc) - 14, mid + 1, X(dc) + 14, mid + 17}, Weight::Medium, 12, mt.accentHi.Alpha(a), Align::Center);
-        return false;
-    }
     // reads like a book spine: bottom to top on the left edge, top to bottom on the right, cover first, bars last
     float inner = kIslandSide - 2 * cfg.fillet - 20, dir = left ? -1.0f : 1.0f;
+    if (!model.pillMusic || !model.hasTrack || model.track.title.empty()) { // nothing playing: what the top pill shows, turned along the spine
+        D2D1_MATRIX_3X2_F was;
+        ctx->GetTransform(&was);
+        ctx->SetTransform(D2D1::Matrix3x2F::Rotation(left ? -90.0f : 90.0f) * D2D1::Matrix3x2F::Translation(X(dc), mid) * was);
+        IdleLine(*canvas, model, t, mt, -inner / 2, inner, 0, a);
+        ctx->SetTransform(was);
+        return false;
+    }
     float start = mid - dir * inner / 2, end = mid + dir * inner / 2;
     float artC = start + dir * 10, barsC = end - dir * 11;
     D2D1_RECT_F art = {X(dc) - 10, artC - 10, X(dc) + 10, artC + 10};
@@ -953,8 +991,8 @@ void Drawer::SyncRailKeys(bool want) {
         UnregisterHotKey(hwnd, kRailKeyNext);
         return;
     }
-    bool prev = RegisterHotKey(hwnd, kRailKeyPrev, 0, Side() ? VK_LEFT : VK_UP) != FALSE; // the panel never takes focus: a hotkey reaches it anyway, only while hovered
-    bool next = RegisterHotKey(hwnd, kRailKeyNext, 0, Side() ? VK_RIGHT : VK_DOWN) != FALSE;
+    bool prev = RegisterHotKey(hwnd, kRailKeyPrev, 0, Tall() ? VK_LEFT : VK_UP) != FALSE; // the panel never takes focus: a hotkey reaches it anyway, only while hovered
+    bool next = RegisterHotKey(hwnd, kRailKeyNext, 0, Tall() ? VK_RIGHT : VK_DOWN) != FALSE;
     if (!prev && !next) railKeys = false; // another app holds them: hovering just doesn't add keys
 }
 
@@ -982,6 +1020,8 @@ void Drawer::DrawRailTop(const Theme& t) {
         float ix = lo + step * (i + 0.5f) - off, fade = RailFade(ix, lo, hi, (float)n);
         if (fade <= 0) continue; // scrolled out of view: neither drawn nor clickable
         Ui::Hit h = ui.Button(Ui::Id("railt", id), {(std::max)(lo, ix - 28), 4, (std::min)(hi, ix + 28), kTopRail - 4});
+        ui.Mark(Ui::Role::Toggle, id == page);
+        ui.Name(Model::PageName(id));
         if (h.clicked) SetPage(id);
         if (h.hover) railTip = id, railTipAt = {ix, kTopRail + 4};
         float hover = ui.Smooth(Ui::Id("railt.h", id), h.hover && id != page ? 1.0f : 0, 16);
@@ -1015,7 +1055,7 @@ void Drawer::DrawRailTip(const Theme& t) { // a word beside the rail icon under 
             tw = tm.widthIncludingTrailingWhitespace;
     }
     float w = tw + 34, h = 26, o = (1 - a) * 6;
-    D2D1_RECT_F r = Side() ? Rect(railTipAt.x - w / 2, railTipAt.y - o, w, h) : Rect(railTipAt.x + o, railTipAt.y - h / 2, w, h);
+    D2D1_RECT_F r = Tall() ? Rect(railTipAt.x - w / 2, railTipAt.y - o, w, h) : Rect(railTipAt.x + o, railTipAt.y - h / 2, w, h);
     c.Fill(Inset(r, -1, -2), h / 2 + 2, Color{0, 0, 0, 0.22f * a}); // a quiet tag: soft shadow, card body, hairline, a small accent tick
     c.Fill(r, h / 2, t.veil.Alpha(0.94f * a)); // solid: under glass whatever is behind would read through
     c.Fill(r, h / 2, t.cardHi.Alpha(a));
@@ -1054,6 +1094,8 @@ void Drawer::DrawRail(const Theme& t) {
         if (fade <= 0) continue; // scrolled out of view: neither drawn nor clickable
         D2D1_RECT_F hit = {10, (std::max)(lo, y - 22), kRailW - 10, (std::min)(hi, y + 22)};
         Ui::Hit h = ui.Button(Ui::Id("rail", id), hit);
+        ui.Mark(Ui::Role::Toggle, id == page);
+        ui.Name(Model::PageName(id));
         if (h.clicked) SetPage(id);
         if (h.hover) railTip = id, railTipAt = {kRailW - 6, y};
         float hover = ui.Smooth(Ui::Id("rail.h", id), h.hover && id != page ? 1.0f : 0, 16); // no hover tint on active

@@ -120,8 +120,9 @@ void Player(PageCtx& p, const D2D1_RECT_F& r) {
         static float preview = -1; // drag preview, committed on release like the media page
         uint32_t id = Ui::Id("ov.seek");
         float f = preview >= 0 ? preview : has ? (float)tr.Progress() : 0;
-        if (has && tr.canSeek && ui.Slider(id, {tx, y - 9, x1, y + 9}, f, false)) preview = f; // a tall grab zone around the thin line
-        if (ui.IsActive(id) && ui.In().released) {
+        bool moved = has && tr.canSeek && ui.Slider(id, {tx, y - 9, x1, y + 9}, f, false);
+        if (moved) preview = f; // a tall grab zone around the thin line
+        if ((ui.IsActive(id) && ui.In().released) || (moved && !ui.IsActive(id))) { // the keyboard's step at once
             p.m.media.Seek(f);
             preview = -1;
         }

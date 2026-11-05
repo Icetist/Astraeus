@@ -25,7 +25,8 @@ namespace {
 
 constexpr int kN = 2048; // fft size: ~43 ms at 48 kHz, enough resolution for the low bands
 constexpr int kHop = 1024; // a new spectrum every 1024 samples, ~47 per second, plenty for eased light
-constexpr REFERENCE_TIME kBuf = 200000; // 20 ms capture buffer
+constexpr REFERENCE_TIME kBuf = 600000; // 60 ms capture buffer: room for the slower look below
+constexpr DWORD kLookMs = 30; // bars at 20-30 fps read no better for twice the wakeups
 constexpr float kLoHz = 32, kHiHz = 16000;
 constexpr float kFloorDb = -72, kTopDb = -12; // mapped to 0..1
 constexpr float kPi = 3.14159265f;
@@ -128,7 +129,7 @@ struct Spectrum::Impl {
         if (!ok) return false;
         ULONGLONG quiet = GetTickCount64();
         while (!stop) {
-            Sleep(15); // polled: loopback events are unreliable when nothing plays
+            Sleep(kLookMs); // polled: loopback events are unreliable when nothing plays
             UINT32 packet = 0;
             if (FAILED(cap->GetNextPacketSize(&packet))) break; // device changed or vanished, reopen the new default
             if (packet == 0 && GetTickCount64() - quiet > 120) { // nothing playing: no packets arrive at all

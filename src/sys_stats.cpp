@@ -8,9 +8,14 @@
 #include <thread>
 
 namespace sys {
+
+std::atomic<int> gpuEvery{1}; // seconds between gpu reads; 0: nobody shows a gpu gauge, the counter is closed
+void GpuWanted(int every) { gpuEvery = every; } // set by the model from what's on screen
+
 namespace {
 
 constexpr double kGb = 1024.0 * 1024.0 * 1024.0;  // bytes per gib
+constexpr int kGpuRecycle = 240; // reads before the counter is closed and opened afresh: windows' gpu counter grows with every process it has seen
 constexpr wchar_t kGpuPath[] = L"\\GPU Engine(*engtype_3D)\\Utilization Percentage";  // wildcard: one instance per process/engine
 
 uint64_t FtU64(const FILETIME& ft) {
@@ -92,7 +97,33 @@ struct StatSrc::Impl {
         return std::clamp(cpu, 0.0, 1.0);
     }
 
+    double lastGpu = 0;
+    int gpuTick = 0, gpuReads = 0;
+    void CloseGpu() { // the query and everything windows built for it go; a gauge that comes back opens it afresh
+        if (gpuState.load() == kGpuPending) return; // still opening on its thread
+        if (gpuOpen.joinable()) gpuOpen.join();
+        if (query) PdhCloseQuery(query);
+        query = nullptr;
+        gpuCtr = nullptr;
+        gpuOk = false;
+        gpuBuf.clear();
+        gpuBuf.shrink_to_fit();
+        gpuState = kGpuIdle;
+        gpuReads = 0;
+    }
+
     double ReadGpu() {
+        int every = gpuEvery.load();
+        if (every <= 0) { // no gauge shows it: nothing read, nothing held
+            if (gpuState.load() == kGpuReady || gpuState.load() == kGpuFailed) CloseGpu();
+            return lastGpu = 0;
+        }
+        if (gpuState.load() == kGpuReady && ++gpuTick % every != 0) return lastGpu; // a dashboard's gauge: a look every few seconds is plenty
+        if (gpuState.load() == kGpuReady && ++gpuReads > kGpuRecycle) CloseGpu(); // its memory grows with time: start over now and then
+        return lastGpu = ReadGpuNow();
+    }
+
+    double ReadGpuNow() {
         int state = gpuState.load(std::memory_order_acquire);
         if (state == kGpuIdle) OpenGpu();
         if (state == kGpuIdle || state == kGpuPending) return 0; // still opening: an empty gauge, not a missing one

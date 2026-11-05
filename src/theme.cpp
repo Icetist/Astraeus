@@ -116,7 +116,39 @@ std::wstring WallPath() {
 
 }
 
+namespace {
+bool contrastOn = false;
+
+Color Sys(int index) { // windows' colors are 0xBBGGRR
+    COLORREF c = GetSysColor(index);
+    return Color::Rgb(((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF));
+}
+
+Theme ContrastTheme() {
+    HIGHCONTRASTW hc = {sizeof(hc)};
+    bool windows = SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(hc), &hc, 0) && (hc.dwFlags & HCF_HIGHCONTRASTON);
+    Color page = windows ? Sys(COLOR_WINDOW) : Color{0, 0, 0, 1};
+    Color ink = windows ? Sys(COLOR_WINDOWTEXT) : Color{1, 1, 1, 1};
+    Color lit = windows ? Sys(COLOR_HIGHLIGHT) : Color{1, 1, 0, 1}; // yellow on black: the plainest strong pair
+    Color onLit = windows ? Sys(COLOR_HIGHLIGHTTEXT) : Color{0, 0, 0, 1};
+    Theme t;
+    t.accent = t.accentHi = lit;
+    t.onAccent = onLit;
+    t.text = t.textDim = t.textLow = ink; // no quiet text here
+    t.card = t.cardHi = t.bg = t.veil = page;
+    t.track = ink.Alpha(0.38f);
+    t.hairTop = t.hairBot = ink.Alpha(0.85f); // every edge drawn
+    t.line = ink.Alpha(0.6f);
+    t.sheen = t.glow = Color{0, 0, 0, 0};
+    return t;
+}
+}
+
+void theme::SetContrast(bool on) { contrastOn = on; }
+bool theme::Contrast() { return contrastOn; }
+
 Theme Theme::From(Seed seed) {
+    if (contrastOn) return ContrastTheme();
     using theme::Hsl;
     float h = seed.hue;
     float k = seed.chroma < 0.08f ? 0.0f : Clamp(seed.chroma * 1.4f, 0.12f, 1.0f); // boost dull seeds, keep a hint of tint; colorless stays neutral grey

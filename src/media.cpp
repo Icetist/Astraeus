@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cwctype>
+#include <map>
 #include <mutex>
 
 namespace sys {
@@ -43,6 +44,7 @@ constexpr uint64_t kLoopLeadMs = 1000; // loop restarts this far before the end,
 constexpr double kLoopEndMs = 250; // paused this close to the end counts as finished, not paused by the user
 constexpr uint64_t kMusicLookMs = 12000; // a browser tab's title can lag the song: keep looking this long
 constexpr uint64_t kLoopSlackMs = 250; // re-arm only when the restart time moves more than this
+constexpr uint64_t kHoldMs = 3000; // a player pausing between songs isn't done: another app takes over only after this
 
 void Log(const wchar_t* where, const wchar_t* what) noexcept {
     wchar_t buf[512];
@@ -222,6 +224,18 @@ struct MediaSt {
     std::wstring loopSel; // session the loop was turned on for
     uint64_t loopGen = 0; // bumps to cancel a pending restart
     uint64_t loopDue = 0; // tick ms the pending restart fires, 0 = none
+
+    struct Seen { // every app reporting media, watched so the one being heard can be followed (guarded by mu)
+        Session session{nullptr};
+        Session::PlaybackInfoChanged_revoker pb;
+        std::wstring app, title, artist;
+        bool playing = false, music = false;
+        uint64_t since = 0, stopped = 0; // tick ms it last began and last stopped playing
+    };
+    std::map<std::wstring, Seen> seen;
+    bool reread = false; // the next look reads every app's song, not only those that just started (guarded by mu)
+    std::vector<MediaSource> sources, sourcesSent; // what the ui shows; what it was last told (guarded by mu)
+    std::wstring pin; // followed by hand, empty: whatever's playing (guarded by mu)
 };
 using MediaP = std::shared_ptr<MediaSt>;
 
@@ -272,9 +286,11 @@ void CloseMedia(const MediaP& s) noexcept {
         Session::TimelinePropertiesChanged_revoker r5;
         Manager mgr{nullptr};
         Session ses{nullptr};
+        std::map<std::wstring, MediaSt::Seen> gone; // and every watched app's handler
         {
             std::lock_guard lock(s->mu);
             s->closed.store(true);
+            gone.swap(s->seen);
             r1 = std::move(s->listRev); // move revokers out so they die outside the lock
             r2 = std::move(s->curRev);
             r3 = std::move(s->propsRev);
@@ -390,6 +406,125 @@ WF::IAsyncAction ReadThumb(SS::IRandomAccessStreamReference thumb,
 
 winrt::fire_and_forget ArmLoop(MediaP s);
 
+winrt::fire_and_forget LookAgain(std::weak_ptr<MediaSt> w, uint64_t ms) { // the hold on a paused player runs out with no event to say so
+    co_await winrt::resume_after(std::chrono::milliseconds(ms));
+    Kick(w);
+}
+
+// watches every app reporting media and picks the one to follow: the app pinned by hand; else the music heard most recently begun, so
+// lyrics stay with the song; else whatever else is playing; else the last one followed, then windows' own pick
+WF::IAsyncOperation<Session> Survey(MediaP s, Manager mgr) {
+    const uint64_t now = GetTickCount64();
+    std::map<std::wstring, Session> live;
+    auto all = mgr.GetSessions();
+    auto isPlaying = [](const Session& x) {
+        try {
+            auto pb = x.GetPlaybackInfo();
+            return pb && pb.PlaybackStatus() == MC::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
+        } catch (...) {
+            return false;
+        }
+    };
+    for (uint32_t i = 0; i < all.Size(); ++i) { // a browser's windows can share one id: the one playing speaks for it
+        Session x = all.GetAt(i);
+        std::wstring id = ToW(x.SourceAppUserModelId());
+        auto it = live.find(id);
+        if (it == live.end()) live.emplace(std::move(id), x);
+        else if (!isPlaying(it->second) && isPlaying(x)) it->second = x;
+    }
+    std::wstring cur;
+    try {
+        if (Session c = mgr.GetCurrentSession()) cur = ToW(c.SourceAppUserModelId());
+    } catch (...) {
+        LogErr(L"current session");
+    }
+    std::vector<std::wstring> look; // apps whose song to read: outside the lock
+    std::map<std::wstring, MediaSt::Seen> dropped; // handlers released outside it too
+    std::weak_ptr<MediaSt> w = s;
+    {
+        std::lock_guard lock(s->mu);
+        if (s->closed.load()) co_return nullptr;
+        for (auto it = s->seen.begin(); it != s->seen.end();) {
+            if (live.count(it->first)) ++it;
+            else dropped.insert(s->seen.extract(it++));
+        }
+        for (const auto& [id, x] : live) {
+            MediaSt::Seen& e = s->seen[id];
+            bool fresh = !e.session;
+            if (e.session != x) {
+                e.session = x;
+                e.app = AppName(id);
+                try {
+                    e.pb = x.PlaybackInfoChanged(winrt::auto_revoke, [w](auto&&, auto&&) { Kick(w); });
+                } catch (...) {
+                    LogErr(L"watch");
+                }
+            }
+            bool playing = isPlaying(x);
+            if (playing && !e.playing) e.since = now + (id == cur ? 1 : 0), look.push_back(id); // windows' own pick wins a tie, as at start
+            else if (!playing && e.playing) e.stopped = now;
+            else if (fresh || s->reread) look.push_back(id);
+            e.playing = playing;
+        }
+        s->reread = false;
+    }
+    for (const std::wstring& id : look) { // a browser only says whether it's music through what's playing
+        Session x{nullptr};
+        {
+            std::lock_guard lock(s->mu);
+            auto it = s->seen.find(id);
+            if (it != s->seen.end()) x = it->second.session;
+        }
+        if (!x) continue;
+        std::wstring title, artist, album;
+        try {
+            if (auto props = co_await x.TryGetMediaPropertiesAsync()) title = ToW(props.Title()), artist = ToW(props.Artist()), album = ToW(props.AlbumTitle());
+        } catch (...) {
+            LogErr(L"source properties");
+        }
+        Track probe;
+        probe.title = title, probe.artist = artist, probe.album = album, probe.app = AppName(id);
+        bool music = MusicApp(id) || (Browser(probe.app) && MusicSite(probe));
+        std::lock_guard lock(s->mu);
+        auto it = s->seen.find(id);
+        if (it != s->seen.end()) it->second.title = title, it->second.artist = artist, it->second.music = music;
+    }
+    Session pick{nullptr};
+    uint64_t holdFor = 0;
+    {
+        std::lock_guard lock(s->mu);
+        auto best = [&](bool musicOnly) {
+            const std::wstring* found = nullptr;
+            uint64_t newest = 0;
+            for (const auto& [id, e] : s->seen)
+                if (e.playing && (!musicOnly || e.music) && e.since >= newest) found = &id, newest = e.since;
+            return found;
+        };
+        const std::wstring* chosen = nullptr;
+        auto pinned = s->pin.empty() ? s->seen.end() : s->seen.find(s->pin);
+        auto now_ = s->seen.find(s->selId);
+        if (pinned != s->seen.end()) {
+            chosen = &pinned->first;
+        } else {
+            if (!s->pin.empty()) s->pin.clear(); // the app closed: back to following
+            const std::wstring* heard = best(true);
+            if (!heard) heard = best(false);
+            bool holding = now_ != s->seen.end() && !now_->second.playing && now_->second.stopped && now - now_->second.stopped < kHoldMs;
+            if (holding && (!heard || s->seen[*heard].since < now_->second.stopped)) holdFor = kHoldMs - (now - now_->second.stopped) + 50, chosen = &now_->first; // between songs
+            else if (heard) chosen = heard;
+            else if (now_ != s->seen.end()) chosen = &now_->first;
+            else if (auto c = s->seen.find(cur); c != s->seen.end()) chosen = &c->first;
+            else if (!s->seen.empty()) chosen = &s->seen.begin()->first;
+        }
+        std::vector<MediaSource> list;
+        for (const auto& [id, e] : s->seen) list.push_back({id, e.app, e.title, e.artist, e.playing, e.music, chosen && *chosen == id});
+        s->sources = std::move(list);
+        if (chosen) pick = s->seen[*chosen].session;
+    }
+    if (holdFor) LookAgain(w, holdFor);
+    co_return pick;
+}
+
 WF::IAsyncAction Refresh(MediaP s) { // pull full state, publish if changed
     Manager mgr{nullptr};
     std::shared_ptr<const std::vector<uint8_t>> oldCover;
@@ -404,15 +539,17 @@ WF::IAsyncAction Refresh(MediaP s) { // pull full state, publish if changed
 
     Session sel{nullptr};
     try {
-        sel = mgr.GetCurrentSession();
+        sel = co_await Survey(s, mgr);
     } catch (...) {
-        LogErr(L"current session");
+        LogErr(L"survey");
     }
-    if (!sel) { // fallback: first session
-        auto all = mgr.GetSessions();
-        if (all.Size() > 0) sel = all.GetAt(0);
+    bool moved = false;
+    {
+        std::lock_guard lock(s->mu);
+        moved = s->session != sel;
     }
     Hook(s, sel);
+    if (moved && sel) Settle(s, ++s->settleGen); // another app: its song may still be landing
 
     Track t;
     std::wstring selId;
@@ -472,6 +609,12 @@ WF::IAsyncAction Refresh(MediaP s) { // pull full state, publish if changed
         }
         if (newKey || (!s->music && nowMs - s->keyTick < kMusicLookMs)) s->music = MusicApp(selId) || (Browser(t.app) && MusicSite(t));
         t.music = s->music;
+        {
+            std::lock_guard lock(s->mu);
+            if (auto seen = s->seen.find(selId); seen != s->seen.end()) seen->second.music = s->music, seen->second.title = t.title, seen->second.artist = t.artist; // the followed app's song is read anyway: the choice stays current
+            for (MediaSource& one : s->sources)
+                if (one.id == selId) one.music = s->music, one.title = t.title, one.artist = t.artist;
+        }
         t.cover = newKey ? nullptr : oldCover; // drop stale art on track change
         const bool want = thumb && (newKey || !oldCover || s->artUnsure.load() || nowMs - s->keyTick < kCoverRetry); // apps often send art late
         if (want) {
@@ -506,7 +649,10 @@ WF::IAsyncAction Refresh(MediaP s) { // pull full state, publish if changed
             t.repeat = s->loop ? 1 : 0;
         }
         if (!t.canPrev && t.canSeek) t.canPrev = true; // no previous of its own: restart the track, like music players
-        changed = !s->sent || has != s->has || selId != s->selId || !SameTrack(s->track, t); // skip redundant repaints
+        auto sameSource = [](const MediaSource& a, const MediaSource& b) { return a.id == b.id && a.playing == b.playing && a.followed == b.followed && a.title == b.title && a.artist == b.artist; };
+        bool listMoved = s->sources.size() != s->sourcesSent.size() || !std::equal(s->sources.begin(), s->sources.end(), s->sourcesSent.begin(), sameSource);
+        if (listMoved) s->sourcesSent = s->sources;
+        changed = !s->sent || has != s->has || selId != s->selId || listMoved || !SameTrack(s->track, t); // skip redundant repaints
         if (changed) {
             s->track = std::move(t);
             s->selId = std::move(selId);
@@ -889,6 +1035,31 @@ bool Media::Snapshot(Track& track) const {
         LogErr(L"Media::Snapshot");
         return false;
     }
+}
+
+void Media::Sources(std::vector<MediaSource>& out, std::wstring& pinned) const {
+    if (!impl || !impl->s) return;
+    std::lock_guard lock(impl->s->mu);
+    out = impl->s->sources;
+    pinned = impl->s->pin;
+}
+
+void Media::Follow(const std::wstring& id) {
+    if (!impl || !impl->s) return;
+    {
+        std::lock_guard lock(impl->s->mu);
+        impl->s->pin = id;
+    }
+    Poke(impl->s);
+}
+
+void Media::RefreshSources() {
+    if (!impl || !impl->s) return;
+    {
+        std::lock_guard lock(impl->s->mu);
+        impl->s->reread = true;
+    }
+    Poke(impl->s);
 }
 
 void Media::TogglePlay() { if (impl && impl->s) try { RunCmd(impl->s, Cmd::TogglePlay, 0); } catch (...) {} } // swallow: ui must not throw
