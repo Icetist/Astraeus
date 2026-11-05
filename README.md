@@ -8,7 +8,7 @@
 
 [![Latest release](https://img.shields.io/github/v/release/Icetist/Astraeus?style=flat-square&color=9F8CFF)](https://github.com/Icetist/Astraeus/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Icetist/Astraeus/total?style=flat-square&color=9F8CFF)](https://github.com/Icetist/Astraeus/releases)
-[![Build](https://img.shields.io/github/actions/workflow/status/Icetist/Astraeus/release.yml?style=flat-square&label=build)](https://github.com/Icetist/Astraeus/actions/workflows/release.yml)
+[![Build](https://img.shields.io/github/actions/workflow/status/Icetist/Astraeus/build.yml?branch=main&style=flat-square&label=build)](https://github.com/Icetist/Astraeus/actions/workflows/build.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4?style=flat-square&logo=windows)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square&logo=cplusplus)
 ![License](https://img.shields.io/badge/license-GPL--3.0-9F8CFF?style=flat-square)
