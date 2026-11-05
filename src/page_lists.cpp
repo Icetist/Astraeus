@@ -1,13 +1,14 @@
 // The tools page's to-do list and server monitor: a field on top, the rows under it, scrolled when they don't fit.
 #include <algorithm>
 
+#include "duration.h"
 #include "glyphs.h"
 #include "page_sheet.h"
 #include "pages.h"
 
 namespace {
 
-constexpr float kFieldH = 32, kRowH = 30, kGap = 8, kXSize = 22;
+constexpr float kFieldH = 32, kRowH = 30, kGap = 8, kXSize = 22, kReadW = 70; // kReadW: the timer field's reading of what's typed
 constexpr Color kUp = Color{0.36f, 0.84f, 0.56f, 1}, kDown = Color{1.0f, 0.45f, 0.45f, 1}; // a host answering, or not
 
 void Field(PageCtx& p, const D2D1_RECT_F& r, int kind, const wchar_t* hint) { // click to type; enter adds, esc lets go
@@ -20,9 +21,14 @@ void Field(PageCtx& p, const D2D1_RECT_F& r, int kind, const wchar_t* hint) { //
     float hov = ui.Smooth(Ui::Id("ls.field", kind + 10), h.hover || typing ? 1.0f : 0, 16);
     c.Fill(r, Height(r) / 2, t.track.Mix(t.cardHi, 0.3f + 0.3f * hov));
     c.Stroke(r, Height(r) / 2, typing ? t.accent.Alpha(0.8f) : t.hairTop, 1);
-    c.Icon(glyph::Add, {r.left + 18, (r.top + r.bottom) / 2}, 16, typing ? t.accentHi : t.textDim);
-    D2D1_RECT_F text = {r.left + 34, r.top, r.right - 14, r.bottom};
+    bool isTimer = kind == Model::kFieldTimer;
+    c.Icon(isTimer ? glyph::Timer : glyph::Add, {r.left + 18, (r.top + r.bottom) / 2}, 16, typing ? t.accentHi : t.textDim);
+    D2D1_RECT_F text = {r.left + 34, r.top, r.right - 14 - (isTimer && typing ? kReadW : 0), r.bottom};
     if (typing) {
+        if (isTimer && !m.fieldEdit.empty()) { // what enter would start, so 1:30 is never a guess
+            int seconds = duration::Parse(m.fieldEdit);
+            c.Text(seconds ? fmt::Clock(seconds) : L"Not a time", {r.right - 14 - kReadW, r.top, r.right - 14, r.bottom}, Weight::Medium, 12, seconds ? t.accentHi : kDown, Align::Right);
+        }
         bool caret = (int)(ui.Now() * 2) % 2 == 0;
         c.Text(m.fieldEdit + (caret ? L"|" : L""), text, Weight::Regular, 12.5f, t.text);
         ui.KeepAlive(); // the caret blinks
@@ -35,6 +41,8 @@ void Field(PageCtx& p, const D2D1_RECT_F& r, int kind, const wchar_t* hint) { //
 bool X(PageCtx& p, uint32_t id, D2D1_POINT_2F o) { return w::IconBtn(p.ui, p.shell, id, o, kXSize, glyph::Close, 13); }
 
 }
+
+void TimerField(PageCtx& p, const D2D1_RECT_F& r) { Field(p, r, Model::kFieldTimer, L"Custom time: 20, 1h 30m or 1:30"); }
 
 void TodoList(PageCtx& p, const D2D1_RECT_F& r) {
     Ui& ui = p.ui;

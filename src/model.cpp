@@ -5,6 +5,7 @@
 #include "faces.h"
 #include "feeds.h"
 #include "glyphs.h"
+#include "duration.h"
 #include "pages.h"
 #include "picker.h"
 #include <shellapi.h>
@@ -750,6 +751,10 @@ void Model::SaveHosts() {
 }
 
 void Model::CommitField() {
+    if (field == kFieldTimer) {
+        if (int seconds = duration::Parse(fieldEdit)) StartTimer(seconds), field = kFieldNone, fieldEdit.clear(); // not a time: it stays, to be corrected
+        return;
+    }
     std::wstring s = fieldEdit;
     size_t a = s.find_first_not_of(L" \t"), b = s.find_last_not_of(L" \t");
     s = a == std::wstring::npos ? L"" : s.substr(a, b - a + 1);
@@ -1064,6 +1069,11 @@ bool Model::TimerDone() {
     bool f = timerDone; // read-and-clear so alert fires once
     timerDone = false;
     return f;
+}
+
+std::wstring Model::TimerName() const {
+    ULONGLONG seconds = timerTotal / 1000;
+    return seconds % 60 == 0 ? std::to_wstring(seconds / 60) + L" min" : fmt::Clock((double)seconds);
 }
 
 double Model::TimerLeft() const {

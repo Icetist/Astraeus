@@ -109,7 +109,6 @@ void Orb(PageCtx& p, D2D1_POINT_2F o, float R, bool live) { // hue ring around a
     float lift = ui.Smooth(id + 1, live && dist < R - ringW ? 1.0f : 0, 14);
     c.Glow(o, R * 1.5f, R * 1.5f, accent.Alpha(0.22f + 0.10f * lift));
     c.Dot(o, R - ringW - 3 + 2 * lift, accent);
-    c.Dot({o.x - R * 0.22f, o.y - R * 0.26f}, R * 0.30f, Color{1, 1, 1, 0.16f}); // specular highlight, gives it a glassy orb look
     D2D1_POINT_2F k = {o.x + R * std::cos(Rad(cur.hue - 90)), o.y + R * std::sin(Rad(cur.hue - 90))};
     c.Dot(k, ringW * 0.75f + 3, t.text);
     c.Dot(k, ringW * 0.75f, theme::Hsl(cur.hue, 0.80f, 0.60f));
@@ -347,7 +346,7 @@ void Lyrics(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a tiny fullscreen 
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"FULLSCREEN LYRICS");
+    D2D1_RECT_F in = Box(c, t, r, L"Fullscreen lyrics");
     Ui::Hit h = live ? ui.Button(Ui::Id("set.lyrics"), in) : Ui::Hit{};
     float on = ui.Smooth(Ui::Id("set.lyrics", 1), m.fullLyrics ? 1.0f : 0, 12);
     float mh = (std::min)(Height(in) - 6, 64.0f), mw = mh / 0.6f;
@@ -365,7 +364,7 @@ void Lyrics(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a tiny fullscreen 
     float x0 = scr.right + 16;
     c.Text(m.fullLyrics ? L"On" : L"Off", Rect(x0, in.top + 6, in.right - x0, 20), Weight::Medium, 14, m.fullLyrics ? t.accentHi : t.textDim);
     c.Text(m.fullLyrics ? L"Synced lyrics beside\nthe cover, for songs\nfrom music apps" : L"The fullscreen player\nshows just the song", // a narrow column: whole lines, nothing cut
-           Rect(x0, in.top + 26, in.right - x0, kNoteLines), Weight::Light, 10.5f, t.textLow);
+           Rect(x0, in.top + 26, in.right - x0, kNoteLines), Weight::Light, 10.5f, t.textDim);
     if (h.clicked) m.SetPref(m.fullLyrics, L"FullLyrics", m.fullLyrics ? 0 : 1);
 }
 
@@ -374,13 +373,11 @@ void Motion(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a tiny spring: bou
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"MOTION");
+    D2D1_RECT_F in = Box(c, t, r, L"Motion");
     Ui::Hit h = live ? ui.Button(Ui::Id("set.motion"), in) : Ui::Hit{};
     float calm = ui.Smooth(Ui::Id("set.motion", 1), m.reduceMotion ? 1.0f : 0, 12);
     float mh = (std::min)(Height(in) - 6, 64.0f), mw = mh / 0.6f;
     D2D1_RECT_F scr = Rect(in.left + 4, in.top + 1, mw, mh);
-    c.Fill(scr, 7, t.track.Alpha(0.7f));
-    c.Stroke(scr, 7, t.hairTop, 1);
     D2D1_POINT_2F last{};
     for (int i = 0; i <= 24; ++i) { // where the panel's edge goes over time
         float x = i / 24.0f, ease = 1 - std::exp(-5 * x), bounce = 0.38f * std::sin(11 * x) * std::exp(-3.5f * x) * (1 - calm);
@@ -392,7 +389,7 @@ void Motion(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a tiny spring: bou
     float x0 = scr.right + 16;
     c.Text(m.reduceMotion ? L"Reduced" : L"Full", Rect(x0, in.top + 6, in.right - x0, 20), Weight::Medium, 14, m.reduceMotion ? t.accentHi : t.textDim);
     c.Text(m.reduceMotion ? L"No bounce or drifting,\npages fade in place\nof sliding" : L"Springy drops,\nsliding pages,\ndrifting orbits",
-           Rect(x0, in.top + 26, in.right - x0, kNoteLines), Weight::Light, 10.5f, t.textLow);
+           Rect(x0, in.top + 26, in.right - x0, kNoteLines), Weight::Light, 10.5f, t.textDim);
     if (h.clicked) m.SetPref(m.reduceMotion, L"ReduceMotion", m.reduceMotion ? 0 : 1);
 }
 
@@ -423,7 +420,7 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // six swatches dra
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"MATERIAL");
+    D2D1_RECT_F in = Box(c, t, r, L"Material");
     bool glass = m.look == 2;
     Seed s = Base(m, t);
     constexpr float extra = kSlideH + 6; // room for the blur slider, or the opacity slider on the solid looks
@@ -459,7 +456,7 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // six swatches dra
         }
     }
     if (m.Following()) { // halobar's look: its blur and opacity are tuned there, and shared, so no slider here that does nothing
-        c.Text(m.Look() == 2 ? L"Blur follows HaloBar" : L"Opacity follows HaloBar", Rect(in.left, in.bottom - 30, Width(in), 16), Weight::Medium, 11, t.textLow, Align::Center);
+        c.Text(m.Look() == 2 ? L"Blur follows HaloBar" : L"Opacity follows HaloBar", Rect(in.left, in.bottom - 30, Width(in), 16), Weight::Medium, 11, t.textDim, Align::Center);
         return;
     }
     { // glass: how frosted, between clear glass and windows' full backdrop blur; the solid looks: how much desktop shows through
@@ -487,7 +484,7 @@ void Position(PageCtx& p, const D2D1_RECT_F& r, bool live) { // tap an edge of t
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"POSITION");
+    D2D1_RECT_F in = Box(c, t, r, L"Position");
     float mw = (std::min)(Width(in) - 40, (Height(in) - 34) / 0.6f), mh = mw * 0.6f;
     D2D1_RECT_F scr = Rect((in.left + in.right - mw) / 2, in.top + 4, mw, mh);
     Monitor(c, t, scr);
@@ -516,7 +513,7 @@ void Screens(PageCtx& p, const D2D1_RECT_F& r, bool live) { // your monitors as 
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"SCREENS");
+    D2D1_RECT_F in = Box(c, t, r, L"Screens");
     if (m.screenList.empty()) m.screenList = sys::ListScreens();
     const auto& list = m.screenList;
     int chosen = -1; // the screen it lives on in one-screen mode: the pick, else primary
@@ -575,7 +572,7 @@ void Notices(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a little screen w
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"NOTIFICATIONS");
+    D2D1_RECT_F in = Box(c, t, r, L"Notifications");
     D2D1_RECT_F dnd = {in.right - kDndW, in.bottom - 18, in.right, in.bottom}; // do not disturb, beside the label like the screens card's "all"
     Ui::Hit dh = live ? ui.Button(Ui::Id("set.dnd"), dnd) : Ui::Hit{}; // first, so a press on it isn't the card's
     Ui::Hit h = live ? ui.Button(Ui::Id("set.notice"), in) : Ui::Hit{};
@@ -625,7 +622,7 @@ void Island(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the pill over a ma
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"ISLAND");
+    D2D1_RECT_F in = Box(c, t, r, L"Island");
     float mh = (std::min)(Height(in) - 6, Width(in) * 0.26f), mw = mh / 0.6f; // a little screen with an app filling it
     D2D1_RECT_F scr = Rect(in.left + 4, (in.top + in.bottom - mh) / 2 - 3, mw, mh);
     Monitor(c, t, scr);
@@ -644,10 +641,10 @@ void Island(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the pill over a ma
         m.islandSecs = SliderToStay(v); // any time from a moment to five minutes, or always at the end
     if (done) m.SetPref(m.islandSecs, L"IslandSecs", m.islandSecs);
     y += kSlideH + 8;
-    c.Text(m.IslandAlways() ? L"Up whenever music plays" : L"Over maximized windows,\nafter you move away", Rect(x0, y, rw, 30), Weight::Light, 10.5f, t.textLow);
+    c.Text(m.IslandAlways() ? L"Up whenever music plays" : L"Over maximized windows,\nafter you move away", Rect(x0, y, rw, 30), Weight::Light, 10.5f, t.textDim);
     D2D1_RECT_F desk = Rect(x0, y + 36, rw, kDeskRowH); // off: on the desktop a hover drops the whole panel, as before
     Ui::Hit h = live ? ui.Button(Ui::Id("set.desk", 1), {desk.left, desk.top, desk.right - 52, desk.bottom}) : Ui::Hit{}; // the words flip it too
-    c.Text(L"Pill on the desktop", {desk.left, desk.top, desk.right - 56, desk.bottom}, Weight::Regular, 11.5f, h.hover ? t.text : t.text.Mix(t.textDim, 0.25f));
+    c.Text(L"Pill on the desktop", {desk.left, desk.top, desk.right - 56, desk.bottom}, Weight::Regular, 11.5f, t.text);
     if ((w::Switch(ui, t, Ui::Id("set.desk"), {desk.right - 24, (desk.top + desk.bottom) / 2}, m.pillDesk != 0, live) || h.clicked) && live)
         m.SetPref(m.pillDesk, L"PillDesktop", m.pillDesk ? 0 : 1); // shown while no app is under it, even with stays short of always
 }
@@ -669,8 +666,7 @@ void DrawSettings(PageCtx& p, float k) {
     D2D1_RECT_F grid;
     if (!frame.tall) { // hero column: the color orb
         float hx = s.left + kHero / 2;
-        c.TextSp(std::wstring(L"ASTRAEUS  ·  ") + APP_VER_W, Rect(s.left + 10, s.top + 16, kHero - 20, 12), Weight::Medium, 9.5f, t.textLow, 1.4f,
-                 Align::Center);
+        c.Text(std::wstring(L"Astraeus  ·  ") + APP_VER_W, Rect(s.left + 10, s.top + 14, kHero - 20, 16), Weight::Medium, 12, t.textDim, Align::Center);
         if (m.look == 3) { // custom: any accent and any background, straight off the wheel
             Wheel(p, {hx, s.top + 98}, 62, live);
             Chip(p, Rect(hx - 96, s.top + 176, 94, 26), 0, L"Accent", live);
@@ -687,7 +683,7 @@ void DrawSettings(PageCtx& p, float k) {
             sys::OpenUri(L"ms-settings:");
         }
         D2D1_RECT_F list = frame.list;
-        c.TextSp(L"SETTINGS", Rect(list.left + 4, list.top + 8, 200, 14), Weight::Medium, 10, t.textLow, 1.4f);
+        c.Text(L"Settings", Rect(list.left + 4, list.top + 5, 200, 20), Weight::Medium, 15, t.text);
         if (w::IconBtn(ui, t, Ui::Id("set.close"), {list.right - 14, list.top + 14}, 30, glyph::Close, 18)) m.CloseSettings();
         grid = {list.left, list.top + 34, list.right, list.bottom};
     } else { // sidebar header: orb on the left, source switch and presets beside it
@@ -697,13 +693,13 @@ void DrawSettings(PageCtx& p, float k) {
             Chip(p, Rect(x0, s.top + 26, (w0 - 6) / 2, 26), 0, L"Accent", live);
             Chip(p, Rect(x0 + (w0 + 6) / 2, s.top + 26, (w0 - 6) / 2, 26), 1, L"Background", live);
             Shade(p, Rect(x0 + 4, s.top + 72, w0 - 8, 12), live);
-            c.Text(L"Tap a color twice to type a hex", Rect(x0, s.top + 96, Width(s) - 146, 16), Weight::Light, 10.5f, t.textLow);
+            c.Text(L"Tap a color twice to type a hex", Rect(x0, s.top + 96, Width(s) - 146, 16), Weight::Light, 10.5f, t.textDim);
         } else {
             Orb(p, {s.left + 66, s.top + 66}, 44, live);
             int v = Segmented(ui, t, "set.accent", Rect(x0, s.top + 28, (std::min)(Width(s) - 176, 200.0f), 24), kSources, 3, segNow, live);
             if (v >= 0) m.SetAccent(kSourceMode[v], m.accentHex);
             Presets(p, x0 + 10, s.top + 76, 22, live);
-            c.Text(L"Tap the orb to type a hex", Rect(x0, s.top + 96, Width(s) - 146, 16), Weight::Light, 10.5f, t.textLow);
+            c.Text(L"Tap the orb to type a hex", Rect(x0, s.top + 96, Width(s) - 146, 16), Weight::Light, 10.5f, t.textDim);
         }
         if (w::IconBtn(ui, t, Ui::Id("set.close"), {s.right - 22, s.top + 22}, 30, glyph::Close, 18)) m.CloseSettings();
         if (ScanBtn(ui, t, "set.win", Rect(s.left + 16, s.bottom - 44, Width(s) - 32, 32), false, true, glyph::OpenNew, L"Windows settings", L"")) {

@@ -32,14 +32,14 @@ bool SwitchRow(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, con
     float cy = (r.top + r.bottom) / 2;
     Ui::Hit h = live && enabled ? ui.Button(Ui::Id(id, 1), {r.left, r.top, r.right - 52, r.bottom}) : Ui::Hit{}; // the words flip it too
     if (live && enabled) ui.NoStop(); // one control, one stop: the switch's
-    c.Text(label, {r.left, r.top, r.right - 56, r.bottom}, Weight::Regular, 11.5f, !enabled ? t.textLow : h.hover ? t.text : t.text.Mix(t.textDim, 0.25f));
+    c.Text(label, {r.left, r.top, r.right - 56, r.bottom}, Weight::Regular, 11.5f, enabled ? t.text : t.textLow);
     bool flip = w::Switch(ui, t, Ui::Id(id), {r.right - 24, cy}, on, live && enabled);
     if (live && enabled) ui.Name(label);
     return flip || h.clicked;
 }
 
 void Note(Canvas& c, const Theme& t, const D2D1_RECT_F& in, float y, const std::wstring& text) { // a quiet line under the controls
-    c.Text(text, Rect(in.left, y, Width(in), 16), Weight::Light, 10.5f, t.textLow);
+    c.Text(text, Rect(in.left, y, Width(in), 16), Weight::Light, 10.5f, t.textDim);
 }
 
 void Flip(Model& m, int& field, const wchar_t* key) { m.SetPref(field, key, field ? 0 : 1); }
@@ -49,9 +49,9 @@ void Power(PageCtx& p, const D2D1_RECT_F& r, bool live) { // battery pills: plug
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"POWER");
+    D2D1_RECT_F in = Box(c, t, r, L"Power");
     if (!m.portable) {
-        c.Icon(glyph::Power, {in.left + 10, in.top + 12}, 18, t.textLow);
+        c.Icon(glyph::Power, {in.left + 10, in.top + 12}, 18, t.textDim);
         c.Text(L"No battery on this PC", Rect(in.left + 28, in.top + 3, Width(in) - 28, 18), Weight::Regular, 11.5f, t.textDim);
         Note(c, t, in, in.top + 30, L"Charging and battery pills are for laptops");
         return;
@@ -77,7 +77,7 @@ void Pill(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the resting pill: al
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"STATUS PILL");
+    D2D1_RECT_F in = Box(c, t, r, L"Status pill");
     if (SwitchRow(ui, t, "set.pill.always", Rect(in.left, in.top, Width(in), kRowH), L"Always show the pill", m.pillAlways != 0, live)) Flip(m, m.pillAlways, L"PillAlways");
     float cw = (Width(in) - 8) / 2, y = in.top + kRowH + 2;
     int* sides[2] = {&m.pillLeft, &m.pillRight};
@@ -102,7 +102,7 @@ void PanelOpts(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how the panel b
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"PANEL");
+    D2D1_RECT_F in = Box(c, t, r, L"Panel");
     if (SwitchRow(ui, t, "set.pinned", Rect(in.left, in.top, Width(in), kRowH), L"Pinned open", m.pinned != 0, live)) Flip(m, m.pinned, L"Pinned");
     if (SwitchRow(ui, t, "set.floating", Rect(in.left, in.top + kRowH + 4, Width(in), kRowH), L"Floating card", m.floating != 0, live)) Flip(m, m.floating, L"Floating");
     Note(c, t, in, in.top + 2 * kRowH + 12, L"Pinned: stays open, maximized windows end where it starts");
@@ -114,7 +114,7 @@ void Layout(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the panel's shape:
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"LAYOUT");
+    D2D1_RECT_F in = Box(c, t, r, L"Layout");
     const wchar_t* names[Model::kLayouts];
     for (int i = 0; i < Model::kLayouts; ++i) names[i] = Model::LayoutName(i);
     int v = Segmented(ui, t, "set.layout", Rect(in.left, in.top + 2, Width(in), 28), names, Model::kLayouts, m.layout, live);
@@ -132,7 +132,7 @@ void Dashboard(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a screen of til
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"FULLSCREEN DASHBOARD");
+    D2D1_RECT_F in = Box(c, t, r, L"Fullscreen dashboard");
     if (m.screenList.empty()) m.screenList = sys::ListScreens();
     const auto& list = m.screenList;
     RECT box = list.empty() ? RECT{0, 0, 16, 9} : list[0].rc; // your screens as they're arranged, to scale
@@ -194,7 +194,7 @@ void Pages(PageCtx& p, const D2D1_RECT_F& r, bool live) { // which pages the rai
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"PAGES");
+    D2D1_RECT_F in = Box(c, t, r, L"Pages");
     if (SwitchRow(ui, t, "set.page.last", Rect(in.left, in.top, Width(in), kRowH), L"Open on the last page", m.rememberPage != 0, live)) Flip(m, m.rememberPage, L"RememberPage");
     Arrange a;
     a.shown = m.pages;
@@ -220,7 +220,7 @@ void Tiles(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the tools page's qu
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"TOOLS TILES");
+    D2D1_RECT_F in = Box(c, t, r, L"Tools tiles");
     Arrange a = TileSet(m);
     int cols = TileCols(Width(in));
     float gh = GridH(TilesHere(m), cols, kTileCellH);
@@ -233,7 +233,7 @@ void Media(PageCtx& p, const D2D1_RECT_F& r, bool live) { // what the player is 
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"MEDIA");
+    D2D1_RECT_F in = Box(c, t, r, L"Media");
     struct Opt {
         const wchar_t* label;
         int* field;
@@ -254,7 +254,7 @@ void ArtBack(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the cover behind 
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"ALBUM ART BACKGROUND");
+    D2D1_RECT_F in = Box(c, t, r, L"Album art background");
     bool can = m.showArt != 0; // no art shown: nothing to lay behind anything
     if (SwitchRow(ui, t, "set.media.back", Rect(in.left, in.top, Width(in), kRowH), can ? L"Media page" : L"Album art is switched off", m.artBack != 0, live && can, can))
         m.SetArtBack(m.artBack == 0); // shared: halobar's player follows
@@ -279,7 +279,7 @@ void Visualizer(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how hard the m
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"VISUALIZER");
+    D2D1_RECT_F in = Box(c, t, r, L"Visualizer");
     constexpr int lo = Model::kVizGainMin, hi = Model::kVizGainMax, step = Model::kSlideStep;
     float v = (m.vizGain - lo) / (float)(hi - lo);
     bool done = false;
@@ -297,10 +297,8 @@ void Opening(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the closed island
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"OPENING");
+    D2D1_RECT_F in = Box(c, t, r, L"Opening");
     if (SwitchRow(ui, t, "set.keyonly", Rect(in.left, in.top, Width(in), kRowH), L"Open only with the shortcut", m.keyOnly != 0, live)) Flip(m, m.keyOnly, L"KeyOnly");
-    Note(c, t, in, in.top + kRowH + 6, L"Hovering or clicking the closed island");
-    Note(c, t, in, in.top + kRowH + 24, L"does nothing. The shortcut still opens it");
 }
 
 void Apps(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the edge over an app window: only the shortcut opens it, or how long it waits
@@ -308,13 +306,12 @@ void Apps(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the edge over an app
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"OVER APPS");
+    D2D1_RECT_F in = Box(c, t, r, L"Over apps");
     D2D1_RECT_F row = Rect(in.left, in.top, Width(in), 2 * kNoteH);
     Ui::Hit h = live ? ui.Button(Ui::Id("set.apps.key", 1), {row.left, row.top, row.right - 52, row.bottom}) : Ui::Hit{}; // the words flip it too
     if (live) ui.NoStop();
-    Color ink = h.hover ? t.text : t.text.Mix(t.textDim, 0.25f);
-    c.Text(L"Open with the shortcut", Rect(row.left, row.top, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, ink); // two lines: the whole name, nothing cut
-    c.Text(L"only over apps", Rect(row.left, row.top + kNoteH, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, ink);
+    c.Text(L"Open with the shortcut", Rect(row.left, row.top, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, t.text); // two lines: the whole name, nothing cut
+    c.Text(L"only over apps", Rect(row.left, row.top + kNoteH, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, t.text);
     bool appFlip = w::Switch(ui, t, Ui::Id("set.apps.key"), {row.right - 24, (row.top + row.bottom) / 2}, m.appKeyOnly != 0, live);
     if (live) ui.Name(L"Open with the shortcut only over apps");
     if ((appFlip || h.clicked) && live) Flip(m, m.appKeyOnly, L"AppKeyOnly");
@@ -339,13 +336,13 @@ void Fullscreen(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the keys that 
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     StagePrefs& sp = StagePrefs::Get();
-    D2D1_RECT_F in = Box(c, t, r, L"FULLSCREEN KEYS");
+    D2D1_RECT_F in = Box(c, t, r, L"Fullscreen keys");
     const wchar_t* labels[2] = {L"Two screens", L"Swap screens"};
     UINT keys[2] = {sp.keySplit, sp.keySwap};
     for (int i = 0; i < 2; ++i) { // label left, the key on the right: click it, then press the new one
         D2D1_RECT_F row = Rect(in.left, in.top + i * (kRowH + 4), Width(in), kRowH);
         bool waiting = sp.capture == i + 1;
-        c.Text(labels[i], {row.left, row.top, row.right - kKeyW - 8, row.bottom}, Weight::Regular, 11.5f, t.text.Mix(t.textDim, 0.25f));
+        c.Text(labels[i], {row.left, row.top, row.right - kKeyW - 8, row.bottom}, Weight::Regular, 11.5f, t.text);
         D2D1_RECT_F chip = {row.right - kKeyW, row.top + 1, row.right, row.bottom - 1};
         if (w::Chip(ui, t, Ui::Id("set.fullkey", i), chip, waiting ? std::wstring(L"Press a key") : StagePrefs::Name(keys[i]), waiting) && live) sp.capture = waiting ? 0 : i + 1;
     }
@@ -358,7 +355,7 @@ void Display(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how big everythin
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"DISPLAY");
+    D2D1_RECT_F in = Box(c, t, r, L"Display");
     static int scaleDrag = -1; // shown while dragging, applied on release: the panel resizing under the mouse would fight the drag
     if (!ui.IsActive(Ui::Id("set.scale"))) scaleDrag = -1; // let go anywhere, or the panel closed: back to what's saved
     float sv = ((scaleDrag >= 0 ? scaleDrag : m.uiScale) - kScaleMin) / (float)(kScaleMax - kScaleMin);
@@ -370,7 +367,7 @@ void Display(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how big everythin
         m.SetPref(m.uiScale, L"UiScale", scaleDrag);
         scaleDrag = -1;
     }
-    Note(c, t, in, in.top + kSlideH + 8, L"The panel, the pill and their text, 80 to 130%");
+    Note(c, t, in, in.top + kSlideH + 8, L"The panel, the pill and their text");
     Note(c, t, in, in.top + kSlideH + 26, L"Applied when you let go of the slider");
 }
 
@@ -379,7 +376,7 @@ void LyricType(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how big the ful
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"LYRICS");
+    D2D1_RECT_F in = Box(c, t, r, L"Lyrics");
     constexpr int lo = Model::kLyricMin, hi = Model::kLyricMax;
     float v = (m.lyricScale - lo) / (float)(hi - lo);
     bool done = false;
@@ -387,8 +384,8 @@ void LyricType(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how big the ful
              (float)kLyricStep / (hi - lo)))
         m.lyricScale = lo + (int)std::lround(v * (hi - lo) / kLyricStep) * kLyricStep; // live: an open player re-lays as it moves
     if (done) m.SetPref(m.lyricScale, L"LyricScale", m.lyricScale);
-    Note(c, t, in, in.top + kSlideH + 8, L"The fullscreen and split lyrics, 80 to 150%");
-    Note(c, t, in, in.top + kSlideH + 26, m.fullLyrics ? L"100% is the usual size" : L"Synced lyrics are switched off for now");
+    Note(c, t, in, in.top + kSlideH + 8, L"The fullscreen and split lyrics");
+    if (!m.fullLyrics) Note(c, t, in, in.top + kSlideH + 26, L"Synced lyrics are switched off for now");
 }
 
 void Weather(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a city typed in, instead of finding you by your ip address
@@ -396,7 +393,7 @@ void Weather(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a city typed in, 
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"WEATHER");
+    D2D1_RECT_F in = Box(c, t, r, L"Weather");
     std::wstring city = m.weather.City();
     D2D1_RECT_F field = Rect(in.left, in.top + 2, Width(in) - (city.empty() || m.cityFocus ? 0 : 36), 30);
     uint32_t id = Ui::Id("set.city");
@@ -408,7 +405,7 @@ void Weather(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a city typed in, 
     if (m.cityFocus) {
         float wdt = c.TextOnce(m.cityEdit, text, Weight::Regular, 12, t.text);
         if (std::fmod(ui.Now(), 1.0) < 0.55) c.Line({text.left + wdt + 1.5f, field.top + 8}, {text.left + wdt + 1.5f, field.bottom - 8}, t.text, 1.5f); // caret
-        if (m.cityEdit.empty()) c.Text(L"Type a city, enter to search", {text.left + 6, text.top, text.right, text.bottom}, Weight::Light, 12, t.textLow);
+        if (m.cityEdit.empty()) c.Text(L"Type a city, enter to search", {text.left + 6, text.top, text.right, text.bottom}, Weight::Light, 12, t.textDim);
         ui.KeepAlive();
         if (ui.In().pressed && !Inside(field, ui.In().mouse)) m.CommitCity(); // clicked away: search what's there
     } else {
@@ -437,7 +434,7 @@ void ShelfIntake(PageCtx& p, const D2D1_RECT_F& r, bool live) { // what the shel
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"SHELF");
+    D2D1_RECT_F in = Box(c, t, r, L"Shelf");
     if (SwitchRow(ui, t, "set.shelf.cap", Rect(in.left, in.top, Width(in), kRowH), L"Everything you copy goes to the Shelf", m.shelfCapture != 0, live)) {
         Flip(m, m.shelfCapture, L"ShelfCapture");
         m.SyncShelf(); // starts or stops listening right away
@@ -456,7 +453,7 @@ void ShelfHistory(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how much the
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"SHELF HISTORY");
+    D2D1_RECT_F in = Box(c, t, r, L"Shelf history");
     constexpr int lo = sys::Shelf::kHistMin, hi = sys::Shelf::kHistMax, step = sys::Shelf::kHistStep;
     float v = (m.shelfHistory - lo) / (float)(hi - lo);
     bool done = false;
@@ -467,7 +464,7 @@ void ShelfHistory(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how much the
         m.SetPref(m.shelfHistory, L"ShelfHistory", m.shelfHistory);
         m.SyncShelf(); // trimmed on let go, never mid-drag
     }
-    c.Text(L"Delete after", Rect(in.left, in.top + kSlideH + 2, Width(in), 16), Weight::Regular, 11.5f, t.text.Mix(t.textDim, 0.25f));
+    c.Text(L"Delete after", Rect(in.left, in.top + kSlideH + 2, Width(in), 16), Weight::Regular, 11.5f, t.text);
     static const wchar_t* const kAges[sys::Shelf::kExpireNever + 1] = {L"1 h", L"6 h", L"24 h", L"7 d", L"Never"};
     int pick = Segmented(ui, t, "set.shelf.age", Rect(in.left, in.top + kSlideH + 19, Width(in), kKnobH + 4), kAges, sys::Shelf::kExpireNever + 1, m.shelfExpire, live);
     if (pick >= 0) {
@@ -482,26 +479,24 @@ void Hud(PageCtx& p, const D2D1_RECT_F& r, bool live) { // astraeus' own volume 
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"VOLUME AND BRIGHTNESS");
+    D2D1_RECT_F in = Box(c, t, r, L"Volume and brightness");
     D2D1_RECT_F row = Rect(in.left, in.top, Width(in), 2 * kNoteH);
     Ui::Hit h = live ? ui.Button(Ui::Id("set.hud", 1), {row.left, row.top, row.right - 52, row.bottom}) : Ui::Hit{}; // the words flip it too
     if (live) ui.NoStop();
-    Color ink = h.hover ? t.text : t.text.Mix(t.textDim, 0.25f);
-    c.Text(L"Replace Windows volume popup", Rect(row.left, row.top, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, ink); // two lines: the whole name, nothing cut
+    c.Text(L"Replace Windows volume popup", Rect(row.left, row.top, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, t.text); // two lines: the whole name, nothing cut
     c.Text(L"(experimental)", Rect(row.left, row.top + kNoteH, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, t.textDim);
     bool hudFlip = w::Switch(ui, t, Ui::Id("set.hud"), {row.right - 24, (row.top + row.bottom) / 2}, m.hud != 0, live);
     if (live) ui.Name(L"Replace Windows volume popup, experimental");
     if (hudFlip || h.clicked) Flip(m, m.hud, L"Hud");
-    Note(c, t, in, row.bottom + 4, L"A pill on every volume change. While on, the");
-    Note(c, t, in, row.bottom + 20, L"volume keys are taken from Windows.");
-    Note(c, t, in, row.bottom + 36, L"Brightness keys still show its popup too.");
+    Note(c, t, in, row.bottom + 4, L"While on, the volume keys are taken from Windows");
+    Note(c, t, in, row.bottom + 20, L"Brightness keys still show their own popup");
 }
 
 void Backup(PageCtx& p, const D2D1_RECT_F& r, bool live) { // export, import, start over
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.shell;
-    D2D1_RECT_F in = Box(c, t, r, L"BACKUP");
+    D2D1_RECT_F in = Box(c, t, r, L"Backup");
     float bw = (Width(in) - 8) / 2;
     static HWND host = nullptr; // the dialogs and the restart live there; looked up once, not every frame
     if (!IsWindow(host)) host = FindWindowW(L"AstraeusHost", nullptr);
@@ -533,7 +528,7 @@ void Problem(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a report for the 
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.shell;
-    D2D1_RECT_F in = Box(c, t, r, L"REPORT A PROBLEM");
+    D2D1_RECT_F in = Box(c, t, r, L"Report a problem");
     float bw = (Width(in) - 8) / 2;
     static double copiedAt = -10;
     static bool copyOk = false;
@@ -562,7 +557,7 @@ void Code(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a plain field: enter
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Entry& e = Entry::Get();
-    D2D1_RECT_F in = Box(c, t, r, L"CODE");
+    D2D1_RECT_F in = Box(c, t, r, L"Code");
     if (e.Settle(ui.Now())) ui.KeepAlive(); // a check running: frames enough to see it land
     float since = (float)(ui.Now() - e.wrongAt), shake = 0;
     if (since < kShakeSec) {
@@ -593,10 +588,10 @@ void Accessibility(PageCtx& p, const D2D1_RECT_F& r, bool live) { // for eyes th
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"ACCESSIBILITY");
+    D2D1_RECT_F in = Box(c, t, r, L"Accessibility");
     bool wide = Width(in) >= kAccessWide;
     float colW = wide ? (Width(in) - 20) / 2 : Width(in);
-    c.Text(L"High contrast", Rect(in.left, in.top, colW, 16), Weight::Regular, 11.5f, t.text.Mix(t.textDim, 0.25f));
+    c.Text(L"High contrast", Rect(in.left, in.top, colW, 16), Weight::Regular, 11.5f, t.text);
     static const wchar_t* const kModes[] = {L"With Windows", L"On", L"Off"};
     int pick = Segmented(ui, t, "set.a11y.hc", Rect(in.left, in.top + 16, colW, 28), kModes, 3, m.a11yContrast, live);
     if (pick >= 0) m.SetPref(m.a11yContrast, L"A11yContrast", pick);
@@ -639,7 +634,7 @@ void Updates(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the version, and 
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.shell;
-    D2D1_RECT_F in = Box(c, t, r, L"ASTRAEUS");
+    D2D1_RECT_F in = Box(c, t, r, L"Astraeus");
     static HWND host = nullptr; // the updater lives there; looked up once, not every frame
     if (!IsWindow(host)) host = FindWindowW(L"AstraeusHost", nullptr);
     bool busy = tray::UpdateBusy();
@@ -661,13 +656,14 @@ void AdvancedHead(PageCtx& p, const D2D1_RECT_F& r, bool live, float open) { // 
     uint32_t id = Ui::Id("set.adv");
     Ui::Hit h = live ? ui.Button(id, r) : Ui::Hit{};
     float hover = ui.Smooth(id + 1, h.hover ? 1.0f : 0, 16);
-    c.Fill(r, 16, t.cardHi.Alpha(0.55f).Mix(t.track, 0.4f * hover));
-    c.StrokeV(r, 16, t.hairTop.Mix(t.accent.Alpha(0.6f), open), t.hairBot, 1);
+    c.Fill(r, 16, CardFill(t).Mix(t.track, 0.4f * hover));
+    if (theme::Contrast()) c.StrokeV(r, 16, t.hairTop, t.hairBot, 1);
+    else if (open > 0.001f) c.Stroke(r, 16, t.accent.Alpha(0.6f * open), 1);
     D2D1_POINT_2F badge = {r.left + 30, (r.top + r.bottom) / 2};
     c.Dot(badge, 16, t.track.Mix(t.accent.Alpha(0.3f), open));
     c.Icon(glyph::Settings, badge, 19, t.textDim.Mix(t.accentHi, open), open > 0.5f);
     c.Text(L"Advanced", Rect(r.left + 56, r.top + 9, Width(r) - 110, 20), Weight::Medium, 13, t.text);
-    c.Text(L"Accessibility, power, weather, shelf, volume keys, backup and more",Rect(r.left + 56, r.top + 29, Width(r) - 110, 16), Weight::Light, 10.5f, t.textLow);
+    c.Text(L"Accessibility, power, weather, shelf, volume keys, backup and more",Rect(r.left + 56, r.top + 29, Width(r) - 110, 16), Weight::Light, 10.5f, t.textDim);
     D2D1_POINT_2F o = {r.right - 26, (r.top + r.bottom) / 2}; // a chevron that turns over as it opens
     float a = open * kPi, s = 5, cs = std::cos(a), sn = std::sin(a);
     auto turn = [&](float x, float y) { return D2D1_POINT_2F{o.x + x * cs - y * sn, o.y + x * sn + y * cs}; };

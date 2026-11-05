@@ -41,6 +41,7 @@ bool Knob(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const wchar
 constexpr float kSlideH = 46; // a Knob's row: its label line and the track under it
 bool OverSlider(const Ui& ui); // the mouse rests on a slider: the page leaves the wheel to it
 void Fades(Canvas& c, const Theme& t, const D2D1_RECT_F& view, float scroll, float content); // hint more above/below
+Color CardFill(const Theme& t); // what a settings card is filled with
 D2D1_RECT_F Box(Canvas& c, const Theme& t, const D2D1_RECT_F& r, const wchar_t* title); // a settings card, returns its inner area
 int Segmented(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, const wchar_t* const* labels, int n, int cur, bool live); // picked index, -1 none
 constexpr float kPrefRow = 132, kPrefGap = 10; // the newer settings cards

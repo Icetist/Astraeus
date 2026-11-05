@@ -427,7 +427,7 @@ void WidgetsCard(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a category, t
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"WIDGETS");
+    D2D1_RECT_F in = Box(c, t, r, L"Widgets");
     float tx = in.left;
     for (int k = 0; k < faces::kCats; ++k) {
         float cw = kChipPad + kCharW * (float)wcslen(faces::CatName(k));

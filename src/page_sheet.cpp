@@ -173,10 +173,14 @@ void Fades(Canvas& c, const Theme& t, const D2D1_RECT_F& view, float scroll, flo
     if (scroll < maxS - 1) c.FillV({view.left, view.bottom - 18, view.right, view.bottom}, 0, t.card.Alpha(0), t.card);
 }
 
+constexpr float kCardLift = 0.25f; // toward the track: about 1.12:1 on the sheet, enough to read with no border, and the controls on it still stand out
+
+Color CardFill(const Theme& t) { return t.glass ? t.cardHi.Alpha(0.55f) : t.cardHi.Mix(t.track, kCardLift); } // glass already reads, and a brighter pane would cost its text
+
 D2D1_RECT_F Box(Canvas& c, const Theme& t, const D2D1_RECT_F& r, const wchar_t* title) { // a settings card, returns its inner area
-    c.Fill(r, 16, t.cardHi.Alpha(0.55f));
-    c.StrokeV(r, 16, t.hairTop, t.hairBot, 1);
-    c.TextSp(title, Rect(r.left + 14, r.top + 11, Width(r) - 28, 12), Weight::Medium, 9.5f, t.textLow, 1.4f);
+    c.Fill(r, 16, CardFill(t));
+    if (theme::Contrast()) c.StrokeV(r, 16, t.hairTop, t.hairBot, 1); // card and sheet are one color there: only an edge shows it
+    c.Text(title, Rect(r.left + 14, r.top + 9, Width(r) - 28, 16), Weight::Medium, 12, t.text);
     return {r.left + 12, r.top + 30, r.right - 12, r.bottom - 10};
 }
 

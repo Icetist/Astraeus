@@ -427,7 +427,7 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 Notify(title, detail.c_str());
             }
             if (app->model->TimerDone()) { // countdown just hit zero
-                std::wstring detail = std::to_wstring(app->model->TimerMins()) + L" min timer is up";
+                std::wstring detail = app->model->TimerName() + L" timer is up";
                 MessageBeep(MB_ICONASTERISK);
                 app->drawer->Peek(L"Timer finished", detail); // in-app drop banner
                 Notify(L"Timer finished", detail.c_str()); // plus system toast

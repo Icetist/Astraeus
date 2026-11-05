@@ -14,10 +14,13 @@
 
 void TodoList(PageCtx& p, const D2D1_RECT_F& r); // page_lists.cpp
 void HostList(PageCtx& p, const D2D1_RECT_F& r);
+void TimerField(PageCtx& p, const D2D1_RECT_F& r);
 
 namespace {
 
 constexpr float kTimerW = 400; // the timer card; the quick tiles take the rest
+constexpr size_t kClockChars = 7; // 9:59:59; ten hours and up take the smaller size, clear of the stop button
+constexpr float kClockLong = 38;
 constexpr float kQuickGap = 10;
 constexpr float kStackedW = 140; // w::Tile puts the icon over the words below this width
 constexpr float kDoneW = 64, kEditHeadH = 26; // editing the tiles: the done pill and its row
@@ -484,13 +487,17 @@ void DrawTools(PageCtx& p) {
             if (w::Chip(ui, t, Ui::Id("tl.min", i), Rect(cx + (i % perRow) * (cw + 8), timer.top + 52 + (i / perRow) * 40, cw, 32), label, false))
                 m.StartTimer(minutes[i] * 60);
         }
-        c.Text(L"Ends with a notification, even if the dropdown is closed.", Rect(timer.left + 20, timer.top + (tall ? 140 : 100), Width(timer) - 40, 18), // timer runs in model, survives close
-               Weight::Light, 12, t.textDim);
+        float fieldY = timer.top + (tall ? 132 : 92), noteY = fieldY + 38;
+        TimerField(p, Rect(timer.left + 20, fieldY, Width(timer) - 40, 32));
+        if (noteY + 18 <= timer.bottom - 8) // the sidebar's shorter card goes without it
+            c.Text(L"Ends with a notification, even if the dropdown is closed.", Rect(timer.left + 20, noteY, Width(timer) - 40, 18), Weight::Light, 12, t.textDim); // timer runs in model, survives close
     } else {
+        if (m.field == Model::kFieldTimer) m.field = Model::kFieldNone, m.fieldEdit.clear(); // started another way: its field is gone, so it can't keep the keyboard
         D2D1_POINT_2F rc = {timer.left + 72, (timer.top + timer.bottom) / 2 + 6}; // ring left, countdown right
         w::Gauge(ui, t, Ui::Id("tl.ring"), rc, 40, 5, (float)m.TimerFrac());
         c.Icon(glyph::Timer, rc, 22, t.accent);
-        c.Text(fmt::Clock(std::ceil(m.TimerLeft())), Rect(timer.left + 134, rc.y - 34, 220, 64), Weight::Thin, 50, t.text); // ceil so 0:00 shows only at end
+        std::wstring left = fmt::Clock(std::ceil(m.TimerLeft())); // ceil so 0:00 shows only at end
+        c.Text(left, Rect(timer.left + 134, rc.y - 34, 220, 64), Weight::Thin, left.size() > kClockChars ? kClockLong : 50, t.text);
         if (w::IconBtn(ui, t, Ui::Id("tl.stop"), {timer.right - 44, rc.y}, 44, glyph::Stop, 26, true, true)) m.StopTimer();
     }
 

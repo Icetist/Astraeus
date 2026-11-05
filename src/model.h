@@ -163,7 +163,7 @@ public:
     };
     std::vector<Todo> todos; // the tools page's to-do list, kept in the registry
     std::vector<std::wstring> hosts; // the servers it watches
-    enum Field { kFieldNone, kFieldTodo, kFieldHost };
+    enum Field { kFieldNone, kFieldTodo, kFieldHost, kFieldTimer };
     int field = kFieldNone; // the list field taking keystrokes
     std::wstring fieldEdit;
     static constexpr size_t kFieldMax = 120;
@@ -204,7 +204,7 @@ public:
     bool TimerDone();
     double TimerLeft() const;
     double TimerFrac() const;
-    int TimerMins() const { return (int)(timerTotal / 60000); }
+    std::wstring TimerName() const; // its length, for the notification: "25 min" or "1:30"
 
     const Config& cfg;
     HWND notify = nullptr;
