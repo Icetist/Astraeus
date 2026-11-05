@@ -104,6 +104,8 @@ jobs:
         run: |
           $tag = "${{ github.ref_name }}"
           $base = "https://github.com/${{ github.repository }}/releases"
+          $listing = Invoke-WebRequest https://api.github.com/repos/microsoft/winget-pkgs/contents/manifests/i/Icetist/Astraeus -Headers @{ Authorization = "Bearer $env:WINGET_TOKEN" } -SkipHttpErrorCheck
+          if ($listing.StatusCode -eq 404) { Write-Output "::notice::$tag not sent to winget: the package is not listed yet"; exit 0 } # updates need a listed package; a first listing is its own pull request
           Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
           ./wingetcreate.exe update Icetist.Astraeus --version $tag.TrimStart('v') --urls "$base/download/$tag/Astraeus.exe" --release-notes-url "$base/tag/$tag" --release-date (Get-Date -Format yyyy-MM-dd) --submit --no-open --token $env:WINGET_TOKEN
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
