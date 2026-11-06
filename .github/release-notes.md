@@ -1,5 +1,7 @@
 ## Astraeus 2.6.0
 
+![The long pill across the top of the desktop in an accent red, with the song, visualizer, clock, CPU and volume](https://raw.githubusercontent.com/Icetist/Astraeus/main/.github/assets/screenshots/long-pill.png)
+
 ### New
 - **The long pill.** A long pill for your desktop with the widgets you pick, including new RAM and GPU ones. Right-click it to arrange it on any edge, stuck or floating. Turn it on under **Long pill on the desktop** in Settings.
 - **Regular pill or long pill when not on desktop.** Keep the long pill for the desktop and let the regular pill take over on top of your apps, or keep the long one everywhere. It's a switch in Settings and a choice in the pill's editor.
