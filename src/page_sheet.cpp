@@ -232,8 +232,8 @@ bool Knob(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const wchar
     const Input& in = ui.In();
     Seen(id);
     D2D1_RECT_F grab = {r.left, r.top + kSlideLabelH - 2, r.right, r.bottom + 4}; // the whole lower band takes a press, not just the line
-    float pad = kThumbR + kThumbGrow + 1, cy = (grab.top + r.bottom) / 2 + 1;
-    float x0 = r.left + pad, x1 = r.right - pad; // the thumb stays inside the row
+    float cy = (grab.top + r.bottom) / 2 + 1;
+    float x0 = r.left + kThumbR, x1 = r.right - kThumbR; // the mouse moves the thumb's middle, which stops short of the ends
     Ui::Hit h = live ? ui.Button(id, grab) : Ui::Hit{};
     if (live) {
         ui.Mark(Ui::Role::Slider, false, v);
@@ -261,10 +261,9 @@ bool Knob(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const wchar
     float shown = ui.Smooth(id + 3, anim::Clamp01(v), 13 + 19 * drag); // a jump glides there, then a drag stays under the finger
     c.Text(label, {r.left, r.top, r.right - 70, r.top + kSlideLabelH}, Weight::Regular, 11.5f, t.textDim.Mix(t.text, 0.5f * hot));
     c.Text(value, {r.right - 90, r.top, r.right, r.top + kSlideLabelH}, Weight::Semi, 11.5f, t.textDim.Mix(t.accentHi, 0.4f + 0.6f * hot), Align::Right);
-    float th = kTrackH + kTrackGrow * hot, x = x0 + (x1 - x0) * shown;
+    float tr = kThumbR + kThumbGrow * hot + drag, th = kTrackH + kTrackGrow * hot, x = w::ThumbAt(r.left, r.right, tr, shown);
     c.Fill({r.left, cy - th / 2, r.right, cy + th / 2}, th / 2, t.track);
-    c.Fill({r.left, cy - th / 2, (std::max)(x, r.left + th), cy + th / 2}, th / 2, t.accent); // solid, the song's or the shell's accent
-    float tr = kThumbR + kThumbGrow * hot + drag;
+    c.Fill({r.left, cy - th / 2, (std::max)(r.left + Width(r) * shown, r.left + th), cy + th / 2}, th / 2, t.accent); // solid, the song's or the shell's accent; the whole track at 100%
     if (hot > 0.01f) c.Dot({x, cy}, tr + 6 * hot, t.accent.Alpha(0.16f * hot)); // a soft halo under the mouse
     c.Dot({x, cy}, tr, t.text);
     c.Ring({x, cy}, tr - 1, t.accent, 2.5f);

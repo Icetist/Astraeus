@@ -2,6 +2,7 @@
 #include <d2d1_1helper.h>
 #include <d2d1effects.h>
 
+#include "deskpill.h"
 #include "drawer.h"
 #include "entry.h"
 #include "glyphs.h"
@@ -174,7 +175,7 @@ bool Drawer::EnsureDev() {
                                        (UINT)((Side() ? Span() : H + overshoot) * scale + 0.5f)); // max size, window clips the rest
     surfW = d.Width;
     surfH = d.Height;
-    if (lookNow == 2 && GlassDev(d)) return true; // glass: windows composition with a live backdrop blur, frames go straight into it
+    if (Frosted() && GlassDev(d)) return true; // glass: windows composition with a live backdrop blur, frames go straight into it
     if (!MakeSwap(d3d.Get(), ctx.Get(), d, 96 * scale, swap, backBuf, frameWait)) {
         FreeDev();
         return false;
@@ -366,6 +367,33 @@ void Drawer::SyncCover() {
     }
 }
 
+void Drawer::SyncWallTone() {
+    constexpr float kLightFrom = 0.5f;
+    std::wstring path = theme::WallPath();
+    WIN32_FILE_ATTRIBUTE_DATA info;
+    bool picture = !path.empty() && GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &info);
+    COLORREF plain = GetSysColor(COLOR_DESKTOP);
+    std::wstring key = picture ? path + L"|" + std::to_wstring(info.ftLastWriteTime.dwLowDateTime) : L"#" + std::to_wstring(plain); // no picture: windows' plain color
+    if (key == wallToneKey) return;
+    wallToneKey = key;
+    float lum = (0.2126f * GetRValue(plain) + 0.7152f * GetGValue(plain) + 0.0722f * GetBValue(plain)) / 255;
+    if (picture) {
+        ComPtr<IWICBitmapSource> src = gfx::DecodeFile(path.c_str(), 256);
+        if (!src) return; // unreadable: it stays on the side it's on
+        lum = theme::BmpLuma(src.Get());
+    }
+    wallLight = lum > kLightFrom;
+}
+
+Color Drawer::Tint(float k) const {
+    constexpr float kFrost = 0.50f, kSmoke = 0.45f, kFrostWhite = 0.55f, kSmokeBlack = 0.70f, kPlain = 0.42f; // how far the tint leans to white or black to do it
+    if (tintNow < 0) return Color{0, 0, 0, kPlain * k}; // neutral smoked glass under the highlights, the blur still shows through
+    Color c = Color::Rgb((uint32_t)tintNow);
+    return theme::TintIsPale(tintNow) ? c.Mix(Color{1, 1, 1, 1}, kFrostWhite).Alpha(kFrost * k) : c.Mix(Color{0, 0, 0, 1}, kSmokeBlack).Alpha(kSmoke * k);
+}
+
+float Drawer::TintFor(float lum) const { return anim::Clamp01(theme::TintIsPale(tintNow) ? (0.58f - lum) / 0.38f : (lum - 0.42f) / 0.38f); } // white ink struggles on bright, black ink on dark; colourful middles stay clear either way
+
 void Drawer::SyncWall() {
     if (model.AccentMode() != 0) return; // custom accent: the wallpaper doesn't decide
     std::wstring path = theme::WallPath();
@@ -382,6 +410,7 @@ void Drawer::SyncWall() {
 Theme Drawer::Make(Seed s) const {
     s.look = lookNow;
     s.bg = bgNow;
+    s.tint = tintNow;
     return Theme::From(s);
 }
 
@@ -395,13 +424,32 @@ void Drawer::SyncLook() {
         shellT = mediaT = 1;
     }
     int look = model.Look(), bg = model.CustomBg(); // halobar's while following it
-    if (look == lookNow && bg == bgNow) return;
-    bool rebuild = (look == 2) != (lookNow == 2) && ctx; // glass draws through a different pipeline
+    bool clear = look == Model::kLookClear, glassy = look == 2 || clear;
+    if (clear && wallToneKey.empty()) SyncWallTone();
+    int tint = clear ? (wallLight ? 0xFFFFFF : -1) : glassy ? model.GlassTint() : -1; // clear's panels take the wallpaper's side
+    if (look == lookNow && bg == bgNow && tint == tintNow) return;
+    bool rebuild = glassy != Frosted() && ctx; // glass draws through a different pipeline
     lookNow = look;
     bgNow = bg;
+    tintNow = tint;
     if (rebuild) FreeDev(); // the caller rebuilds it right away for the new appearance
     SetShell(Make(shellSeed)); // media follows unless album tinted
     if (coverSrc && cfg.albumCol) SetMedia(Make(mediaSeed));
+}
+
+void Drawer::SyncThemeNow() { // frames skip a closed panel: left to them, the theme would wait for the next time it opens
+    model.SyncThemeSet();
+    SyncLook();
+    SyncAccent();
+    if (shellT >= 1 && mediaT >= 1) return;
+    if (MainShown()) {
+        Redraw(); // its frames carry the crossfade
+    } else if (desk && desk->Up()) {
+        desk->Refresh(); // the long pill's do
+    } else { // nobody to see it: there's nothing to fade
+        shellNow = shellTo, mediaNow = mediaTo;
+        shellT = mediaT = 1;
+    }
 }
 
 void Drawer::SyncAccent() {
@@ -765,6 +813,15 @@ bool Drawer::StepIslandBars(float dt, double now) {
     return moving;
 }
 
+bool Drawer::DrawPillNow(float h, float dt, double now) {
+    if (!Clear()) return DrawIsland(h, dt, now);
+    Theme shell = shellNow, media = mediaNow; // the pill draws from these all the way down: its ink for just this
+    shellNow = mediaNow = theme::ClearInk(shell, clearInk);
+    bool moving = DrawIsland(h, dt, now);
+    shellNow = shell, mediaNow = media;
+    return moving;
+}
+
 bool Drawer::DrawIsland(float h, float dt, double now) {
     const Theme& t = shellNow;
     const Theme& mt = mediaNow; // the wave in the album's colors
@@ -845,7 +902,7 @@ uint64_t Drawer::PillKey(float h) const {
     }
     void* art = cover.Get();
     mix(&art, sizeof(art));
-    float f[] = {h, W, winW, winH, glassShadeNow, (float)edgeNow, islandHot ? 1.0f : 0.0f, track ? 1.0f : 0.0f, (float)model.BgOpacity(), Bubble() ? model.ActivityFrac() : -1};
+    float f[] = {h, W, winW, winH, glassShadeNow, clearInk, Clear() ? 1.0f : 0.0f, (float)edgeNow, islandHot ? 1.0f : 0.0f, track ? 1.0f : 0.0f, (float)model.BgOpacity(), Bubble() ? model.ActivityFrac() : -1};
     mix(f, sizeof(f));
     for (const Color* c : {&shellNow.bg, &shellNow.text, &shellNow.textDim, &shellNow.sheen, &mediaNow.cardHi, &mediaNow.accentHi}) mix(c, sizeof(Color));
     return k;
@@ -872,7 +929,7 @@ bool Drawer::PillLayer(float h, float shapeWide) { // before the frame: rebuilt 
     ctx->SetTransform(shapeXform);
     PaintShape(Shape(h, shapeWide).Get(), h);
     pillPass = 1;
-    DrawIsland(h, 0, 0);
+    DrawPillNow(h, 0, 0);
     pillPass = 0;
     bool ok = SUCCEEDED(ctx->EndDraw());
     ctx->SetTarget(was.Get());

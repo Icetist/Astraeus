@@ -103,7 +103,7 @@ double Seconds() {
 
 }
 
-Stage::Stage(Model& m, HMONITOR mon, bool focus) : model(m), mode(m.Look()) {
+Stage::Stage(Model& m, HMONITOR mon, bool focus) : model(m), mode(m.Glassy() ? 2 : m.Look()) {
     static bool registered = [] {
         WNDCLASSEXW wc = {sizeof(wc)};
         wc.lpfnWndProc = Proc;
@@ -432,7 +432,7 @@ void Stage::Seek(const D2D1_RECT_F& r, float show) { // the media page's wave, s
     if (!ui.IsActive(id)) preview = -1;
     Canvas& c = *canvas;
     float k = std::clamp(H / 900.0f, 0.8f, 1.6f);
-    float cy = (r.top + r.bottom) / 2, x = r.left + Width(r) * anim::Clamp01(v), gap = 9 * k;
+    float cy = (r.top + r.bottom) / 2, x = w::ThumbAt(r.left, r.right, 2.5f, anim::Clamp01(v)), gap = 9 * k;
     float amp = ui.Smooth(id + 1, tr.playing && !ui.IsActive(id) ? 2.8f * k : 0, 5); // flattens when paused or dragging
     WaveLine(c, r.left + 2, known ? x - gap : r.right - 2, cy, amp, ui.Now(), look.accent, 4.5f * k, 34 * k);
     if (!known) return;

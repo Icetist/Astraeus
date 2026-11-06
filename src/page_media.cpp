@@ -27,7 +27,7 @@ void Wave(PageCtx& p, const D2D1_RECT_F& r, float fraction, bool playing, bool c
 
     float amp = ui.Smooth(id + 1, playing && !ui.IsActive(id) ? 3.2f : 0, 5); // wave flattens when paused or dragging
     float cy = (r.top + r.bottom) / 2;
-    float x = r.left + Width(r) * anim::Clamp01(v);
+    float x = w::ThumbAt(r.left, r.right, 2, anim::Clamp01(v)); // the 4 wide playhead's edge meets the ends
     const float gap = 7; // gap around the head
     float a0 = r.left + 2, a1 = known ? x - gap : r.right - 2; // played part, left of head
     WaveLine(c, a0, a1, cy, amp, ui.Now(), t.accent, 4, 28);

@@ -1,6 +1,7 @@
 // Where the drawer lives: its screen and edge, the hover strips on the other screens, and stepping aside for fullscreen apps.
 #include "drawer.h"
 #include "board.h"
+#include "deskpill.h"
 
 #include <dwmapi.h>
 #include <shellscalingapi.h>
@@ -73,12 +74,14 @@ RECT Drawer::Footprint() const { // the screen area the open panel drops into, i
     return edgeNow == 1 ? RECT{monitor.left, y, monitor.left + d, y + a} : RECT{monitor.right - d, y, monitor.right, y + a};
 }
 
-bool Drawer::AppBelow() const { // any app window under where the panel would drop: the pill comes first, the panel only on a tap
+bool Drawer::AppBelow() const { return AppIn(Footprint()); } // any app window under where the panel would drop: the pill comes first, the panel only on a tap
+
+bool Drawer::AppIn(const RECT& area) const {
     struct Ctx {
         RECT area;
         DWORD self;
         bool found;
-    } c{Footprint(), GetCurrentProcessId(), false};
+    } c{area, GetCurrentProcessId(), false};
     EnumWindows([](HWND w, LPARAM lp) -> BOOL { // top level windows only, front to back
         auto* c = reinterpret_cast<Ctx*>(lp);
         if (!IsWindowVisible(w) || IsIconic(w)) return TRUE;
@@ -105,8 +108,9 @@ bool Drawer::AppBelow() const { // any app window under where the panel would dr
 
 void Drawer::WatchDesk() { // only window events wake us, and only while the option is on: nothing polls
     UnwatchDesk();
-    deskOn = model.pillDesk != 0;
+    deskOn = model.WatchesDesk();
     if (!deskOn) {
+        model.overApp = false;
         if (!opened) SyncStay(); // a pill held up by the desktop alone goes
         return;
     }
@@ -148,7 +152,18 @@ void Drawer::OnDeskTimer() {
     HWND front = GetForegroundWindow();
     HookFront(front);
     bool view = DeskFront(front) || !AppBelow(); // the desktop has the focus, or nothing of an app's lies under the island
-    if (view == deskView) return;
+    pillView = model.deskPill && desk && (DeskFront(front) || !AppIn(desk->Spot(mon))); // the long pill has its own patch of screen to look under
+    bool overNow = model.deskPill && desk ? !pillView : !view; // one answer for the theme and the long pill's body: with the long pill on, its own patch of screen
+    if (desk) desk->SetOverApp(overNow);
+    model.overApp = model.appsTheme != 0 && overNow;
+    SyncThemeNow(); // before it comes or goes: it shows up in the right colors
+    SyncDesk();
+    if (desk) desk->LookBehind(); // what's under it may be something else now
+    if (island) SampleInk();
+    if (view == deskView) {
+        if (!opened) SyncStay(); // the long pill just came or went: the island answers
+        return;
+    }
     deskView = view;
     if (!opened) SyncStay(); // shows or goes now, not on the next second
 }
@@ -266,10 +281,20 @@ void Drawer::Wake() {
 void Drawer::SyncHide() {
     // windows sends its fullscreen notice for the main screen only: it hides the panel there, any other screen is checked directly
     bool onMain = mon == MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
-    bool hide = cfg.hideFull && ((fullApp && onMain) || FullOn(mon));
+    bool full = (fullApp && onMain) || FullOn(mon);
+    bool stayUp = full && cfg.hideFull && model.pillFull != 0;
+    if (stayUp && !overFull) { // only as it starts: the app just came up over us
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        if (desk) desk->Raise();
+        if (opened) Close(); // the pill, over a fullscreen app: the panel comes back on a click, if that's allowed
+    }
+    overFull = stayUp;
+    bool hide = cfg.hideFull && !model.pillFull && full;
     HMONITOR here = mon ? mon : MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
     hide = hide || (BoardOn(here) && !stage); // a dashboard owns this screen: the island steps aside, as for a game
-    if (hide && !hidden && !stage)
+    bool arranging = desk && desk->Editing();
+    hide = hide || arranging; // the desktop pill is being arranged: nothing else on this screen
+    if (hide && !hidden && !stage && !arranging)
         if (HMONITOR to = Refuge()) return Hop(to); // every screen: a game took this one, the pill carries on next door
     if (hide == hidden) return;
     hidden = hide;

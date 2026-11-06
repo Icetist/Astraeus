@@ -113,6 +113,7 @@ private:
 };
 
 namespace w {
+inline float ThumbAt(float from, float to, float radius, float v) { return from + radius + (to - from - 2 * radius) * v; } // where a slider's thumb sits: at 0 and at 1 its edge meets the track's end
 void Card(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float radius = 22);
 bool IconBtn(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, float size, int glyph, float iconPx,
                 bool enabled = true, bool lit = false);

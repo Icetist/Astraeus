@@ -1,0 +1,174 @@
+#pragma once
+#include <windows.h>
+#include <d3d11.h>
+#include <dcomp.h>
+#include <dxgi1_3.h>
+
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "anim.h"
+#include "model.h"
+#include "theme.h"
+#include "ui.h"
+
+// The long pill on the desktop: its own small window, on any edge, stuck to it or floating clear of it. While it's being
+// arranged the window takes the whole screen and shows the wallpaper, so the pill is set where it will really sit.
+// The normal island and the panel know nothing of its edge or its float. With nothing to animate it draws nothing.
+class DeskPill {
+public:
+    explicit DeskPill(Model& model);
+    ~DeskPill();
+    DeskPill(const DeskPill&) = delete;
+    DeskPill& operator=(const DeskPill&) = delete;
+
+    bool Create();
+    void Want(bool up, HMONITOR on); // the drawer's verdict: the desktop is what's under it, or not
+    bool Up() const { return wantUp; } // it's there or on its way: the island steps aside
+    void Edit(HMONITOR on);
+    bool Editing() const { return editing || leaving; }
+    bool MouseOn() const; // the cursor's on its window
+    RECT Spot(HMONITOR on); // where it sits, in screen pixels
+    void Second(); // what it shows may have changed
+    void Raise() { if (hwnd) SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); } // over what just went fullscreen
+    void Refresh() { if (wantUp || Editing()) Poke(); } // the theme moved: it paints only when told
+    void SetOverApp(bool v) { // it wears its own body over an app
+        if (v == onApp) return;
+        onApp = v;
+        if (FillNow() == kFillClear) inkDue = lastFrame + 0.05;
+        if (wantUp) Poke();
+    }
+    void LookBehind() { if (wantUp && !Editing()) SampleInk(); } // windows moved, or the wallpaper changed: clear's ink looks again now
+
+    bool Needs() const { return dirty; }
+    HANDLE Wait() const { return frameWait; }
+    void Frame(const Theme& shell);
+
+    std::function<void()> onOpen, onEdit, onDone; // a click, a right click, the editor gone
+
+private:
+    struct Spec { // what's kept; a working copy while editing, saved as each drag lands
+        int edge = 0;
+        float pos = 500, len = 560, thick = 30, gap = 10;
+        bool floats = true, apps = false;
+        int fill = 0, fillApps = 0; // its body on the desktop, and over an app
+        std::vector<int> items;
+    };
+    struct Pose { // where it's drawn: its edge side's middle, turned to its edge
+        float ax = 0, ay = 0, angle = 0, len = 0, thick = 0, flat = 0;
+    };
+    struct Placed { // an item laid out along the pill
+        int kind;
+        float x, w;
+        std::wstring text;
+        int icon;
+        bool idle; // nothing to show right now: only the editor draws it, faint, so it can be moved
+    };
+    enum class Drag { None, Move, Len, Thick, Item };
+    enum Fill { kFillTheme, kFillAccent, kFillGlass, kFillClear };
+
+    static LRESULT CALLBACK Proc(HWND, UINT, WPARAM, LPARAM);
+    LRESULT Handle(UINT msg, WPARAM wp, LPARAM lp);
+    void Poke() { dirty = true; }
+    int FillNow() const { return (editing || leaving ? previewApps : onApp) ? spec.fillApps : spec.fill; } // the editor shows the one last changed
+
+    void Measure(HMONITOR on); // the screen's size in dips
+    void DropAppItems();
+    void Span(int edge, float& lo, float& hi) const; // the stretch of that edge it may sit on
+    Pose Goal() const; // where the spec puts it
+    D2D1_MATRIX_3X2_F Local(const Pose& p) const;
+    D2D1_POINT_2F ToLocal(const Pose& p, D2D1_POINT_2F screen) const;
+    D2D1_RECT_F Box(const Pose& p, float pad) const; // its bounds on the screen, in dips
+    void FitWindow(); // resting: just big enough; editing: the whole screen
+
+    bool EnsureDev();
+    void FreeDev();
+    bool SizeBuffers(UINT w, UINT h);
+
+    void LoadWall(bool sharp); // the wallpaper for this screen, for the editor and for glass
+    D2D1_RECT_F WallRect() const; // where it lands, as windows places it
+    void SampleInk(); // clear: black or white, from what's on screen right beside it
+
+    std::vector<Placed> LayOut(const std::vector<int>& items, float len, float thick);
+    float NeedLen(const std::vector<int>& items, float thick); // the shortest it can be with these items
+    void Text(int kind, std::wstring& text, int& icon, bool& idle) const;
+    float ItemW(int kind, const std::wstring& text, int icon, bool idle, float thick); // along the pill
+    bool Has(int kind) const;
+    void SyncCover(); // the song's art, only while the cover item is on it
+    bool StepBars(float dt, double now); // true while they move
+    ComPtr<ID2D1Geometry> BuildBody(float len, float thick, float flat) const;
+    void DrawPill(const Theme& t, const Pose& p, float alpha);
+
+    // the editor, in deskpill_edit.cpp
+    bool StepEdit(float dt);
+    void DrawBackdrop();
+    void DrawGuides(const Theme& t);
+    void DrawGrips(const Theme& t);
+    void DrawBar(const Theme& t);
+    void PressPill();
+    void DragNow();
+    void Land(); // the drag ended: clamp, save
+    void Commit(); // the working copy into the model and the registry
+    void Finish();
+    void Leave(); // faded out: back to a plain pill
+    bool Seg(const Theme& t, const char* key, const D2D1_RECT_F& r, const wchar_t* const* names, int n, int& value);
+    D2D1_RECT_F BarRect() const;
+    std::vector<int> Offered() const;
+    void DrawFloater(const Theme& t);
+
+    static constexpr int kEscKey = 0x52B1; // while editing: the pill never takes the keyboard, a hotkey reaches it anyway
+
+    Model& model;
+    Spec spec;
+    HWND hwnd = nullptr;
+    HMONITOR screen = nullptr;
+    RECT monitor = {}, work = {};
+    float scale = 1, MW = 0, MH = 0;
+    D2D1_POINT_2F view{}; // the window's corner on the screen, dips
+    bool onApp = false, previewApps = false;
+    bool wantUp = false, editing = false, leaving = false, dirty = false, hot = false, tracking = false;
+    anim::Spring appear; // 0 away .. 100 in place
+    Pose pose; // what's drawn; follows Goal while editing
+    float intro = 0; // the editor's backdrop, 0 the real desktop .. 1 the wallpaper
+    float inkDark = 0, inkGoal = 0; // clear's ink, eased
+    double inkDue = 0; // a look at what's behind, once it has settled
+    bool inkAfterIntro = false; // and once the editor's backdrop is up
+    double lastFrame = 0;
+    std::wstring sig; // what a resting pill last showed
+
+    Input input;
+    Ui ui;
+    LPCWSTR cursor = IDC_HAND;
+    std::vector<Placed> placed; // this frame's items, for hit tests
+
+    Drag drag = Drag::None;
+    bool pressedOnBar = false, moved = false, offPill = false, bareDown = false;
+    float grabX = 0, grabY = 0, grabLen = 0;
+    int dragKind = -1;
+    float shake = 0; // an item that won't fit: the pill says no
+    bool magnetMid = false; // the drag is held at the edge's middle
+    int wallFor = 0; // 0 none, 1 glass only, 2 sharp too
+
+    ComPtr<ID3D11Device> d3d;
+    ComPtr<ID2D1DeviceContext> ctx;
+    ComPtr<IDXGISwapChain2> swap;
+    ComPtr<ID2D1Bitmap1> buf, wall;
+    ComPtr<ID2D1Bitmap> wallBlur;
+    D2D1_SIZE_F wallSize{}; // in pixels
+    Color wallColor{0.1f, 0.1f, 0.12f, 1}; // no picture: windows' plain color
+    DWORD wallPos = 0;
+    ComPtr<IDCompositionDesktopDevice> dcomp;
+    ComPtr<IDCompositionTarget> target;
+    ComPtr<IDCompositionVisual2> visual;
+    HANDLE frameWait = nullptr;
+    UINT bufW = 0, bufH = 0;
+    std::unique_ptr<Canvas> canvas;
+    ComPtr<ID2D1Geometry> body;
+    ComPtr<ID2D1Bitmap1> cover;
+    ComPtr<ID2D1Bitmap> coverBlur;
+    uint64_t coverId = ~0ull;
+    float bars[4] = {}; // the small visualizer's levels, eased
+    float bodyLen = -1, bodyThick = -1, bodyFlat = -1;
+};

@@ -255,10 +255,10 @@ void Board::TileMedia(const D2D1_RECT_F& r, float k) { // the song: cover, words
     uint32_t sid = Ui::Id("bd.seek");
     bool moved = tr.canSeek && ui.Slider(sid, bar, v, false);
     if ((ui.IsActive(sid) && ui.In().released) || (moved && !ui.IsActive(sid))) model.media.Seek(v); // let go, or the keyboard's step: it jumps there
-    float x = col.left + Width(col) * anim::Clamp01(v);
+    float done = anim::Clamp01(v);
     c.Line({col.left, py}, {col.right, py}, m.accent.Alpha(0.25f), 3.5f * k);
-    c.Line({col.left, py}, {x, py}, m.accent, 3.5f * k);
-    c.Dot({x, py}, 5 * k, m.accentHi);
+    c.Line({col.left, py}, {col.left + Width(col) * done, py}, m.accent, 3.5f * k);
+    c.Dot({w::ThumbAt(col.left, col.right, 5 * k, done), py}, 5 * k, m.accentHi);
     if (py - 22 * k > y + ts) { // the times, when there's air for them
         c.Text(fmt::Clock(tr.Elapsed() / 1e7), Rect(col.left, py - 22 * k, 80 * k, 14 * k), Weight::Regular, 10.5f * k, m.textLow);
         c.Text(fmt::Clock(tr.duration / 1e7), Rect(col.right - 80 * k, py - 22 * k, 80 * k, 14 * k), Weight::Regular, 10.5f * k, m.textLow, Align::Right);

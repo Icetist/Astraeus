@@ -68,7 +68,7 @@ void Power(PageCtx& p, const D2D1_RECT_F& r, bool live) { // battery pills: plug
 }
 
 const wchar_t* WidgetName(int w) {
-    static const wchar_t* const kNames[Model::kWidgets] = {L"Nothing", L"Weather", L"Battery", L"CPU", L"Memory", L"Network", L"Workspace", L"Language", L"Window", L"Disk"};
+    static const wchar_t* const kNames[Model::kWidgets] = {L"Nothing", L"Weather", L"Battery", L"CPU", L"RAM", L"Network", L"Workspace", L"Language", L"Window", L"Disk", L"GPU"};
     return kNames[(w >= 0 && w < Model::kWidgets) ? w : 0];
 }
 
@@ -95,6 +95,24 @@ void Pill(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the resting pill: al
     }
     if (SwitchRow(ui, t, "set.pill.bubble", Rect(in.left, y + kChipH + 4, Width(in), kRowH), L"Timer bubble beside the pill", m.activityBubble != 0, live))
         Flip(m, m.activityBubble, L"ActivityBubble");
+}
+
+void DeskCard(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the long pill on the desktop: on or off, and into its editor
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F in = Box(c, t, r, L"Desktop pill");
+    if (SwitchRow(ui, t, "set.desk.on", Rect(in.left, in.top, Width(in), kRowH), L"Long pill on the desktop", m.deskPill != 0, live)) {
+        Flip(m, m.deskPill, L"DeskPill");
+        if (m.deskPill) m.deskEditAsk = true; // on for the first look: straight to arranging it
+    }
+    if (SwitchRow(ui, t, "set.desk.regular", Rect(in.left, in.top + kRowH, Width(in), kRowH), L"Regular pill when not on desktop", m.deskApps == 0, live && m.deskPill != 0, m.deskPill != 0)) // off: the long one over apps too
+        m.SetPref(m.deskApps, L"DeskApps", m.deskApps ? 0 : 1);
+    constexpr float kBtnW = 120, kBtnH = 30, kBtnGap = 10, kWordsDrop = 7;
+    float by = in.top + 2 * kRowH + 4;
+    if (Act(ui, t, Ui::Id("set.desk.edit"), Rect(in.left, by, kBtnW, kBtnH), L"Customize", true, false, live && m.deskPill != 0)) m.deskEditAsk = true;
+    Note(c, t, Rect(in.left + kBtnW + kBtnGap, in.top, Width(in) - kBtnW - kBtnGap, Height(in)), by + kWordsDrop, L"Or right click the pill");
 }
 
 void PanelOpts(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how the panel behaves, in either layout: pinned open, floating clear of the edge
@@ -299,6 +317,18 @@ void Opening(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the closed island
     Model& m = p.m;
     D2D1_RECT_F in = Box(c, t, r, L"Opening");
     if (SwitchRow(ui, t, "set.keyonly", Rect(in.left, in.top, Width(in), kRowH), L"Open only with the shortcut", m.keyOnly != 0, live)) Flip(m, m.keyOnly, L"KeyOnly");
+}
+
+void OverFullscreen(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the pill over games and videos: off, it goes away for them
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F in = Box(c, t, r, L"Fullscreen apps");
+    if (SwitchRow(ui, t, "set.pill.full", Rect(in.left, in.top, Width(in), kRowH), L"Stay up in fullscreen", m.pillFull != 0, live)) Flip(m, m.pillFull, L"PillFullscreen");
+    if (SwitchRow(ui, t, "set.pill.fullopen", Rect(in.left, in.top + kRowH, Width(in), kRowH), L"Click the pill to open the panel", m.pillFullOpen != 0, live && m.pillFull != 0, m.pillFull != 0)) Flip(m, m.pillFullOpen, L"PillFullOpen");
+    Note(c, t, in, in.top + 2 * kRowH + 4, L"Needs Always show the pill");
+    Note(c, t, in, in.top + 2 * kRowH + 4 + kNoteH, L"Not for exclusive fullscreen games");
 }
 
 void Apps(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the edge over an app window: only the shortcut opens it, or how long it waits
@@ -694,6 +724,7 @@ float Advanced(PageCtx& p, const D2D1_RECT_F& area, bool live, int cols) { // po
     Visualizer(p, next(), live);
     ShelfIntake(p, next(), live); // the shelf's intake and its history, side by side
     ShelfHistory(p, next(), live);
+    OverFullscreen(p, next(), live);
     Problem(p, next(), live);
     y +=((n + cols - 1) / cols) * (kAdvRow + kPrefGap);
     float ah = AccessH(Width(area));
@@ -709,6 +740,16 @@ float Advanced(PageCtx& p, const D2D1_RECT_F& area, bool live, int cols) { // po
 float DrawPrefs(PageCtx& p, const D2D1_RECT_F& area, bool live, bool tall) {
     int cols = tall ? 1 : 2;
     float cw = (Width(area) - (cols - 1) * kPrefGap) / cols, y = area.top;
+    int n = 0;
+    auto next = [&] { // the next card's place, filling rows left to right
+        D2D1_RECT_F r = Rect(area.left + (n % cols) * (cw + kPrefGap), y + (n / cols) * (kPrefRow + kPrefGap), cw, kPrefRow);
+        ++n;
+        return r;
+    };
+    Pill(p, next(), live); // the pills first: the most often changed, no long scroll to them
+    DeskCard(p, next(), live);
+    y += ((n + cols - 1) / cols) * (kPrefRow + kPrefGap);
+    n = 0;
     float ph = PagesH(Width(area)), th = TilesH(p.m, Width(area)); // the two editors run across, as tall as their cells need
     Pages(p, Rect(area.left, y, Width(area), ph), live);
     y += ph + kPrefGap;
@@ -717,15 +758,8 @@ float DrawPrefs(PageCtx& p, const D2D1_RECT_F& area, bool live, bool tall) {
     float wh = WidgetsCardH(p.m, Width(area)); // clocks, money, stocks and the rest, for the widgets page
     WidgetsCard(p, Rect(area.left, y, Width(area), wh), live);
     y += wh + kPrefGap;
-    int n = 0;
-    auto next = [&] { // the next card's place, filling rows left to right
-        D2D1_RECT_F r = Rect(area.left + (n % cols) * (cw + kPrefGap), y + (n / cols) * (kPrefRow + kPrefGap), cw, kPrefRow);
-        ++n;
-        return r;
-    };
     Layout(p, next(), live); // how the panel shows, and the dashboard beside it
     Dashboard(p, next(), live);
-    Pill(p, next(), live);
     Media(p, next(), live);
     Fullscreen(p, next(), live);
     y += ((n + cols - 1) / cols) * (kPrefRow + kPrefGap);

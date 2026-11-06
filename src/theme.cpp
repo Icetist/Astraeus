@@ -108,6 +108,17 @@ Seed FromBmp(IWICBitmapSource* source) {
     return {hue, sat[best] / weight[best]}; // weighted avg saturation
 }
 
+float BmpLuma(IWICBitmapSource* source) {
+    constexpr UINT side = 16; // an average needs next to nothing
+    ComPtr<IWICBitmapScaler> scaler;
+    if (!source || FAILED(gfx::Wic()->CreateBitmapScaler(&scaler)) || FAILED(scaler->Initialize(source, side, side, WICBitmapInterpolationModeLinear))) return 0;
+    std::vector<BYTE> px(side * side * 4);
+    if (FAILED(scaler->CopyPixels(nullptr, side * 4, (UINT)px.size(), px.data()))) return 0;
+    double sum = 0;
+    for (size_t i = 0; i < px.size(); i += 4) sum += 0.0722 * px[i] + 0.7152 * px[i + 1] + 0.2126 * px[i + 2]; // bgr
+    return (float)(sum / (side * side) / 255);
+}
+
 std::wstring WallPath() {
     wchar_t path[MAX_PATH] = {};
     if (!SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, path, 0)) return L""; // empty when solid color bg
@@ -144,11 +155,35 @@ Theme ContrastTheme() {
 }
 }
 
+bool theme::TintIsPale(int tint) { return tint >= 0 && Luma(Color::Rgb((uint32_t)tint)) > 0.30f; } // where black ink starts to read better, with a blurred page mixed in
+
+Theme theme::ClearInk(const Theme& t, float dark) {
+    Color white{1, 1, 1, 1}, black{0, 0, 0, 1};
+    Color ink = white.Mix(black, dark), under = black.Mix(white, dark); // under: what the bubble sits on, the far side from the ink
+    Theme v = t;
+    v.text = ink;
+    v.textDim = ink.Alpha(0.82f); // no quieter: nothing behind it to help
+    v.textLow = ink.Alpha(0.62f);
+    v.accent = v.accentHi = ink; // a color could vanish on any wallpaper: lit things are just more ink
+    v.onAccent = under;
+    v.card = ink.Alpha(0.06f);
+    v.cardHi = ink.Alpha(0.10f);
+    v.track = ink.Alpha(0.20f);
+    v.hairTop = ink.Alpha(0.12f);
+    v.hairBot = ink.Alpha(0.04f);
+    v.line = ink.Alpha(0.10f);
+    v.bg = v.veil = under;
+    v.sheen = v.glow = Color{0, 0, 0, 0};
+    v.glass = v.stars = false;
+    return v;
+}
+
 void theme::SetContrast(bool on) { contrastOn = on; }
 bool theme::Contrast() { return contrastOn; }
 
 Theme Theme::From(Seed seed) {
     if (contrastOn) return ContrastTheme();
+    if (seed.look == theme::kClear) seed.look = 2; // what's left of it once there's a body to paint: glass
     using theme::Hsl;
     float h = seed.hue;
     float k = seed.chroma < 0.08f ? 0.0f : Clamp(seed.chroma * 1.4f, 0.12f, 1.0f); // boost dull seeds, keep a hint of tint; colorless stays neutral grey
@@ -200,6 +235,24 @@ Theme Theme::From(Seed seed) {
         t.sheen = Color{1, 1, 1, 0.16f}; // glossy band at the top of every surface
         t.veil = Hsl(h, 0.30f * k, 0.06f);
         t.glass = true;
+        if (seed.tint >= 0 && !theme::TintIsPale(seed.tint)) t.bg = Color::Rgb((uint32_t)seed.tint).Alpha(0.42f); // a color strong enough to read as one, white ink stays
+        if (theme::TintIsPale(seed.tint)) { // the same glass turned over: black ink, a pale wash, the accent deep enough to read on it
+            t.accent = Hsl(h, (std::max)(0.55f, 0.80f * k), 0.42f);
+            t.accentHi = Hsl(h, (std::max)(0.65f, 0.90f * k), 0.34f);
+            t.onAccent = Hsl(h, 0.30f * k, 0.98f);
+            t.text = Hsl(h, 0.20f * k, 0.08f);
+            t.textDim = Hsl(h, 0.14f * k, 0.22f);
+            t.textLow = Hsl(h, 0.10f * k, 0.32f);
+            t.card = Hsl(h, 0.25f * k, 0.98f).Alpha(0.24f);
+            t.cardHi = Hsl(h, 0.25f * k, 0.98f).Alpha(0.36f);
+            t.track = Color{0, 0, 0, 0.16f};
+            t.hairTop = Color{1, 1, 1, 0.55f};
+            t.hairBot = Color{1, 1, 1, 0.14f};
+            t.bg = Color::Rgb((uint32_t)seed.tint).Alpha(0.36f);
+            t.line = Color{0, 0, 0, 0.12f};
+            t.sheen = Color{1, 1, 1, 0.22f};
+            t.veil = Hsl(h, 0.25f * k, 0.94f); // where glass has nothing under it: pale, the ink stays black
+        }
     }
     if (seed.look == theme::kStarfall) { // deep space: near-black indigo, quiet surfaces, one luminous accent
         auto toward = [&](float base, float f) { return base + (std::fmod(h - base + 540.0f, 360.0f) - 180) * f; }; // hue blend the short way round
@@ -220,7 +273,7 @@ Theme Theme::From(Seed seed) {
         t.stars = true;
     }
     if (seed.chroma < 0.08f) { // black and white art or wallpaper: a colored accent would invent a mood that isn't there
-        bool lightLook = seed.look == 1;
+        bool lightLook = seed.look == 1 || (seed.look == 2 && theme::TintIsPale(seed.tint));
         t.accent = Hsl(h, 0, lightLook ? 0.20f : 0.86f);
         t.accentHi = Hsl(h, 0, lightLook ? 0.08f : 0.97f);
         t.onAccent = Hsl(h, 0, lightLook ? 0.98f : 0.07f);

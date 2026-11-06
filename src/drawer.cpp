@@ -1,4 +1,5 @@
 #include "drawer.h"
+#include "deskpill.h"
 #include "board.h"
 #include "entry.h"
 
@@ -38,6 +39,8 @@ constexpr float kFling = 800; // dips/s, fast flick decides open/close
 constexpr float kOpenAt = 0.4f; // slow drag past 40% height opens
 constexpr float kTap = 4; // moved less than this = click, not drag
 constexpr int kShadeSecs = 30; // glass: how often what's behind it is looked at again, as halobar does
+constexpr int kDeskRecheckSecs = 2; // only with an over-apps theme or body in use: a walk of the top windows
+constexpr int kInkSecs = 2; // clear: its ink has more riding on it, and a thin band is a cheap read
 constexpr float kShadeBand = 8, kShadeGap = 4; // the band read just past the open panel, dips
 constexpr float kShadeStep = 0.04f; // smaller changes keep the tint as it is
 constexpr float kShadeRate = 5; // the tint eases over in about a second
@@ -118,12 +121,31 @@ bool Drawer::Create(HINSTANCE instance) {
     shellNow = shellTo; // start on final colors, no fade at boot
     mediaNow = mediaTo;
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    desk = std::make_unique<DeskPill>(model);
+    if (desk->Create()) {
+        desk->onOpen = [this] { Open(); };
+        desk->onEdit = [this] { DeskEdit(); };
+        desk->onDone = [this] {
+            SyncHide();
+            if (deskOn != model.WatchesDesk()) WatchDesk();
+            else OnDeskTimer();
+        };
+    } else {
+        desk.reset();
+    }
     Log(L"started");
     return true;
 }
 
 void Drawer::ShowIsland() {
-    if (model.Look() == 2) SampleBehind();
+    if (desk && model.deskPill && model.deskApps && !hidden && !opened && !peeking) { // the long pill takes this call: the small one never drops
+        longHeld = true;
+        SyncDesk();
+        SetTimer(hwnd, kLongTimer, model.IslandLingerMs((UINT)cfg.closeMs), nullptr);
+        return;
+    }
+    if (model.Glassy()) SampleBehind();
+    SampleInk();
     if (hidden || opened || peeking || !EnsureDev()) return;
     KillTimer(hwnd, kReleaseTimer); // keep gpu alive
     KillTimer(hwnd, kCloseTimer);
@@ -137,20 +159,34 @@ void Drawer::ShowIsland() {
 
 void Drawer::SampleBehind() {
     RECT r = Footprint(); // the panel's full open footprint
-    glassShade = anim::Clamp01((sys::Brightness(r) - 0.42f) / 0.38f); // dark and colorful stay clear, bright pages get a deeper tint
+    glassShade = TintFor(sys::Brightness(r)); // dark and colorful stay clear, pages that fight the ink get a deeper tint
     if (spring.value < 0.5f) glassShadeNow = glassShade; // nothing showing yet: it opens on the right tint, no fade
     shadeTick = 0;
 }
 
+void Drawer::SampleInk() {
+    if (!Clear() || hidden || fullApp || overFull || stage || Unseen()) return; // staying up over a game: no screen reads under it
+    constexpr float kToBlack = 0.52f, kToWhite = 0.42f; // apart, so a mid gray page doesn't flip it back and forth
+    RECT f = Footprint();
+    LONG half = (LONG)(IslandSpan() * scale / 2), deep = (LONG)(kIslandH * scale), band = (LONG)(kShadeBand * scale + 0.5f), gap = (LONG)(kShadeGap * scale + 0.5f);
+    LONG cx = (f.left + f.right) / 2, cy = (f.top + f.bottom) / 2;
+    RECT r = edgeNow == 0 ? RECT{cx - half, f.top + deep + gap, cx + half, f.top + deep + gap + band} // along the pill, on its open side
+           : edgeNow == 1 ? RECT{f.left + deep + gap, cy - half, f.left + deep + gap + band, cy + half}
+                          : RECT{f.right - deep - gap - band, cy - half, f.right - deep - gap, cy + half};
+    float lum = sys::Brightness(r), to = clearInkGoal > 0.5f ? (lum < kToWhite ? 0.0f : 1.0f) : (lum > kToBlack ? 1.0f : 0.0f);
+    if (spring.value < 0.5f) clearInk = to; // nothing showing yet: it drops in the right ink
+    if (to != clearInkGoal) clearInkGoal = to, Redraw();
+}
+
 void Drawer::SampleShade() { // a page can scroll from dark to white without anything moving; a screen read is costly, so only every half minute
-    if (model.Look() != 2 || hidden || fullApp || stage || Unseen() || (!opened && !island)) return; // never while nothing of it shows
+    if (!model.Glassy() || hidden || fullApp || overFull || stage || Unseen() || (!opened && !island)) return; // never while nothing of it shows
     RECT f = Footprint();
     LONG band = (LONG)(kShadeBand * scale + 0.5f), gap = (LONG)(kShadeGap * scale + 0.5f);
     RECT r = f; // open: a thin band just past the panel, in its middle half, never under it
     if (opened && edgeNow == 0) r = {f.left + (f.right - f.left) / 4, f.bottom + gap, f.right - (f.right - f.left) / 4, f.bottom + gap + band};
     else if (opened && edgeNow == 1) r = {f.right + gap, f.top + (f.bottom - f.top) / 4, f.right + gap + band, f.bottom - (f.bottom - f.top) / 4};
     else if (opened) r = {f.left - gap - band, f.top + (f.bottom - f.top) / 4, f.left - gap, f.bottom - (f.bottom - f.top) / 4};
-    float to = anim::Clamp01((sys::Brightness(r) - 0.42f) / 0.38f); // the pill alone covers little of the footprint: that's read whole
+    float to = TintFor(sys::Brightness(r)); // the pill alone covers little of the footprint: that's read whole
     if (std::fabs(to - glassShade) > kShadeStep) glassShade = to, Redraw(); // the tint eases over in the frames that follow
 }
 
@@ -250,10 +286,10 @@ bool Drawer::MouseIn() const {
 }
 
 void Drawer::Open() {
-    if (hidden) return;
+    if (hidden || (overFull && !model.pillFullOpen)) return; // over a fullscreen app, the panel only if that's allowed
     if (!opened && !pageSet && (!model.rememberPage || !model.HasPage(page)) && page != model.OpenPage()) prevPage = page, page = model.OpenPage(), pageT = 1; // the page picked in settings, or one still shown, without a slide
     pageSet = false;
-    if (model.Look() == 2 && spring.value < 1) SampleBehind(); // read the background before the panel covers it
+    if (model.Glassy() && spring.value < 1) SampleBehind(); // read the background before the panel covers it
     grow = grow || islandLook; // expanding out of the island: width morphs as it drops
     island = islandLook = false;
     if (!EnsureDev()) return; // gpu may have been freed while idle
@@ -264,7 +300,9 @@ void Drawer::Open() {
     for (sys::Toast t; model.notifyWatch.Pop(t);) {} // the rest of a notification queue would only show stale once it closes
     if (!opened) {
         opened = true;
+        SyncDesk(); // the long pill makes way
         SyncWall(); // wallpaper may have changed while closed
+        if (Clear()) SyncWallTone();
         model.OnOpen();
         model.SetLive(true, page == Model::kPgSystem, page == Model::kPgNetwork); // fast polling only while visible, the process list only on the system page, latency only on the network page
     }
@@ -388,6 +426,11 @@ void Drawer::Toggle() {
 bool Drawer::Stays() const { return PillStays(model) || (model.pillDesk && deskView); }
 
 void Drawer::SyncStay() {
+    if (desk && desk->Up()) { // the long pill is the desktop's: no second one beside it
+        if (island && !opened && !peeking && !MouseIn()) Close();
+        stayWasAlways = false;
+        return;
+    }
     bool always = Stays();
     if (always && !island && !peeking && !dragging && !hidden && !stage && spring.value <= 0.5f) ShowIsland(); // the pill comes back by itself
     else if (!always && stayWasAlways && island && !MouseIn()) Close(); // always was just turned off, or an app came under it
@@ -414,16 +457,25 @@ void Drawer::OnSecond() {
         Redraw();
     }
     SyncBoard();
-    if (Pinned() && !opened && !hidden && !stage && !dragging && !peeking && !PlaceStale() && spring.value <= 0.5f) Open(); // pinned: back open after fullscreen, a re-dock or the player
+    if (Pinned() && !overFull && !opened && !hidden && !stage && !dragging && !peeking && !PlaceStale() && spring.value <= 0.5f) Open(); // pinned: back open after fullscreen, a re-dock or the player
     if (fullApp && !FullOn(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY))) fullApp = false; // the shell's "it's over" can go missing: never stay hidden on its word alone
     SyncHide(); // a fullscreen app on the panel's screen, or gone from it
     if (++shadeTick >= kShadeSecs) shadeTick = 0, SampleShade();
+    if (Clear() && island && !opened && ++inkTick >= kInkSecs) inkTick = 0, SampleInk();
     model.IdleSpectrum();
     if (model.PollShared()) Redraw(); // halobar changed the theme we wear: a showing pill or panel repaints, SyncLook crossfades
     if (model.haloReach != reachUsed && !opened && !dragging) Place(); // halobar's dock grew, shrank, came or went: the sidebar refits, never under the mouse
     SyncHud();
     RetryHud();
-    if (deskOn != (model.pillDesk != 0)) WatchDesk(); // the switch in settings was flipped
+    if (deskOn != model.WatchesDesk()) WatchDesk(); // the switch in settings was flipped
+    if (deskOn && (model.appsTheme != 0) != lookAppsOn) lookAppsOn = model.appsTheme != 0, OnDeskTimer(); // the over-apps theme: on now, not at the next window event
+    if (deskOn && (model.appsTheme || model.deskPill) && !Unseen() && ++deskRecheck >= kDeskRecheckSecs) deskRecheck = 0, OnDeskTimer();
+    SyncThemeNow();
+    SyncDesk();
+    if (desk && !Unseen()) desk->Second(); // locked or dark: no screen reads and no refreshes for nobody
+    bool smallUp = island && model.pillAlways, longUp = desk && desk->Up();
+    auto onPill = [&](int kind) { return (smallUp && (model.pillLeft == kind || model.pillRight == kind)) || (longUp && std::find(model.deskItems.begin(), model.deskItems.end(), kind) != model.deskItems.end()); };
+    model.SetPillMeters(!Unseen() && onPill(Model::kWGpu), !Unseen() && (onPill(Model::kWCpu) || onPill(Model::kWRam))); // only while one shows: the gpu counter closes the moment none does
     if (!opened) {
         SyncStay();
         if (island && Bubble() != bubbleNow) Resize(wantH, false); // the bubble came or went: the live region follows
@@ -455,6 +507,7 @@ void Drawer::SetPage(int p) {
 }
 
 void Drawer::Peek(const std::wstring& title, const std::wstring& detail, int icon) {
+    if (overFull) return; // over a fullscreen app, only the pill
     peekLevel = -1; // a notice, not the hud's bar
     peekIcon = icon;
     peekTitle = title;
@@ -702,6 +755,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             Redraw();
             return 0;
         }
+        if (wp == kLongTimer) { // lingers as the small pill would, for as long as the mouse is on it or something holds it up
+            if (longHeld && (Stays() || (desk && desk->MouseOn()) || MouseIn())) SetTimer(hwnd, kLongTimer, model.IslandLingerMs((UINT)cfg.closeMs), nullptr);
+            else longHeld = false, SyncDesk();
+            return 0;
+        }
         if (wp == kDeskTimer) {
             OnDeskTimer();
             return 0;
@@ -824,6 +882,10 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == SPI_SETWORKAREA) Place(), Redraw(); // a taskbar came, went or changed size: the sidebar fits the new room
         model.ReadAccess(); // high contrast or the text size may be what changed
         if (model.HighContrast() != theme::Contrast() || model.ZoomPct() != zoomNow) Redraw();
+        if (wp == SPI_SETDESKWALLPAPER) {
+            if (Clear()) SyncWallTone(), Redraw();
+            if (desk) desk->LookBehind();
+        }
         return DefWindowProcW(hwnd, msg, wp, lp);
     case WM_THEMECHANGED: // high contrast's colors themselves
         if (theme::Contrast()) theme::SetContrast(false), Redraw(); // read afresh next frame
@@ -940,6 +1002,9 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_SHELF: // a preview came in, an image was kept, or the clipboard brought something
         model.shelf.OnWork();
         Redraw();
+        return 0;
+    case kDeskEditMsg:
+        DeskEdit();
         return 0;
     case kShelfMsg:
         if (wp == 1) ShelfPaste();
@@ -1176,7 +1241,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 void Drawer::PaintShape(ID2D1Geometry* shape, float h) {
-    if (!shape) return;
+    if (!shape || ClearPill()) return; // clear's pill: the ink, straight on what's behind it
     Color body = shellNow.bg;
     if (!shellNow.glass) body.a *= model.BgOpacity() / 100.0f; // the solid looks can let the desktop through a little
     if (skyPass != 1) canvas->FillGeometry(shape, body, true); // dark mode: black, blends with screen bezel. kept: a shape at rest is tessellated once
@@ -1202,8 +1267,7 @@ void Drawer::PaintShape(ID2D1Geometry* shape, float h) {
             }
         }
     }
-    if (shellNow.glass && glassShadeNow > 0.01f) // over a white page: neutral smoked glass under the highlights, the blur still shows through
-        canvas->FillGeometry(shape, Color{0, 0, 0, 0.42f * glassShadeNow}, true);
+    if (shellNow.glass && glassShadeNow > 0.01f) canvas->FillGeometry(shape, Tint(glassShadeNow), true); // over a page that fights the ink
     if (shellNow.glass) { // liquid glass: glossy light from above and a bright specular rim
         canvas->FillGeoV(shape, {0, 0, W, (std::min)(h, 90.0f)}, shellNow.sheen, shellNow.sheen.Alpha(0), true);
         canvas->FillGeoV(shape, {0, h - (std::min)(h * 0.5f, 34.0f), W, h}, Color{1, 1, 1, 0}, Color{1, 1, 1, 0.09f}, true); // light caught in the lower lip, like a drop of glass
@@ -1230,6 +1294,7 @@ void Drawer::Frame() {
             pageT = 1; // a page slide cut short by closing only advances while the body draws: left behind, it kept the closed strip at full frame rate
             Resize(kStrip, false); // shrink window so it can't block clicks
             ui.Forget();
+            SyncDesk(); // the desktop again: the long pill comes back now, not on the next second
             if (model.pickPending) { // the color picker waited for the panel to be gone
                 model.pickPending = false;
                 model.StartPicker();
@@ -1261,6 +1326,7 @@ void Drawer::Frame() {
         BuildStrips();
     }
     SyncHud();
+    model.SyncThemeSet(); // the desktop's theme or the over-apps one; settings previews whichever it's editing
     SyncLook(); // before the device: switching to or from glass rebuilds it
     SyncAccent();
     SyncTyping();
@@ -1272,6 +1338,8 @@ void Drawer::Frame() {
     devTries = 0;
     bool themes = StepTheme(dt);
     themes = anim::Approach(glassShadeNow, glassShade, kShadeRate, dt, 0.004f) || themes; // the glass tint fading to what's behind it now
+    themes = anim::Approach(clearInk, clearInkGoal, kShadeRate, dt, 0.004f) || themes; // clear's ink crosses over, it doesn't snap
+    if (themes && desk) desk->Refresh();
     SyncCover();
 
     float h = (std::max)(0.0f, (std::min)(spring.value, Depth() + overshoot)); // clamp to window room
@@ -1330,11 +1398,12 @@ void Drawer::Frame() {
             float lead = (std::clamp)(ahead.value, 0.0f, Depth() + overshoot);
             outline = lead > 0.5f ? BuildShape(lead, !islandLook && grow ? wideAt(lead) : shapeWide) : nullptr;
         }
+        if (ClearPill()) outline = nullptr; // nothing to frost
         ctx->SetTransform(Side() ? D2D1::Matrix3x2F::Identity() : shapeXform);
         if (peeking) DrawPeek(h);
         else if (islandLook) { // bars bounce only while it shows and music plays
             pillPass = pillCached ? 2 : 0;
-            ambient = DrawIsland(h, dt, now);
+            ambient = DrawPillNow(h, dt, now);
             pillPass = 0;
         }
         else if (h > 24) { // too short for content, just shape
@@ -1389,6 +1458,7 @@ void Drawer::Frame() {
         SetTimer(hwnd, kTrimTimer, kTrimMs, nullptr);
     }
     if (PlaceStale() && !opened && !dragging && !peeking && (spring.value <= 0.5f || island)) ApplyPlace(); // a pill that always stays would otherwise keep the old edge forever
+    if (model.deskEditAsk) model.deskEditAsk = false, PostMessageW(hwnd, kDeskEditMsg, 0, 0); // never inside a frame: it takes the panel away
     if (model.shelfDrag) PostMessageW(hwnd, kShelfMsg, 0, 0); // the drag runs its own loop: never inside a frame
     if (model.shelfPaste) PostMessageW(hwnd, kShelfMsg, 1, 0); // nor a paste: it hands the keyboard around
 }

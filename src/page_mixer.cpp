@@ -92,7 +92,7 @@ bool Strip(PageCtx& p, const D2D1_RECT_F& r, const D2D1_RECT_F& view, uint32_t i
     float fx = cx - (kMeterW + kMeterGap) / 2; // the fader and its meter, centred as a pair
     D2D1_RECT_F track = {fx - kTrackW / 2, top, fx + kTrackW / 2, (std::max)(top + 20, bottom)};
     D2D1_RECT_F grab = {fx - 22, track.top - kKnobR, fx + 22, track.bottom + kKnobR};
-    bool moved = live && ui.Slider(id, {grab.left, track.top, grab.right, track.bottom}, level, true);
+    bool moved = live && ui.Slider(id, {grab.left, track.top + kKnobR, grab.right, track.bottom - kKnobR}, level, true);
     if (live) ui.Name(s.name, w::Pct(level));
     if (live && Inside(grab, ui.In().mouse)) { // the wheel over a fader moves it, 5% a notch
         float n = ui.Wheel(grab);
@@ -103,8 +103,8 @@ bool Strip(PageCtx& p, const D2D1_RECT_F& r, const D2D1_RECT_F& view, uint32_t i
     float knobHot = ui.Smooth(id + 26, live && (Inside(grab, ui.In().mouse) || ui.IsActive(id)) ? 1.0f : 0, 16);
     Color fill = (tinted ? s.tint : t.accent).Mix(t.textLow, mute);
     c.Fill(track, kTrackW / 2, t.track);
-    float y = track.bottom - Height(track) * shown;
-    c.Fill({track.left, (std::min)(y, track.bottom - kTrackW), track.right, track.bottom}, kTrackW / 2, fill);
+    float y = track.bottom - w::ThumbAt(0, Height(track), kKnobR, shown), end = track.bottom - Height(track) * shown; // the knob's edge meets the ends, the fill runs the whole way
+    c.Fill({track.left, (std::min)(end, track.bottom - kTrackW), track.right, track.bottom}, kTrackW / 2, fill);
     float lit = ui.Env(id + 25, s.muted ? 0 : s.peak); // the live meter beside the fader
     D2D1_RECT_F meter = {track.right + kMeterGap, track.top, track.right + kMeterGap + kMeterW, track.bottom};
     c.Fill(meter, kMeterW / 2, t.track.Alpha(0.6f));
@@ -222,15 +222,16 @@ void ChatBar(PageCtx& p, const D2D1_RECT_F& r) { // game on the left, chat on th
     D2D1_RECT_F track = {r.left + 134, (r.top + r.bottom) / 2 - 3, r.right - 134, (r.top + r.bottom) / 2 + 3};
     float v = (1 - d.chatMix) / 2; // left is all game
     uint32_t id = Ui::Id("mix.chat");
-    bool moved = ui.Slider(id, {track.left, r.top, track.right, r.bottom}, v, false);
+    constexpr float kChatKnob = 8;
+    bool moved = ui.Slider(id, {track.left + kChatKnob, r.top, track.right - kChatKnob, r.bottom}, v, false);
     if (float n = ui.Wheel(r)) v = (std::clamp)(v - n * kWheelStep, 0.0f, 1.0f), moved = true;
     if (moved) d.chatMix = (std::fabs(v - 0.5f) < 0.03f ? 0.0f : 1 - 2 * v), d.profile = -1, p.m.DeskSave(); // snaps to even near the middle
     float shown = ui.Smooth(id + 1, (1 - d.chatMix) / 2, 18);
     c.Fill(track, 3, t.track);
-    float mid = (track.left + track.right) / 2, x = track.left + Width(track) * shown;
+    float mid = (track.left + track.right) / 2, x = w::ThumbAt(track.left, track.right, kChatKnob, shown);
     c.Fill({(std::min)(mid, x), track.top, (std::max)(mid, x), track.bottom}, 3, Color::Rgb(d.chatMix > 0 ? game.color : chat.color));
     c.Fill(Rect(mid - 1, track.top - 4, 2, 14), 1, t.textLow);
-    c.Dot({x, (track.top + track.bottom) / 2}, 8, t.text);
+    c.Dot({x, (track.top + track.bottom) / 2}, kChatKnob, t.text);
 }
 
 bool Toggle(PageCtx& p, const char* id, const D2D1_RECT_F& r, const wchar_t* label, bool on) { // label left, switch right

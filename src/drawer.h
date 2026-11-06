@@ -17,6 +17,7 @@
 #include "ui.h"
 
 class Board;
+class DeskPill;
 
 class Drawer {
 public:
@@ -28,7 +29,7 @@ public:
     bool Create(HINSTANCE instance);
     HWND Hwnd() const { return hwnd; }
     Theme Shell() const { // current palette for the tray menu and prompts: they're solid windows, so glass lends them its dark twin
-        return shellNow.glass ? Theme::From(Seed{shellSeed.hue, shellSeed.chroma, 0}) : shellNow;
+        return shellNow.glass ? Theme::From(Seed{shellSeed.hue, shellSeed.chroma, theme::TintIsPale(tintNow) ? 1 : 0}) : shellNow;
     }
     void Toggle();
     void KeyOpen(); // from the shortcut: open on the screen with the mouse and take the keyboard, or close
@@ -52,8 +53,18 @@ public:
     void BoardFrame();
     Theme BoardMedia() const; // the song's look, as a dashboard draws it
     void BoardFocus(); // the keyboard into the dashboard under the mouse
+    bool DeskNeeds() const; // the desktop pill has a frame to draw
+    HANDLE DeskWait() const;
+    void DeskFrame();
 
 private:
+    std::unique_ptr<DeskPill> desk; // the long pill: its own window, on its own edge
+    bool pillView = false; // nothing of an app's lies under it
+    bool longHeld = false; // it's standing in for the small pill over an app: called by a hover, or held by the stay rules
+    void SyncDesk(); // it comes or goes with the desktop, the panel and fullscreen apps
+    void DeskEdit(); // the editor, on this screen; the panel and the island step aside
+    bool AppIn(const RECT& area) const; // any app window over that part of the screen
+    static constexpr UINT kDeskEditMsg = WM_APP + 63; // settings asked for it, run after the frame
     std::vector<std::unique_ptr<Board>> boards; // a fullscreen dashboard per screen set to one, none on a screen switched back to the desktop
     void SyncBoard(); // once a second: they come, go and follow the screens and their settings
     bool BoardOn(HMONITOR m) const; // a dashboard has that screen now
@@ -71,7 +82,7 @@ private:
     bool barOn = false; // pinned: the panel's room is reserved, maximized windows end where it starts
     void Reserve(bool on); // that reservation, as a shell appbar
     static constexpr UINT kBarMsg = WM_APP + 62; // the shell's appbar notices
-    enum : UINT_PTR { kHoverTimer = 1, kCloseTimer, kReleaseTimer, kPeekTimer, kDevTimer, kFollowTimer, kTrimTimer = 8, kFullTimer, kGreetTimer, kDeskTimer, kAdoptTimer, kPasteTimer }; // all one-shot; 7 is the model's
+    enum : UINT_PTR { kHoverTimer = 1, kCloseTimer, kReleaseTimer, kPeekTimer, kDevTimer, kFollowTimer, kTrimTimer = 8, kFullTimer, kGreetTimer, kDeskTimer, kAdoptTimer, kPasteTimer, kLongTimer }; // all one-shot; 7 is the model's
     static constexpr UINT kAdoptMsg = WM_APP + 60; // a hover strip on another screen asks the panel to come over
     static constexpr float kStrip = 3; // idle bezel height in dips, just enough to catch the mouse
     static constexpr UINT kShelfMsg = WM_APP + 61; // the shelf page asked for a drag out, run after the frame: it's modal
@@ -137,8 +148,9 @@ private:
     void MoveDrag(float y);
     void EndDrag();
     float Rubber(float raw) const; // resist drag past full height
+    bool MainShown() const { return opened || dragging || peeking || island || spring.value > 0.5f; }
     void Redraw() {
-        if (opened || dragging || peeking || island || spring.value > 0.5f) needsFrame = true; // skip frames when fully closed
+        if (MainShown()) needsFrame = true; // skip frames when fully closed
     }
 
     bool EnsureDev();
@@ -205,6 +217,11 @@ private:
     DWORD frontThread = 0;
     bool deskOn = false; // the hooks are in: the option was on last second
     bool deskView = false; // nothing of an app's under the island, or the desktop has the focus
+    bool lookAppsOn = false; // the over-apps look was on last second
+    bool overFull = false; // staying up over a fullscreen app, by the option
+    int deskRecheck = 0; // seconds toward another look at what's under it: a window can open or close with no event worth trusting
+    ULONGLONG deskFadeAt = 0; // the long pill's last step of a theme crossfade
+    void SyncThemeNow(); // the theme that applies, even with nothing of the panel's on screen to draw it
     RECT Footprint() const; // that area on screen, in pixels
     void DrawRail(const Theme& t);
     void SyncWall();
@@ -238,6 +255,19 @@ private:
     void SampleBehind(); // glass: how bright the screen under the panel is
     float glassShade = 0; // 0 .. 1, deepens the glass tint over bright backgrounds so white text stays readable
     float glassShadeNow = 0; // what's drawn: eases to glassShade, so the tint follows the page behind without a jump
+    int tintNow = -1; // the glass tint in use: the pick, or clear's from the wallpaper
+    bool wallLight = false; // clear: the wallpaper is a light one
+    std::wstring wallToneKey; // the wallpaper that was read for it
+    float clearInk = 0, clearInkGoal = 0; // clear's resting pill: 0 white .. 1 black, eased
+    int inkTick = 0; // seconds toward its next look
+    bool Clear() const { return lookNow == Model::kLookClear; }
+    bool Frosted() const { return lookNow == 2 || Clear(); } // drawn on the live blur
+    bool ClearPill() const { return Clear() && islandLook && !peeking; } // no body at all: only the ink. a peek brings words to read: glass
+    Color Tint(float k) const; // what keeps the ink readable where the page fights it: smoke, or frost, in the tint's color
+    float TintFor(float lum) const; // how much of it, over a page this bright
+    void SyncWallTone(); // clear: is the wallpaper dark or light
+    void SampleInk(); // clear: black or white for the resting pill, from what's right beside it
+    bool DrawPillNow(float h, float dt, double now); // the resting pill, in clear's ink when that's the look
     int shadeTick = 0; // seconds toward the next look behind the glass
     void SampleShade(); // glass, while showing: what's behind it now, every half minute
     void SetMedia(const Theme& t);

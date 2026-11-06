@@ -444,10 +444,11 @@ void Panel(Ui& ui, const Theme& t, int kind, const D2D1_RECT_F& r, const Host& h
     } else if (key == "sys.bright") {
         float v = h.bright / 100.0f;
         D2D1_RECT_F rail = Rect(r.left, y + 10, Width(r), 6);
-        if (ui.Slider(Ui::Id("fc.bright"), Inset(rail, 0, -10), v, false) && h.setBright) h.setBright(h.ctx, (int)std::lround(v * 100));
+        constexpr float kThumb = 7;
+        if (ui.Slider(Ui::Id("fc.bright"), Inset(rail, kThumb, -10), v, false) && h.setBright) h.setBright(h.ctx, (int)std::lround(v * 100));
         c.Fill(rail, 3, t.text.Alpha(0.14f));
         c.Fill(Rect(rail.left, rail.top, (std::max)(6.0f, Width(rail) * v), 6), 3, t.accentHi);
-        c.Dot({rail.left + Width(rail) * v, rail.top + 3}, 7, t.text);
+        c.Dot({w::ThumbAt(rail.left, rail.right, kThumb, v), rail.top + 3}, kThumb, t.text);
         y += 40;
     } else if (key == "files.commands") {
         typedRow(L"A program, a folder or a link, then Enter");

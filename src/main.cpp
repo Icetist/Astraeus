@@ -562,20 +562,25 @@ void Run() {
     for (;;) {
         Drawer& d = *app->drawer;
         if (d.NeedsFrame() && !d.FrameWait()) d.Frame(); // no waitable yet, draw once to create it
-        HANDLE waits[3];
+        HANDLE waits[4];
+        if (d.DeskNeeds() && !d.DeskWait()) d.DeskFrame(); // no waitable yet, draw once to create it
         DWORD n = 0;
         HANDLE frame = d.NeedsFrame() ? d.FrameWait() : nullptr; // only wait on vsync while animating
         if (frame) waits[n++] = frame;
         HANDLE dash = d.BoardNeeds() ? d.BoardWait() : nullptr; // the dashboard paces itself on its own screen
         if (dash) waits[n++] = dash;
+        HANDLE pill = d.DeskNeeds() ? d.DeskWait() : nullptr; // the desktop pill, only while it has something to draw
+        if (pill) waits[n++] = pill;
         if (app->iniWatch != INVALID_HANDLE_VALUE) waits[n++] = app->iniWatch; // a write to astraeus.ini wakes us, nothing polls it
-        DWORD r = MsgWaitForMultipleObjectsEx(n, n ? waits : nullptr, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE); // sleep until vsync or input, 0 cpu idle
+        constexpr DWORD kPillPatienceMs = 250; // the pill's editor covers the screen: a signal that never comes must not leave it frozen there
+        DWORD r = MsgWaitForMultipleObjectsEx(n, n ? waits : nullptr, pill ? kPillPatienceMs : INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE); // sleep until vsync or input, 0 cpu idle
         if (r < WAIT_OBJECT_0 + n && waits[r - WAIT_OBJECT_0] == app->iniWatch) { // the folder changed: settle, then look at the ini
             FindNextChangeNotification(app->iniWatch);
             SetTimer(app->host, kIniTimer, kIniSettleMs, nullptr);
         }
         if (frame && r == WAIT_OBJECT_0) d.Frame(); // then fall through: glass commits its blur outline from queued messages, it must not wait a frame
         if (dash && r < WAIT_OBJECT_0 + n && waits[r - WAIT_OBJECT_0] == dash) d.BoardFrame();
+        if (pill && (r == WAIT_TIMEOUT || (r < WAIT_OBJECT_0 + n && waits[r - WAIT_OBJECT_0] == pill))) d.DeskFrame();
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) { // drain all queued input
             if (msg.message == WM_QUIT) return;
             TranslateMessage(&msg);

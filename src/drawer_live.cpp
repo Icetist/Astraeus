@@ -4,6 +4,7 @@
 #include <shellapi.h>
 
 #include "board.h"
+#include "deskpill.h"
 #include "glyphs.h"
 
 #include <algorithm>
@@ -147,7 +148,7 @@ void Drawer::RetryHud() { // once a second while the hud is on: speakers that we
 }
 
 void Drawer::ShowHud(int icon, float level, const wchar_t* title) {
-    if (hidden || stage || dragging) return; // never over a drag in progress
+    if (hidden || overFull || stage || dragging) return; // never over a drag in progress; over a fullscreen app, only the pill
     bool showing = peeking && peekLevel >= 0;
     peekIcon = icon;
     peekTitle = title;
@@ -251,6 +252,35 @@ void Drawer::BoardKey() { // the screen under the mouse: its dashboard steps asi
         SyncHide();
         return;
     }
+}
+
+void Drawer::SyncDesk() {
+    if (!desk || desk->Editing()) return;
+    if (opened) longHeld = false; // the panel took over: a new call brings it back
+    desk->Want(model.deskPill && deskOn && (pillView || (model.deskApps && longHeld)) && !hidden && !stage && !opened && !peeking && !dragging && (!fullApp || model.pillFull), mon);
+}
+
+void Drawer::DeskEdit() {
+    if (!desk || desk->Editing() || stage) return;
+    desk->Edit(mon);
+    SyncHide(); // the panel or the island goes, the editor has the screen
+}
+
+bool Drawer::DeskNeeds() const { return desk && desk->Needs() && !Unseen(); }
+
+HANDLE Drawer::DeskWait() const { return desk ? desk->Wait() : nullptr; }
+
+void Drawer::DeskFrame() {
+    if (!desk) return;
+    constexpr float kMaxStep = 0.05f;
+    bool fading = shellT < 1 || mediaT < 1;
+    if (fading && !MainShown()) { // the panel isn't drawing to carry the crossfade: the pill does
+        ULONGLONG at = GetTickCount64();
+        StepTheme((std::min)((at - deskFadeAt) / 1000.0f, kMaxStep));
+        deskFadeAt = at;
+    }
+    desk->Frame(Shell());
+    if (fading) desk->Refresh();
 }
 
 bool Drawer::BoardNeeds() const {

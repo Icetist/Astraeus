@@ -313,7 +313,8 @@ bool Pill(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, 
     Ui::Hit iconHit = iconTap ? ui.Button(id + 7, iconZone) : Ui::Hit{}; // no tap wanted: the icon is just a picture
     if (iconTap) *iconTap = iconHit.clicked;
     D2D1_RECT_F track = {r.left + h + 10, r.top, r.right - 50, r.bottom}; // 50px reserved for percent label
-    bool changed = ui.Slider(id, track, value, false);
+    constexpr float kKnob = 6.5f, kKnobHot = 2.5f; // the knob at rest, and how much it swells
+    bool changed = ui.Slider(id, Inset(track, kKnob, 0), value, false); // the mouse moves the knob's middle, which stops short of the ends
     ui.Name(glyph == glyph::Bright ? L"Brightness" : L"Volume", off ? std::wstring(L"Muted") : Pct(value));
     float notches = ui.Wheel(r);
     if (notches != 0) {
@@ -334,12 +335,12 @@ bool Pill(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, 
     float th = 5 + 2 * glow; // track thickens on hover
     c.Fill({track.left, cy - th / 2, track.right, cy + th / 2}, th / 2, t.track);
     float mute = ui.Smooth(id + 5, off ? 1.0f : 0, 14);
-    float x = track.left + Width(track) * shown * (1 - mute); // muted: the bar empties, the level is kept for when it comes back
-    if (x > track.left + th) { // skip fill when too short to round
-        c.Fill({track.left - 2, cy - th / 2 - 3, x + 2, cy + th / 2 + 3}, th / 2 + 3, t.accent.Alpha((0.10f + 0.10f * glow) * (1 - mute)));
-        c.FillH({track.left, cy - th / 2, x, cy + th / 2}, th / 2, t.accent.Mix(t.textLow, mute), t.accentHi.Mix(t.textLow, mute)); // muted: the level is kept, greyed
+    float level = shown * (1 - mute); // muted: the bar empties, the level is kept for when it comes back
+    float knob = kKnob + kKnobHot * glow, x = ThumbAt(track.left, track.right, knob, level), end = track.left + Width(track) * level; // the fill runs the whole track as the knob runs its own shorter way
+    if (end > track.left + th) { // skip fill when too short to round
+        c.Fill({track.left - 2, cy - th / 2 - 3, end + 2, cy + th / 2 + 3}, th / 2 + 3, t.accent.Alpha((0.10f + 0.10f * glow) * (1 - mute)));
+        c.FillH({track.left, cy - th / 2, end, cy + th / 2}, th / 2, t.accent.Mix(t.textLow, mute), t.accentHi.Mix(t.textLow, mute)); // muted: the level is kept, greyed
     }
-    float knob = 6.5f + 2.5f * glow;
     if (glow > 0.001f) c.Dot({x, cy}, knob + 5, t.accent.Alpha(0.20f * glow));
     c.Dot({x, cy}, knob, t.text);
     c.Text(off ? std::wstring(L"Muted") : Pct(value), {r.right - 44, r.top, r.right, r.bottom}, Weight::Medium, 12, t.textDim.Mix(t.text, glow), Align::Right);

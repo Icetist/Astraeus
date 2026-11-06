@@ -26,7 +26,7 @@ unsigned long long Ticks(const FILETIME& f) { // filetime -> 100ns count
 
 namespace {
 constexpr wchar_t kLookVal[] = L"Appearance";
-constexpr int kLooks = Model::kLookStarfall + 1; // dark, light, glass, custom, halobar's, starfall
+constexpr int kLooks = Model::kLookClear + 1; // dark, light, glass, custom, halobar's, starfall, clear
 constexpr wchar_t kQuietVal[] = L"Quiet"; // do not disturb: halobar reads and writes the same value
 constexpr wchar_t kArtBackVal[] = L"MediaArtBg"; // the album art background, shared with halobar the same way
 constexpr wchar_t kVizAlphaVal[] = L"VizAlpha", kVizGainVal[] = L"VizGain"; // the visualizer's opacity over the art and its sensitivity, shared too
@@ -98,6 +98,7 @@ int HaloNum(HKEY key, const wchar_t* name, int fallback, int lo, int hi) { // ou
 Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::ReadNum(kLookVal, 0)) {
     if (look < 0 || look >= kLooks) look = 0; // unknown value: back to dark
     glassBlur = (std::clamp)(sys::ReadNum(L"GlassBlur", 100), 0, 100);
+    glassTint = (std::clamp)(sys::ReadNum(L"GlassTint", -1), -1, 0xFFFFFF);
     customBg = sys::ReadNum(L"CustomBg", customBg) & 0xFFFFFF;
     lyricOffsetMs = 0; // per song now, remembered with its lyrics
     edge = (std::clamp)(sys::ReadNum(L"Edge", 0), 0, 2);
@@ -136,10 +137,40 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     ReadAccess();
     lyricScale = (std::clamp)(sys::ReadNum(L"LyricScale", 100), kLyricMin, kLyricMax);
     bgOpacity = (std::clamp)(sys::ReadNum(L"BgOpacity", kMaxOpacity), kMinOpacity, kMaxOpacity);
+    auto appsNum = [](const wchar_t* key, int fallback) { return sys::ReadNum((std::wstring(key) + L"Apps").c_str(), fallback); }; // never set: the desktop's
+    otherSet = {(std::clamp)(appsNum(kLookVal, look), 0, kLookClear), (std::clamp)(appsNum(L"AccentMode", accentMode), 0, (int)kAccentWindows), appsNum(L"AccentHex", accentHex) & 0xFFFFFF,
+                appsNum(L"CustomBg", customBg) & 0xFFFFFF, (std::clamp)(appsNum(L"GlassBlur", glassBlur), 0, 100), (std::clamp)(appsNum(L"BgOpacity", bgOpacity), kMinOpacity, kMaxOpacity),
+                (std::clamp)(appsNum(L"GlassTint", glassTint), -1, 0xFFFFFF)};
+    appsTheme = sys::ReadNum(L"AppsTheme", 0) != 0 ? 1 : 0;
     pillAlways = flag(L"PillAlways", 0);
+    pillFull = flag(L"PillFullscreen", 0);
+    pillFullOpen = flag(L"PillFullOpen", 1);
     pillDesk = flag(L"PillDesktop", 1); // on out of the box: the island stays in sight on an empty desktop
     pillLeft = (std::clamp)(sys::ReadNum(L"PillLeft", kWWeather), 0, kWidgets - 1);
     pillRight = (std::clamp)(sys::ReadNum(L"PillRight", kWCpu), 0, kWidgets - 1);
+    deskPill = flag(L"DeskPill", 0);
+    deskFillApps = (std::clamp)(sys::ReadNum(L"DeskFillApps", sys::ReadNum(L"DeskFill", 0)), 0, 3);
+    deskEdge = (std::clamp)(sys::ReadNum(L"DeskEdge", 0), 0, 2);
+    deskPos = (std::clamp)(sys::ReadNum(L"DeskPos", 500), 0, 1000);
+    deskLen = (std::clamp)(sys::ReadNum(L"DeskLen", 560), 60, 8000);
+    deskThick = (std::clamp)(sys::ReadNum(L"DeskThick", 30), 24, 56);
+    deskGap = (std::clamp)(sys::ReadNum(L"DeskGap", 10), 4, 120);
+    deskFloat = flag(L"DeskFloat", 1);
+    deskApps = flag(L"DeskApps", 0);
+    deskFill = (std::clamp)(sys::ReadNum(L"DeskFill", 0), 0, 3);
+    {
+        std::wstring saved = sys::ReadText(L"DeskItems");
+        if (saved.empty()) deskItems = DeskDefaults();
+        else if (saved != L"-") { // "-": taken all off on purpose
+            for (size_t at = 0; at < saved.size();) {
+                size_t end = saved.find(L',', at);
+                if (end == std::wstring::npos) end = saved.size();
+                int v = _wtoi(saved.substr(at, end - at).c_str());
+                if (((v > kWNone && v < kWidgets) || (v >= kDClock && v <= kDBars)) && std::find(deskItems.begin(), deskItems.end(), v) == deskItems.end()) deskItems.push_back(v);
+                at = end + 1;
+            }
+        }
+    }
     mediaCompact = flag(L"MediaCompact", 0);
     pillMusic = flag(L"PillMusic", 1);
     showArt = flag(L"ShowArt", 1);
@@ -243,12 +274,20 @@ namespace sys {
 void GpuWanted(int every); // sys_stats.cpp: seconds between reads of windows' costly gpu counter, 0 to close it
 }
 
+void Model::SetPillMeters(bool gpu, bool meters) {
+    pillMeters = meters;
+    if (gpu == pillGpu) return;
+    pillGpu = gpu;
+    ApplyLive();
+}
+
 void Model::ApplyLive() { // the panel's wishes and the dashboards', together
     constexpr int kBoardGpuSec = 5; // a dashboard's gpu gauge: a look every few seconds
-    sys::GpuWanted(panelProcs ? 1 : boardsUp > 0 && BoardHas(kBdGpu) ? kBoardGpuSec : 0); // the system page reads it every second, nobody else at all
+    constexpr int kPillGpuSec = 2; // a pill's: lively, without paying for windows' costly counter every second
+    sys::GpuWanted(panelProcs ? 1 : pillGpu ? kPillGpuSec : boardsUp > 0 && BoardHas(kBdGpu) ? kBoardGpuSec : 0); // the system page reads it every second, nobody else at all
     bool up = boardsUp > 0, gauges = up && (BoardHas(kBdCpu) || BoardHas(kBdGpu) || BoardHas(kBdRam) || BoardHas(kBdProcs)); // the gauges come from the worker's sample
     bool list = panelProcs || (up && BoardHas(kBdProcs)); // walking every process is the costly part: only where a list shows it
-    bool active = panelLive || up, processes = panelProcs || gauges, ping = panelPing;
+    bool active = panelLive || up || pillGpu, processes = panelProcs || gauges || pillGpu, ping = panelPing; // the pill's reading comes from the worker's sample too; the process list stays off
     shown = panelLive || (up && (BoardHas(kBdCpu) || BoardHas(kBdRam) || BoardHas(kBdNet))); // ui thread: graphs sampled every second only while one shows
     {
         std::lock_guard<std::mutex> guard(lock);
@@ -327,8 +366,8 @@ void Model::Tick() {
         focusLen = (ULONGLONG)(focusBreak ? breakMin : focusMin) * 60000;
         focusEnd = GetTickCount64() + focusLen;
     }
-    constexpr int kClosedEvery = 5; // closed: sample every 5s, nobody is looking at the graphs
-    if (++unsampled < (shown ? 1 : kClosedEvery)) return;
+    constexpr int kClosedEvery = 5, kPillEvery = 2; // closed: sample every 5s, nobody is looking at the graphs; a pill reading cpu or ram stays lively
+    if (++unsampled < (shown ? 1 : pillMeters ? kPillEvery : kClosedEvery)) return;
     Sample(unsampled);
     unsampled = 0;
 }
@@ -524,7 +563,32 @@ void Model::SetAwake(bool on) {
 
 void Model::SetPref(int& field, const wchar_t* key, int value) {
     field = value;
-    sys::SaveNum(key, value);
+    sys::SaveNum(ThemeKey(key).c_str(), value);
+}
+
+std::wstring Model::ThemeKey(const wchar_t* key) const {
+    if (setNow == 1)
+        for (const wchar_t* k : {kLookVal, L"AccentMode", L"AccentHex", L"CustomBg", L"GlassBlur", L"BgOpacity", L"GlassTint"})
+            if (!wcscmp(key, k)) return std::wstring(key) + L"Apps";
+    return key;
+}
+
+void Model::SyncThemeSet() {
+    int want = !appsTheme ? 0 : settingsOpen && setTab >= 0 ? setTab : overApp ? 1 : 0;
+    if (want == setNow) return;
+    if (hexFocus) CommitHex(); // what's being typed belongs to the one going out
+    ThemeSet live{look, accentMode, accentHex, customBg, glassBlur, bgOpacity, glassTint};
+    look = otherSet.look, accentMode = otherSet.accentMode, accentHex = otherSet.accentHex, customBg = otherSet.customBg;
+    glassBlur = otherSet.glassBlur, bgOpacity = otherSet.bgOpacity, glassTint = otherSet.glassTint;
+    otherSet = live;
+    setNow = want;
+    if (accentMode == kAccentWindows) { // windows' accent: read and watched only by a theme that uses it
+        winAccentHex = winAccent.Read();
+        winAccent.Watch(notify, WM_APP_ACCENT);
+    } else {
+        winAccent.Stop();
+    }
+    PollShared(); // following halobar: its theme now
 }
 
 int Model::SlotOf(int id) const {
@@ -721,6 +785,7 @@ void Model::CheckTiler() {
 bool Model::WantsWs() const {
     if (tiler == sys::Tiler::kNone) return false; // no tiling manager: nothing reads desktops on its behalf
     if (pillLeft == kWWork || pillRight == kWWork) return true;
+    if (deskPill && std::find(deskItems.begin(), deskItems.end(), (int)kWWork) != deskItems.end()) return true;
     if (boardsUp && BoardHas(kBdWork)) return true;
     return std::find(tiles.begin(), tiles.end(), (int)kTlWork) != tiles.end();
 }
@@ -811,6 +876,7 @@ bool Model::OnClipboard() {
 
 void Model::CloseSettings() {
     settingsOpen = false;
+    setTab = -1; // back to whichever applies
     hexFocus = false;
 }
 
@@ -844,12 +910,13 @@ bool Model::PollShared() {
     bool runs = FindWindowW(kHaloClass, nullptr) != nullptr;
     bool theme = Following() || settingsOpen; // the settings swatch previews it too
     bool fresh = haloWatch.Changed(kHaloKey); // asked every time: it also re-arms the notice
-    if (!fresh && runs == haloRuns && theme == haloThemeWas) { // nothing it was read from has changed: the same answer as last second
+    if (!fresh && runs == haloRuns && theme == haloThemeWas && setNow == haloSetWas) { // nothing it was read from has changed: the same answer as last second
         SyncNotify();
         return false;
     }
     haloRuns = runs;
     haloThemeWas = theme;
+    haloSetWas = setNow;
     Halo was = halo, now;
     bool pills = haloRuns; // running without saved settings: its default is pills on
     int dock = -1; // its dock's edge, only while it runs
@@ -863,12 +930,19 @@ bool Model::PollShared() {
         reach = haloRuns && haloSide == 0 ? HaloNum(key, L"DockReach", 0, 0, kMaxDockReach) : 0; // halobar writes it as its size changes
         if (theme) { // its theme matters only while we wear it or show it
             now.here = true;
-            now.look = HaloNum(key, L"Look", -1, -1, 3);
-            now.accent = HaloNum(key, L"Accent", -1, -1, 1);
-            now.accentHex = HaloNum(key, L"AccentHex", now.accentHex, INT_MIN, INT_MAX) & 0xFFFFFF;
-            now.customBg = HaloNum(key, L"CustomBg", now.customBg, INT_MIN, INT_MAX) & 0xFFFFFF;
-            now.glassBlur = HaloNum(key, L"GlassBlur", now.glassBlur, 0, 100);
-            now.opacity = HaloNum(key, L"Opacity", now.opacity, kMinOpacity, 100);
+            bool notDesk = setNow == 1 && HaloNum(key, L"AppsTheme", 0, 0, 1) != 0; // following it, each of our themes wears its match: its not-on-desktop one, if it has one
+            auto themeNum = [&](const wchar_t* name, int fallback, int lo, int hi) {
+                int v = HaloNum(key, name, fallback, lo, hi);
+                return notDesk ? HaloNum(key, (std::wstring(name) + L"Apps").c_str(), v, lo, hi) : v; // never set there: its desktop value
+            };
+            now.look = themeNum(L"Look", -1, -1, kLookClear);
+            if (now.look == kLookHalo || now.look == kLookStarfall) now.look = -1; // numbers of ours it never writes
+            now.glassTint = themeNum(L"GlassTint", -1, -1, 0xFFFFFF);
+            now.accent = themeNum(L"Accent", -1, -1, 1);
+            now.accentHex = themeNum(L"AccentHex", now.accentHex, INT_MIN, INT_MAX) & 0xFFFFFF;
+            now.customBg = themeNum(L"CustomBg", now.customBg, INT_MIN, INT_MAX) & 0xFFFFFF;
+            now.glassBlur = themeNum(L"GlassBlur", now.glassBlur, 0, 100);
+            now.opacity = themeNum(L"Opacity", now.opacity, kMinOpacity, 100);
         }
         RegCloseKey(key);
     }
@@ -905,7 +979,7 @@ int Model::AccentHex() const {
     return accentMode == kAccentWindows && winAccentHex >= 0 ? winAccentHex : accentHex;
 }
 int Model::CustomBg() const { return Following() && halo.look == 3 ? halo.customBg : customBg; }
-int Model::GlassBlur() const { return Following() && halo.look == 2 ? halo.glassBlur : glassBlur; }
+int Model::GlassBlur() const { return Following() && (halo.look == 2 || halo.look == kLookClear) ? halo.glassBlur : glassBlur; }
 int Model::BgOpacity() const {
     if (!Following()) return bgOpacity;
     return halo.look >= 0 ? halo.opacity : kMaxOpacity; // halobar follows us back: the default ends the loop, as the look's dark does
@@ -944,7 +1018,7 @@ bool Model::CommitHex() {
 
 void Model::SetLook(int v) {
     look = v < 0 || v >= kLooks ? 0 : v;
-    sys::SaveNum(kLookVal, look);
+    sys::SaveNum(ThemeKey(kLookVal).c_str(), look);
     PollShared(); // following halobar: its theme now, not a second later
 }
 
@@ -1164,6 +1238,83 @@ void Model::CommitCity() {
 }
 
 constexpr size_t kPillWordMax = 10, kPillTitleMax = 18; // the pill has room for a short word beside its clock
+constexpr size_t kDeskSongMax = 32; // the long pill has room for a song's name
+
+std::vector<int> Model::DeskDefaults() { return {kWWeather, kDMusic, kDClock, kWCpu, kDVolume}; }
+
+const wchar_t* Model::DeskItemName(int k) {
+    switch (k) {
+    case kDClock: return L"Clock";
+    case kDDate: return L"Date";
+    case kDVolume: return L"Volume";
+    case kDWifi: return L"Wi-Fi";
+    case kDMusic: return L"Music";
+    case kDTimer: return L"Timer";
+    case kDCover: return L"Cover";
+    case kDBars: return L"Visualizer";
+    case kWWeather: return L"Weather";
+    case kWBattery: return L"Battery";
+    case kWCpu: return L"CPU";
+    case kWRam: return L"RAM";
+    case kWGpu: return L"GPU";
+    case kWNet: return L"Network";
+    case kWWork: return L"Workspace";
+    case kWLang: return L"Language";
+    case kWTitle: return L"Window";
+    case kWDisk: return L"Disk";
+    default: return L"";
+    }
+}
+
+std::wstring Model::DeskItemText(int k, int& icon) const {
+    icon = 0;
+    SYSTEMTIME st;
+    wchar_t buf[48] = {};
+    switch (k) {
+    case kDClock:
+        GetLocalTime(&st);
+        GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &st, nullptr, buf, 48);
+        return buf;
+    case kDDate:
+        GetLocalTime(&st);
+        GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &st, L"ddd d MMM", buf, 48, nullptr);
+        return buf;
+    case kDVolume:
+        icon = muted || vol < 0.005f ? glyph::VolumeOff : vol < 0.5f ? glyph::VolumeDown : glyph::VolumeUp;
+        return muted ? L"" : std::to_wstring((int)std::lround(vol * 100)) + L"%";
+    case kDWifi:
+        icon = net.ssid.empty() ? glyph::WifiOff : glyph::Wifi; // the icon alone: a network's name stays off the desktop
+        return L"";
+    case kDMusic: {
+        if (!hasTrack || track.title.empty()) return L"";
+        icon = glyph::Music;
+        return track.title.size() > kDeskSongMax ? track.title.substr(0, kDeskSongMax - 1) + L"…" : track.title;
+    }
+    case kDCover:
+    case kDBars: // drawn by the pill itself; the icon only says there's a song for them
+        if (hasTrack && !track.title.empty()) icon = glyph::Music;
+        return L"";
+    case kDTimer:
+        if (Activity() == kActNone) return L"";
+        icon = glyph::Timer;
+        return ActivityText();
+    default:
+        return PillWidget(k, icon);
+    }
+}
+
+void Model::SetDeskItems(const std::vector<int>& items) {
+    deskItems = items;
+    std::wstring s;
+    for (int v : items) s += (s.empty() ? L"" : L",") + std::to_wstring(v);
+    sys::SaveText(L"DeskItems", s.empty() ? L"-" : s);
+}
+
+void Model::WantDeskAudio() {
+    spk.Refresh();
+    ReadAudio();
+    if (vizOn) meter.Refresh(); // bind the level meter to the current output, for its visualizer
+}
 
 std::wstring Model::PillWidget(int which, int& icon) const {
     switch (which) {
@@ -1181,6 +1332,10 @@ std::wstring Model::PillWidget(int which, int& icon) const {
     case kWRam:
         icon = glyph::Ram;
         return std::to_wstring((int)std::lround(ramHist.Last() * 100)) + L"%";
+    case kWGpu:
+        if (stats.gpu < 0) return L""; // no counter on this pc
+        icon = glyph::Gpu;
+        return std::to_wstring((int)std::lround(stats.gpu * 100)) + L"%";
     case kWWork: {
         if (tiler == sys::Tiler::kNone || wsNow.current < 0 || wsNow.current >= (int)wsNow.list.size()) return L"";
         icon = glyph::Workspaces;

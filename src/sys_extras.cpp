@@ -143,6 +143,9 @@ std::wstring ActiveTitle() {
     HWND fg = GetForegroundWindow();
     DWORD pid = 0;
     if (!fg || (GetWindowThreadProcessId(fg, &pid), pid == GetCurrentProcessId())) return L"";
+    wchar_t cls[16] = {};
+    GetClassNameW(fg, cls, 16);
+    if (!wcscmp(cls, L"Progman") || !wcscmp(cls, L"WorkerW")) return L""; // the desktop itself: no window to name, and its title is "program manager"
     wchar_t buf[512];
     int n = GetWindowTextW(fg, buf, 512);
     std::wstring s(buf, (std::max)(0, n));

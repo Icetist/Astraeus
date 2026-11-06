@@ -126,6 +126,7 @@ public:
     bool PollShared(); // once a second: do not disturb, halobar's pills and theme; true when the look changed
     bool PillsWanted() const { return !quiet && (notifyPills || haloPills); } // windows notifications drop as pills now
     bool Following() const { return look == kLookHalo; } // the look is halobar's
+    bool WatchesDesk() const { return pillDesk != 0 || deskPill != 0 || appsTheme != 0; } // something here depends on what's under the panel
     bool HaloRuns() const { return haloRuns; }
     int Look() const; // what's drawn: halobar's material while following it, else the pick
     int AccentMode() const; // these four: halobar's while following it and it has its own, else ours
@@ -262,8 +263,10 @@ public:
     int look = 0; // appearance picked: 0 dark (default), 1 light, 2 glass, 3 custom, 4 follow halobar, 5 starfall; Look() is what's drawn
     static constexpr int kLookHalo = 4;
     static constexpr int kLookStarfall = 5; // ours alone: halobar wears it only by following us, and never hands it back
+    static constexpr int kLookClear = 6; // picked under glass: the resting pill is only ink, the panel glass on the wallpaper's side
     struct Halo { // halobar's own theme, read only while following it
-        int look = -1; // -1 it follows us back, else 0..3 like ours
+        int look = -1; // -1 it follows us back, else 0..3 or clear, like ours
+        int glassTint = -1;
         int accent = -1; // -1 ours, 0 wallpaper, 1 the hex
         int accentHex = 0x5B8CFF, customBg = 0x121826, glassBlur = 100, opacity = 100; // halobar's defaults
         bool here = false; // its settings key exists: installed, and run at least once
@@ -273,6 +276,18 @@ public:
     int customBg = 0x121826; // custom look: the panel background, 0xRRGGBB
     int lyricOffsetMs = 0; // fullscreen lyrics nudged later (+) or earlier (-), [ and ] change it
     int glassBlur = 100; // glass: 0 clear .. 100 fully frosted
+    struct ThemeSet { int look, accentMode, accentHex, customBg, glassBlur, bgOpacity, glassTint; };
+    int appsTheme = 0; // a whole theme of its own while an app is under the panel
+    ThemeSet otherSet{}; // the theme not in the live fields: every reader keeps reading those, so nothing can be missed
+    int setNow = 0; // which is in them: 0 the desktop's, 1 over apps
+    int setTab = -1; // the one settings is editing, -1 whichever applies
+    int haloSetWas = 0; // which of halobar's two themes was last read
+    bool overApp = false; // an app is under it right now
+    void SyncThemeSet(); // the theme that should be live now
+    std::wstring ThemeKey(const wchar_t* key) const; // where this value is saved, for the theme that's live
+    int glassTint = -1; // glass: its tint, 0xRRGGBB; -1 the plain dark one
+    int GlassTint() const { return Following() ? halo.glassTint : glassTint; }
+    bool Glassy() const { int l = Look(); return l == 2 || l == kLookClear; } // the look draws on the live blur
     int edge = 0; // 0 top (default), 1 left, 2 right: the user's pick
     int haloEdge = -1; // the edge halobar's dock holds, in our numbering; -1 none (bottom, or not running)
     int haloReach = 0; // pixels its bottom dock rises from the screen's bottom, 0 when it isn't there: the sidebar ends above it
@@ -397,8 +412,24 @@ public:
     void CommitCity(); // empty goes back to finding you by ip
     int pillAlways = 0; // the resting pill stays up with the clock
     int pillDesk = 0; // the pill stays up while the desktop is what's under it, always or not
-    enum Widget { kWNone, kWWeather, kWBattery, kWCpu, kWRam, kWNet, kWWork, kWLang, kWTitle, kWDisk, kWidgets };
+    enum Widget { kWNone, kWWeather, kWBattery, kWCpu, kWRam, kWNet, kWWork, kWLang, kWTitle, kWDisk, kWGpu, kWidgets }; // new ones go last: their numbers are saved
+    int pillFull = 0; // it stays up over fullscreen apps, rather than going away for them
+    int pillFullOpen = 1; // and a click on it there opens the panel; off: only ever the pill
+    bool pillGpu = false, pillMeters = false; // a showing pill has a gpu reading on it; a cpu or ram one
+    void SetPillMeters(bool gpu, bool meters); // what a showing pill wants kept fresh
     int pillLeft = kWWeather, pillRight = kWCpu; // its two status widgets
+    int deskPill = 0; // the long pill on the desktop, in its own window
+    int deskFillApps = 0; // its body while an app is under it
+    int deskEdge = 0, deskPos = 500, deskLen = 560, deskThick = 30, deskGap = 10, deskFloat = 1, deskFill = 0; // its edge, place along it in thousandths, size, gap, stuck or floating, body
+    int deskApps = 0; // it also stands in for the small pill over maximized apps, on the same rules
+    enum DeskItem { kDClock = 20, kDDate, kDVolume, kDWifi, kDMusic, kDTimer, kDCover, kDBars }; // beyond the widgets above
+    std::vector<int> deskItems; // what it shows, in order; the clock anchors the middle
+    bool deskEditAsk = false; // settings asked for the editor: it opens after the frame
+    static std::vector<int> DeskDefaults();
+    static const wchar_t* DeskItemName(int kind);
+    std::wstring DeskItemText(int kind, int& icon) const; // what an item shows now; empty and no icon: nothing right now
+    void SetDeskItems(const std::vector<int>& items);
+    void WantDeskAudio(); // the speakers read, for its volume
     std::wstring PillWidget(int which, int& icon) const; // what a widget shows now, empty when it has nothing
     int mediaCompact = 0, pillMusic = 1, showArt = 1, vizOn = 1; // media modules
     int artBack = 0; // the media page sits on its cover, blurred across the whole panel

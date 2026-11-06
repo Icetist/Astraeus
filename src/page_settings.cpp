@@ -421,14 +421,15 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // six swatches dra
     const Theme& t = p.shell;
     Model& m = p.m;
     D2D1_RECT_F in = Box(c, t, r, L"Material");
-    bool glass = m.look == 2;
+    bool glass = m.look == 2 || m.look == Model::kLookClear;
+    int picked = m.look == Model::kLookClear ? 2 : m.look; // clear lives under glass, in the card below
     Seed s = Base(m, t);
     constexpr float extra = kSlideH + 6; // room for the blur slider, or the opacity slider on the solid looks
     float sw = (Width(in) - 2 * kSwatchGap) / kSwatchCols, sh = (std::min)((Height(in) - extra - 2 * 18 - 6) / 2, sw * 0.62f); // three, then the rest, a label under each
     static const wchar_t* const kNames[] = {L"Dark", L"Light", L"Glass", L"Custom", L"HaloBar", L"Starfall"};
     int order[Model::kLookStarfall + 1], looks = 0;
     for (int k = 0; k <= Model::kLookStarfall; ++k)
-        if (k != Model::kLookHalo || !m.halo.FollowsUs() || m.Following()) order[looks++] = k; // halobar following us: no swatch to follow it back, unless already picked
+        if (k != Model::kLookHalo || !m.halo.FollowsUs() || m.look == Model::kLookHalo) order[looks++] = k; // halobar following us: no swatch to follow it back, unless already picked
     for (int at = 0; at < looks; ++at) {
         int i = order[at];
         int row = at / kSwatchCols, col = at % kSwatchCols, inRow = (std::min)(kSwatchCols, looks - row * kSwatchCols);
@@ -436,7 +437,7 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // six swatches dra
         D2D1_RECT_F q = Rect(x0 + col * (sw + kSwatchGap), in.top + 2 + row * (sh + 24), sw, sh);
         uint32_t id = Ui::Id("set.mat", i);
         Ui::Hit h = live ? ui.Button(id, q) : Ui::Hit{};
-        float on = ui.Smooth(id + 10, m.look == i ? 1.0f : 0, 14), hov = ui.Smooth(id + 20, h.hover ? 1.0f : 0, 16);
+        float on = ui.Smooth(id + 10, picked == i ? 1.0f : 0, 14), hov = ui.Smooth(id + 20, h.hover ? 1.0f : 0, 16);
         q = Inset(q, -2 * on, -2 * on); // the chosen one lifts
         int mat = i, bg = m.customBg;
         Seed seed = s;
@@ -447,16 +448,16 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // six swatches dra
         }
         Theme look = Theme::From(Seed{seed.hue, seed.chroma, mat, seed.rgb, bg});
         if (on > 0.01f) c.Glow({(q.left + q.right) / 2, (q.top + q.bottom) / 2}, sw, sh, t.accent.Alpha(0.20f * on));
-        Swatch(c, look, q, mat == 2, seed.hue, sw, sh);
+        Swatch(c, look, q, mat == 2 || mat == Model::kLookClear, seed.hue, sw, sh);
         if (on > 0.01f || hov > 0.01f) c.Stroke(Inset(q, -3, -3), 14, t.accent.Alpha((std::max)(on, 0.5f * hov)), 2);
         c.Text(kNames[i], Rect(q.left - 4, q.bottom + 3, Width(q) + 8, 14), Weight::Medium, 11, t.textDim.Mix(t.text, on), Align::Center);
-        if (h.clicked && m.look != i) {
+        if (h.clicked && picked != i) {
             if (i == 3 && m.accentMode != 1) m.SetAccent(1, ToHex(t.accent)); // the wheel starts from the accent you're looking at
             m.SetLook(i); // drawer crossfades, glass swaps its pipeline
         }
     }
-    if (m.Following()) { // halobar's look: its blur and opacity are tuned there, and shared, so no slider here that does nothing
-        c.Text(m.Look() == 2 ? L"Blur follows HaloBar" : L"Opacity follows HaloBar", Rect(in.left, in.bottom - 30, Width(in), 16), Weight::Medium, 11, t.textDim, Align::Center);
+    if (m.look == Model::kLookHalo) { // halobar's look: its blur and opacity are tuned there, and shared, so no slider here that does nothing
+        c.Text(m.Glassy() ? L"Blur follows HaloBar" : L"Opacity follows HaloBar", Rect(in.left, in.bottom - 30, Width(in), 16), Weight::Medium, 11, t.textDim, Align::Center);
         return;
     }
     { // glass: how frosted, between clear glass and windows' full backdrop blur; the solid looks: how much desktop shows through
@@ -468,6 +469,90 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // six swatches dra
                  std::to_wstring(field) + L"%", v, live, done))
             field = lo + (int)(v * (100 - lo) + 0.5f); // live preview
         if (done) m.SetPref(field, glass ? L"GlassBlur" : L"BgOpacity", field);
+    }
+}
+
+constexpr float kTabsRow = 30, kTabsGap = 6; // the row over the cards
+constexpr float kTabsWide = 470; // narrower than this: the two themes get a row of their own
+
+float TabsH(const Model& m, float w) { return m.appsTheme && w < kTabsWide ? 2 * kTabsRow + kTabsGap : kTabsRow; }
+
+void ThemeTabs(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a whole second theme: on, and which one everything on this page is editing
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    constexpr float kWords = 216, kKnob = 24, kSegW = 220;
+    c.Text(L"Different theme when not on desktop", Rect(r.left + 4, r.top, kWords, kTabsRow), Weight::Medium, 12, t.text);
+    if (w::Switch(ui, t, Ui::Id("set.appstheme"), {r.left + kWords + kKnob, r.top + kTabsRow / 2}, m.appsTheme != 0, live)) m.SetPref(m.appsTheme, L"AppsTheme", m.appsTheme ? 0 : 1);
+    if (live) ui.Name(L"Different theme when not on desktop");
+    if (!m.appsTheme) return;
+    static const wchar_t* const kSets[] = {L"Desktop", L"Not on desktop"};
+    D2D1_RECT_F seg = Width(r) < kTabsWide ? Rect(r.left, r.top + kTabsRow + kTabsGap, Width(r), kTabsRow - 2) : Rect(r.right - kSegW, r.top + 1, kSegW, kTabsRow - 2);
+    int pick = Segmented(ui, t, "set.themetab", seg, kSets, 2, m.setNow, live);
+    if (pick >= 0) m.setTab = pick; // it previews as you edit it
+}
+
+constexpr float kGlassCardH = 76; // glass' own card, opening under the material's
+
+void GlassCard(PageCtx& p, const D2D1_RECT_F& r, bool live) { // glass or clear; glass' tint: dark, white, or any hue
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F in = Box(c, t, r, L"Glass");
+    constexpr float kSegW = 124, kAfterSeg = 16, kDot = 9, kDotGap = 8, kAfterDots = 12, kStripH = 12;
+    constexpr float kStripS = 0.75f, kStripL = 0.55f; // bright enough to read as a color through the frost
+    constexpr int kStops = 48;
+    static const wchar_t* const kKinds[] = {L"Glass", L"Clear"};
+    float cy = in.top + 15;
+    D2D1_RECT_F row = Rect(in.left, in.top, Width(in), 30);
+    bool clear = m.look == Model::kLookClear;
+    int v = Segmented(ui, t, "set.glasskind", Rect(row.left, row.top + 1, kSegW, 28), kKinds, 2, clear ? 1 : 0, live);
+    if (v >= 0 && (v == 1) != clear) {
+        m.SetLook(v == 1 ? Model::kLookClear : 2);
+        return; // the row's look changes next frame
+    }
+    float x = row.left + kSegW + kAfterSeg;
+    if (clear) { // nothing to pick: the pill's ink looks after itself, the panel's tint follows the wallpaper
+        c.Text(L"The pill's icons suit what's behind, the panel suits the wallpaper", {x, row.top, row.right, row.bottom}, Weight::Regular, 11, t.textDim);
+        return;
+    }
+    struct { int hex; Color fill; const wchar_t* name; } plain[] = {{-1, Color{0.05f, 0.05f, 0.07f, 1}, L"Dark tint"}, {0xFFFFFF, Color{1, 1, 1, 1}, L"White tint"}}; // the two that aren't on the strip
+    for (const auto& d : plain) {
+        D2D1_POINT_2F o = {x + kDot, cy};
+        uint32_t id = Ui::Id("set.tint", d.hex < 0 ? 0 : 1);
+        Ui::Hit h = live ? ui.Button(id, {o.x - kDot - 2, row.top, o.x + kDot + 2, row.bottom}) : Ui::Hit{};
+        if (live) ui.Name(d.name);
+        float on = ui.Smooth(id + 10, m.glassTint == d.hex ? 1.0f : 0, 14);
+        c.Dot(o, kDot, d.fill);
+        c.Ring(o, kDot, t.text.Alpha(0.30f), 1);
+        if (on > 0.01f) c.Ring(o, kDot + 3, t.accentHi.Alpha(on), 1.5f);
+        if (h.clicked) m.SetPref(m.glassTint, L"GlassTint", d.hex);
+        x += 2 * kDot + kDotGap;
+    }
+    x += kAfterDots - kDotGap;
+    D2D1_RECT_F strip = {x + kStripH / 2, cy - kStripH / 2, row.right - kStripH / 2, cy + kStripH / 2}; // any hue: the panel recolors live under the mouse
+    float sw = Width(strip) / kStops;
+    c.Dot({strip.left, cy}, kStripH / 2, theme::Hsl(0, kStripS, kStripL));
+    c.Dot({strip.right, cy}, kStripH / 2, theme::Hsl(360, kStripS, kStripL));
+    for (int i = 0; i < kStops; ++i) c.Fill(Rect(strip.left + i * sw, strip.top, sw + 0.6f, kStripH), 0, theme::Hsl(360.0f * i / kStops, kStripS, kStripL));
+    uint32_t id = Ui::Id("set.tint.hue");
+    if (live) {
+        ui.Button(id, {strip.left - kStripH / 2, row.top, strip.right + kStripH / 2, row.bottom});
+        ui.Name(L"Tint color");
+    }
+    if (ui.IsActive(id) && (ui.In().down || ui.In().released)) {
+        float hue = anim::Clamp01((ui.In().mouse.x - strip.left) / Width(strip)) * 360;
+        m.glassTint = ToHex(theme::Hsl(hue, kStripS, kStripL));
+        if (ui.In().released) m.SetPref(m.glassTint, L"GlassTint", m.glassTint); // written once
+    }
+    if (m.glassTint >= 0 && m.glassTint != 0xFFFFFF) { // the knob, at the tint's hue
+        Seed cur = theme::FromCol(Color::Rgb((uint32_t)m.glassTint));
+        float kx = strip.left + cur.hue / 360 * Width(strip);
+        c.Dot({kx, cy + 1}, kStripH / 2 + 3, Color{0, 0, 0, 0.30f});
+        c.Dot({kx, cy}, kStripH / 2 + 3, Color{1, 1, 1, 1});
+        c.Dot({kx, cy}, kStripH / 2, Color::Rgb((uint32_t)m.glassTint));
     }
 }
 
@@ -712,7 +797,8 @@ void DrawSettings(PageCtx& p, float k) {
     int rows = frame.tall ? 3 : 2;
     float ch = (std::max)(kMinRow, (Height(grid) - rows * kGap - kLyricsRow) / rows); // short page: cards keep their size and the page scrolls
     static float prefsH = 0; // the newer cards' height, as they measured last frame
-    float content = rows * (ch + kGap) + kLyricsRow + (frame.tall ? kLyricsRow + kGap : 0) + kGap + prefsH; // the sidebar stacks lyrics and motion
+    float glassOpen = ui.Smooth(Ui::Id("set.glasscard"), p.m.look == 2 || p.m.look == Model::kLookClear ? 1.0f : 0, 14), glassH = (kGlassCardH + kGap) * glassOpen; // opens under the first row, whichever way the page is laid out
+    float content = rows * (ch + kGap) + kLyricsRow + (frame.tall ? kLyricsRow + kGap : 0) + kGap + prefsH + glassH + TabsH(p.m, Width(grid)) + kGap; // the sidebar stacks lyrics and motion
     static double scrolledAt = -10; // a scroll in flight keeps the wheel even as a slider passes under the mouse
     bool pageWheel = !OverSlider(ui) || ui.Now() - scrolledAt < kWheelHold;
     if (pageWheel && ui.In().wheel != 0 && Inside(grid, ui.In().mouse)) scrolledAt = ui.Now();
@@ -721,27 +807,36 @@ void DrawSettings(PageCtx& p, float k) {
     live = live && (Inside(view, ui.In().mouse) || ui.Captured() || ui.Keyed()); // cards scrolled out of view can't be hit through the header; a slider being dragged keeps following past it; the keyboard's reach has nothing to do with the mouse
     c.PushClip(view);
     grid.top -= scroll;
+    float tabsH = TabsH(p.m, Width(grid));
+    ThemeTabs(p, Rect(grid.left, grid.top, Width(grid), tabsH), live);
+    grid.top += tabsH + kGap;
+    float under = grid.top + ch + kGap; // the first row's end
+    if (glassOpen > 0.01f) {
+        c.PushClip({grid.left - 4, under, grid.right + 4, under + glassH});
+        GlassCard(p, Rect(grid.left, under, Width(grid), kGlassCardH), live && glassOpen > 0.99f);
+        c.PopClip();
+    }
     if (!frame.tall) { // five instruments: three across, then notifications and a wide island
         float cw = (Width(grid) - 2 * kGap) / 3;
         Material(p, Rect(grid.left, grid.top, cw, ch), live);
         Position(p, Rect(grid.left + cw + kGap, grid.top, cw, ch), live);
         Screens(p, Rect(grid.left + 2 * (cw + kGap), grid.top, cw, ch), live);
-        Notices(p, Rect(grid.left, grid.top + ch + kGap, cw, ch), live);
-        Island(p, Rect(grid.left + cw + kGap, grid.top + ch + kGap, 2 * cw + kGap, ch), live);
+        Notices(p, Rect(grid.left, under + glassH, cw, ch), live);
+        Island(p, Rect(grid.left + cw + kGap, under + glassH, 2 * cw + kGap, ch), live);
         float half = (Width(grid) - kGap) / 2;
-        Lyrics(p, Rect(grid.left, grid.top + 2 * (ch + kGap), half, kLyricsRow), live);
-        Motion(p, Rect(grid.left + half + kGap, grid.top + 2 * (ch + kGap), half, kLyricsRow), live);
-        prefsH = DrawPrefs(p, {grid.left, grid.top + 2 * (ch + kGap) + kLyricsRow + kGap, grid.right, grid.bottom}, live, false);
+        Lyrics(p, Rect(grid.left, grid.top + 2 * (ch + kGap) + glassH, half, kLyricsRow), live);
+        Motion(p, Rect(grid.left + half + kGap, grid.top + 2 * (ch + kGap) + glassH, half, kLyricsRow), live);
+        prefsH = DrawPrefs(p, {grid.left, grid.top + 2 * (ch + kGap) + glassH + kLyricsRow + kGap, grid.right, grid.bottom}, live, false);
     } else { // sidebar: two by two, the island across the bottom
         float cw = (Width(grid) - kGap) / 2;
         Material(p, Rect(grid.left, grid.top, cw, ch), live);
         Position(p, Rect(grid.left + cw + kGap, grid.top, cw, ch), live);
-        Screens(p, Rect(grid.left, grid.top + ch + kGap, cw, ch), live);
-        Notices(p, Rect(grid.left + cw + kGap, grid.top + ch + kGap, cw, ch), live);
-        Island(p, Rect(grid.left, grid.top + 2 * (ch + kGap), Width(grid), ch), live);
-        Lyrics(p, Rect(grid.left, grid.top + 3 * (ch + kGap), Width(grid), kLyricsRow), live);
-        Motion(p, Rect(grid.left, grid.top + 3 * (ch + kGap) + kLyricsRow + kGap, Width(grid), kLyricsRow), live);
-        prefsH = DrawPrefs(p, {grid.left, grid.top + 3 * (ch + kGap) + 2 * (kLyricsRow + kGap), grid.right, grid.bottom}, live, true);
+        Screens(p, Rect(grid.left, under + glassH, cw, ch), live);
+        Notices(p, Rect(grid.left + cw + kGap, under + glassH, cw, ch), live);
+        Island(p, Rect(grid.left, grid.top + 2 * (ch + kGap) + glassH, Width(grid), ch), live);
+        Lyrics(p, Rect(grid.left, grid.top + 3 * (ch + kGap) + glassH, Width(grid), kLyricsRow), live);
+        Motion(p, Rect(grid.left, grid.top + 3 * (ch + kGap) + glassH + kLyricsRow + kGap, Width(grid), kLyricsRow), live);
+        prefsH = DrawPrefs(p, {grid.left, grid.top + 3 * (ch + kGap) + glassH + 2 * (kLyricsRow + kGap), grid.right, grid.bottom}, live, true);
     }
     c.PopClip();
     Fades(c, t, view, scroll, content);

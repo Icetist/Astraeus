@@ -131,7 +131,7 @@ void Player(PageCtx& p, const D2D1_RECT_F& r) {
         float thick = 3 + 2 * grow; // line thickens under the mouse, a knob shows where it is
         c.Line({tx, y}, {x1, y}, t.track, thick);
         if (f > 0.002f) c.Line({tx, y}, {tx + (x1 - tx) * f, y}, t.accent, thick); // skip near-zero, avoids stray cap dot
-        if (grow > 0.01f) c.Dot({tx + (x1 - tx) * f, y}, 5.5f * grow, t.accentHi);
+        if (grow > 0.01f) c.Dot({w::ThumbAt(tx, x1, 5.5f, f), y}, 5.5f * grow, t.accentHi);
     }
     Ui::Hit card = ui.Button(Ui::Id("ov.card"), r); // last, so the buttons and the bar above keep their own clicks
     float lift = ui.Smooth(Ui::Id("ov.card", 1), card.hover ? 1.0f : 0, 14);
