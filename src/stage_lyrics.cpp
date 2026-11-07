@@ -23,6 +23,7 @@ bool LyricView::Lay(Piece& pc, const std::wstring& text, IDWriteTextFormat* f, f
     pc.lay->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP); // long lines wrap, the shared format is single-line
     pc.lay->SetTrimming(&none, nullptr);
     pc.lay->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    pc.lay->SetTextAlignment(style.align == 1 ? DWRITE_TEXT_ALIGNMENT_CENTER : style.align == 2 ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_LEADING);
     pc.lay->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, lineH, lineH * 0.79f);
     pc.len = (UINT32)text.size();
     UINT32 count = 0;
@@ -55,6 +56,7 @@ void LyricView::Sync(ID2D1DeviceContext* ctx, const std::shared_ptr<const sys::L
     (void)ctx;
     if (d == doc && std::fabs(w - width) < 0.5f && std::fabs(sz - size) < 0.1f) return;
     bool same = doc && d && doc->key == d->key; // the word-timed version of the same song: stay where you are
+    if (d == doc) placed = false; // only the width or size changed: the new lines start where they belong
     doc = d;
     width = w;
     size = sz;
@@ -82,6 +84,7 @@ void LyricView::Sync(ID2D1DeviceContext* ctx, const std::shared_ptr<const sys::L
 
 void LyricView::Style(const Look& l) {
     if (l.dimLit != style.dimLit) stopsFor = {-1, -1, -1, -1}; // the sweep's soft edge is made again in the new shade
+    if (l.align != style.align) width = 0; // the lines are laid out again, set the new way
     style = l;
 }
 
@@ -161,7 +164,7 @@ void LyricView::Haze(ID2D1DeviceContext* ctx, const Row& row, D2D1_POINT_2F at, 
     ink->SetColor(col.D2D());
     D2D1_MATRIX_3X2_F base;
     ctx->GetTransform(&base); // the dashboard paints with an offset into its surface
-    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x, at.y + row.h / 2}) * *D2D1::Matrix3x2F::ReinterpretBaseType(&base));
+    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x + width * style.align / 2, at.y + row.h / 2}) * *D2D1::Matrix3x2F::ReinterpretBaseType(&base));
     D2D1_ANTIALIAS_MODE was = ctx->GetAntialiasMode();
     ctx->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED); // opacity masks need it
     D2D1_RECT_F dst = {at.x - pad, at.y - pad, at.x + row.w + pad, at.y + row.h + pad};
@@ -175,7 +178,7 @@ void LyricView::Text(ID2D1DeviceContext* ctx, const Row& row, D2D1_POINT_2F at, 
     ink->SetColor(col.D2D());
     D2D1_MATRIX_3X2_F base;
     ctx->GetTransform(&base);
-    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x, at.y + row.h / 2}) * *D2D1::Matrix3x2F::ReinterpretBaseType(&base));
+    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x + width * style.align / 2, at.y + row.h / 2}) * *D2D1::Matrix3x2F::ReinterpretBaseType(&base));
     Ink(ctx, row, at, ink.Get());
     ctx->SetTransform(base);
 }
@@ -219,7 +222,7 @@ void LyricView::Lit(ID2D1DeviceContext* ctx, Row& row, D2D1_POINT_2F at, float s
     size_t e = 0;
     D2D1_MATRIX_3X2_F base;
     ctx->GetTransform(&base);
-    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x, at.y + row.h / 2}) * *D2D1::Matrix3x2F::ReinterpretBaseType(&base));
+    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x + width * style.align / 2, at.y + row.h / 2}) * *D2D1::Matrix3x2F::ReinterpretBaseType(&base));
     Sweeping(ctx, row.lead, at, Sweep(row, t), a, look.text, e);
     ctx->SetTransform(base);
 }
@@ -227,6 +230,7 @@ void LyricView::Lit(ID2D1DeviceContext* ctx, Row& row, D2D1_POINT_2F at, float s
 void LyricView::Dots(Canvas& c, D2D1_POINT_2F at, float progress, float appear, const Theme& look, float a, double now) {
     float s = appear * (1 + 0.08f * (float)std::sin(now * 2.6)); // the three dots breathe while the music plays on
     float r0 = size * 0.15f * s, step = size * 0.56f * s;
+    at.x += (std::max)(0.0f, width - 2 * r0 - 2 * step) * style.align / 2; // they sit where the lines do
     for (int i = 0; i < 3; ++i) {
         float f = anim::Clamp01(progress * 3 - i); // and fill in turn as the next line nears
         c.Dot({at.x + r0 + i * step, at.y}, r0 * (0.8f + 0.2f * f), look.text.Alpha((0.28f + 0.72f * f) * a * anim::Clamp01(appear)));

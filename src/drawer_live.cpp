@@ -266,6 +266,12 @@ void Drawer::DeskEdit() {
     SyncHide(); // the panel or the island goes, the editor has the screen
 }
 
+void Drawer::WidgetStudio() {
+    if (!desk || desk->Editing() || stage) return;
+    desk->Studio(mon);
+    SyncHide(); // the panel goes, the editor has the screen
+}
+
 bool Drawer::DeskNeeds() const { return desk && desk->Needs() && !Unseen(); }
 
 HANDLE Drawer::DeskWait() const { return desk ? desk->Wait() : nullptr; }
@@ -337,7 +343,7 @@ bool Drawer::KeyNav(WPARAM key, LPARAM lp) {
         if (model.mixerOpen) return model.CloseMixer(), true;
         return false;
     case 'S':
-        if (!model.settingsOpen) ui.Unfocus(), model.OpenSettings(); // settings hang off the rail's right click: this is the keyboard's way in
+        if (!model.settingsOpen) ui.Unfocus(), model.OpenSettings(); // the keyboard's way in
         return true;
     default:
         return false;

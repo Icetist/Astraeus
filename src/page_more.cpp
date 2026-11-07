@@ -8,6 +8,7 @@
 
 #include "anim.h"
 #include "glyphs.h"
+#include "history.h"
 #include "page_sheet.h"
 #include "pages.h"
 #include "saver.h"
@@ -23,8 +24,14 @@ constexpr size_t kClockChars = 7; // 9:59:59; ten hours and up take the smaller 
 constexpr float kClockLong = 38;
 constexpr float kQuickGap = 10;
 constexpr float kStackedW = 140; // w::Tile puts the icon over the words below this width
-constexpr float kDoneW = 64, kEditHeadH = 26; // editing the tiles: the done pill and its row
-constexpr int kEditCols = 4; // the fewest columns while editing
+constexpr float kPickMinW = 220, kPickerMaxW = 1000, kPickerPad = 18, kPickerHeadH = 30, kPickerDoneW = 84; // the tiles' editor: its gallery
+constexpr float kRemoveSize = 24, kRemoveInset = 6, kTileDragStart = 6; // a tile being arranged
+
+bool tileShow = false; // the tiles are in their editor: they look as they do, and don't do anything
+int heldTile = -1; // the one being dragged
+History tileHist; // the editor's undo: the tiles, in order
+sheet::Ids heldTiles; // the set as it would land
+D2D1_POINT_2F heldTileGrab{};
 
 struct Cell {
     const wchar_t* name;
@@ -285,6 +292,7 @@ void WorkTile(PageCtx& p, const D2D1_RECT_F& r) { // every workspace as a chip: 
         if (h.clicked) m.ws.Focus(i);
         x += kChip + kChipGap;
     }
+    if (tileShow) return;
     if (float notch = ui.Wheel(r)) m.ws.Step(notch > 0 ? -1 : 1); // the wheel walks through them
 }
 
@@ -380,32 +388,30 @@ void Tile(PageCtx& p, int id, const D2D1_RECT_F& r) { // one quick tile: its sta
     }
 }
 
-void EditTiles(PageCtx& p, const D2D1_RECT_F& quick) { // the tiles the widgets way: x takes one off, + brings one back, drag to move
-    Ui& ui = p.ui;
-    Canvas& c = ui.C();
-    const Theme& t = p.shell;
-    Model& m = p.m;
-    D2D1_RECT_F done = Rect(quick.right - kDoneW, quick.top, kDoneW, kEditHeadH);
-    if (sheet::Act(ui, t, Ui::Id("tl.done"), done, L"Done", true, false, true) || ui.RClick(quick)) m.tilesEdit = false;
-    c.Text(L"Drag to move, × removes, + adds", {quick.left + 4, quick.top, done.left - 8, done.bottom}, Weight::Light, 11, t.textDim);
-    sheet::Arrange a = sheet::TileSet(m);
-    int total = (int)(a.shown.size() + a.hidden.size());
-    int cols = (std::max)(kEditCols, (total + 1) / 2), rows = (std::max)(1, (total + cols - 1) / cols);
-    D2D1_RECT_F grid = {quick.left, done.bottom + kQuickGap, quick.right, quick.bottom};
-    float cellH = (Height(grid) - (rows - 1) * sheet::kArrangeGap) / rows;
-    if (sheet::Arranger(ui, t, "tl.edit", grid, cols, cellH, a, true)) sheet::KeepTiles(m, a.shown);
+namespace {
+
+D2D1_RECT_F TileSpot(const D2D1_RECT_F& quick, int n, int i) { // the i-th of n: half on top and the rest below
+    int top = n / 2, bottom = n - top, count = i < top ? top : bottom, along = i < top ? i : i - top;
+    float th = top ? (Height(quick) - kQuickGap) / 2 : Height(quick), tw = (Width(quick) - kQuickGap * (count - 1)) / count;
+    return Rect(quick.left + along * (tw + kQuickGap), quick.top + (i < top || !top ? 0 : th + kQuickGap), tw, th);
 }
 
-void QuickTiles(PageCtx& p, const D2D1_RECT_F& quick) { // the picked tiles, half on top and the rest below; right-click to edit them
-    Ui& ui = p.ui;
-    Canvas& c = ui.C();
-    const Theme& t = p.shell;
-    Model& m = p.m;
-    if (m.tilesEdit) return EditTiles(p, quick);
-    if (ui.RClick(quick)) m.tilesEdit = true;
+sheet::Ids TilesShown(const Model& m) {
     sheet::Ids shown;
     for (int id : m.tiles)
         if (m.TileHere(id)) shown.push_back(id);
+    return shown;
+}
+
+void QuickTiles(PageCtx& p, const D2D1_RECT_F& quick) { // the picked tiles; right-click to edit them
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    m.tileAreaW = Width(quick), m.tileAreaH = Height(quick);
+    p.spotTiles = quick;
+    if (ui.RClick(quick)) m.studioAsk = Model::kStudioTiles;
+    sheet::Ids shown = TilesShown(m);
     int n = (int)shown.size();
     if (n == 0) { // every tile taken off: a way to bring them back
         Ui::Hit h = ui.Button(Ui::Id("tl.add"), quick);
@@ -415,17 +421,151 @@ void QuickTiles(PageCtx& p, const D2D1_RECT_F& quick) { // the picked tiles, hal
         D2D1_POINT_2F o = {(quick.left + quick.right) / 2, (quick.top + quick.bottom) / 2 - 10};
         c.Icon(glyph::Add, o, 24, t.accentHi);
         c.Text(L"Add tiles", Rect(quick.left, o.y + 16, Width(quick), 18), Weight::Medium, 12.5f, t.textDim.Mix(t.text, hover), Align::Center);
-        if (h.clicked) m.tilesEdit = true;
+        if (h.clicked) m.studioAsk = Model::kStudioTiles;
         return;
     }
-    int top = n / 2, bottom = n - top; // the release's layout: two above, the rest below
-    float th = top ? (Height(quick) - kQuickGap) / 2 : Height(quick);
-    auto row = [&](int count, int i, float y) { // the i-th of count tiles sharing a row
-        float tw = (Width(quick) - kQuickGap * (count - 1)) / count;
-        return Rect(quick.left + i * (tw + kQuickGap), y, tw, th);
+    for (int i = 0; i < n; ++i) {
+        D2D1_RECT_F r = TileSpot(quick, n, i);
+        if (shown[(size_t)i] == Model::kTlSettings) p.spotSettings = r; // the tour's settings step points here
+        Tile(p, shown[(size_t)i], r);
+    }
+}
+
+void TileBoard(PageCtx& p, const D2D1_RECT_F& box) { // the tiles as the page lays them out: hover for the x, drag to move
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    const Input& in = ui.In();
+    sheet::Ids shown = TilesShown(m);
+    const sheet::Ids& order = heldTile >= 0 ? heldTiles : shown;
+    int n = (int)order.size(), removed = -1;
+    if (n == 0) {
+        float y = (box.top + box.bottom) / 2;
+        c.Text(L"Your tiles go here", Rect(box.left, y - 22, Width(box), 24), Weight::Medium, 16, t.text, Align::Center);
+        c.Text(L"Tap one below to add it", Rect(box.left, y + 4, Width(box), 18), Weight::Regular, 12, t.textDim, Align::Center);
+        return;
+    }
+    tileShow = true;
+    D2D1_RECT_F local = Rect(0, 0, Width(box), Height(box)); // the eased places don't count the rise it comes in on
+    for (int i = 0; i < n; ++i) {
+        int id = order[(size_t)i];
+        D2D1_RECT_F want = TileSpot(local, n, i);
+        float x = ui.Smooth(Ui::Id("tl.st.x", id), want.left, 18), y = ui.Smooth(Ui::Id("tl.st.y", id), want.top, 18);
+        float wd = ui.Smooth(Ui::Id("tl.st.w", id), Width(want), 18), ht = ui.Smooth(Ui::Id("tl.st.h", id), Height(want), 18);
+        if (id == heldTile) continue; // drawn last, on top of the rest
+        D2D1_RECT_F r = Rect(box.left + x, box.top + y, wd, ht);
+        bool over = heldTile < 0 && Inside(r, in.mouse);
+        D2D1_POINT_2F corner = {r.right - kRemoveInset - kRemoveSize / 2, r.top + kRemoveInset + kRemoveSize / 2};
+        Ui::Hit xh = over ? ui.Button(Ui::Id("tl.st.remove", id), Rect(corner.x - kRemoveSize / 2, corner.y - kRemoveSize / 2, kRemoveSize, kRemoveSize)) : Ui::Hit{}; // these first: the first button under a press takes it, so the tile's own never fires
+        if (over) ui.Name(std::wstring(L"Remove ") + Model::TileName(id));
+        uint32_t body = Ui::Id("tl.st.body", id);
+        ui.Button(body, r);
+        ui.NoStop();
+        Tile(p, id, r);
+        if (over) {
+            c.Stroke(r, 18, t.accent.Alpha(0.7f), 1.5f);
+            c.Dot(corner, kRemoveSize / 2, xh.hover ? sheet::kDanger : t.bg.Alpha(0.92f));
+            c.Icon(glyph::Close, corner, 13, xh.hover ? Color{1, 1, 1, 1} : t.text);
+        }
+        if (xh.clicked) removed = id;
+        if (heldTile < 0 && ui.IsActive(body) && in.down && std::hypot(in.mouse.x - in.pressPos.x, in.mouse.y - in.pressPos.y) > kTileDragStart) { // picked up
+            heldTile = id;
+            heldTiles = shown;
+            heldTileGrab = {in.pressPos.x - r.left, in.pressPos.y - r.top};
+        }
+    }
+    if (heldTile >= 0) { // it follows the mouse; the nearest place is the one it would land in
+        ui.Wake();
+        int best = 0;
+        float bestD = 1e12f;
+        for (int k = 0; k < n; ++k) {
+            D2D1_RECT_F q = TileSpot(box, n, k);
+            float dx = in.mouse.x - (q.left + q.right) / 2, dy = in.mouse.y - (q.top + q.bottom) / 2;
+            if (dx * dx + dy * dy < bestD) bestD = dx * dx + dy * dy, best = k;
+        }
+        heldTiles.erase(std::find(heldTiles.begin(), heldTiles.end(), heldTile));
+        heldTiles.insert(heldTiles.begin() + best, heldTile);
+        D2D1_RECT_F spot = TileSpot(box, n, best);
+        D2D1_RECT_F r = Rect(in.mouse.x - heldTileGrab.x, in.mouse.y - heldTileGrab.y, Width(spot), Height(spot));
+        c.Glow({(r.left + r.right) / 2, (r.top + r.bottom) / 2 + 8}, Width(r) * 0.75f, Height(r) * 0.75f, Color{0, 0, 0, 0.45f});
+        ui.Button(Ui::Id("tl.st.body", heldTile), r); // the press stays with it
+        ui.NoStop();
+        Tile(p, heldTile, r);
+        c.Stroke(r, 18, t.accent, 1.8f);
+        if (!in.down) { // let go: the order it landed in is kept
+            heldTile = -1;
+            if (!(heldTiles == shown)) sheet::KeepTiles(m, heldTiles);
+        }
+    }
+    tileShow = false;
+    if (removed >= 0) {
+        shown.erase(std::find(shown.begin(), shown.end(), removed));
+        sheet::KeepTiles(m, shown);
+    }
+}
+
+void TilePicker(PageCtx& p, const D2D1_RECT_F& panel, const sheet::Ids& here, int cols) { // every tile this pc can use: a tap puts it on or takes it off
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F a = Inset(panel, kPickerPad, kPickerPad);
+    float resetX = a.right - kPickerDoneW - 8 - history::kResetW, histX = resetX - 8 - history::kW;
+    c.Text(L"Tools tiles", Rect(a.left + 2, a.top, histX - a.left - 10, kPickerHeadH), Weight::Semi, 15, t.text);
+    if (sheet::Act(ui, t, Ui::Id("tl.st.done"), Rect(a.right - kPickerDoneW, a.top, kPickerDoneW, kPickerHeadH), L"Done", true, false, true)) p.wantClose = true;
+    auto load = [&](const History::Snap& s) {
+        std::vector<int> v;
+        for (float id : s) v.push_back((int)id);
+        m.SetTiles(v);
     };
-    for (int i = 0; i < n; ++i)
-        Tile(p, shown[(size_t)i], i < top ? row(top, i, quick.top) : row(bottom, i - top, quick.top + (top ? th + kQuickGap : 0)));
+    if (sheet::Act(ui, t, Ui::Id("tl.st.reset"), Rect(resetX, a.top, history::kResetW, kPickerHeadH), L"Reset", false, false, m.tiles != Model::DefaultTiles())) m.SetTiles(Model::DefaultTiles()); // undo brings it back
+    int go = history::Buttons(ui, t, "tl.st.hist", histX, a.top + kPickerHeadH / 2, tileHist, true);
+    if (go < 0) load(tileHist.Undo());
+    else if (go > 0) load(tileHist.Redo());
+    float top = a.top + kPickerHeadH + kPickerPad / 2, cw = (Width(a) - (cols - 1) * sheet::kPickGap) / cols;
+    sheet::Ids shown = TilesShown(m);
+    int toggle = -1;
+    for (int i = 0; i < (int)here.size(); ++i) {
+        int id = here[(size_t)i];
+        D2D1_RECT_F card = Rect(a.left + (i % cols) * (cw + sheet::kPickGap), top + (i / cols) * (sheet::kPickH + sheet::kPickGap), cw, sheet::kPickH);
+        bool on = std::find(shown.begin(), shown.end(), id) != shown.end();
+        if (sheet::PickCard(ui, t, Ui::Id("tl.st.pick", id), card, Model::TileGlyph(id), Model::TileName(id), Model::TileAbout(id), on)) toggle = id;
+    }
+    if (toggle >= 0) {
+        auto at = std::find(shown.begin(), shown.end(), toggle);
+        if (at != shown.end()) shown.erase(at);
+        else shown.push_back(toggle);
+        sheet::KeepTiles(m, shown);
+    }
+}
+
+}
+
+void DrawTileStudio(PageCtx& p) {
+    Canvas& c = p.ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    const D2D1_RECT_F& a = p.area;
+    const Input& in = p.ui.In();
+    tileHist.Sync(m.studioRun, History::Snap(m.tiles.begin(), m.tiles.end()), !in.down && heldTile < 0); // a drag counts once it lands
+    sheet::Ids here;
+    for (int i = 0; i < Model::kToolTiles; ++i)
+        if (m.TileHere(i)) here.push_back(i);
+    float panelW = (std::min)(kPickerMaxW, Width(a) - 2 * sheet::kStudioEdge), inner = panelW - 2 * kPickerPad;
+    int cols = (std::max)(2, (int)((inner + sheet::kPickGap) / (kPickMinW + sheet::kPickGap))), rows = ((int)here.size() + cols - 1) / cols;
+    float panelH = 2 * kPickerPad + kPickerHeadH + kPickerPad / 2 + rows * sheet::kPickH + (rows - 1) * sheet::kPickGap;
+    float boardW = (std::min)(m.tileAreaW + 2 * sheet::kBoardPad, Width(a) - 2 * sheet::kStudioEdge);
+    float boardH = (std::min)(m.tileAreaH + 2 * sheet::kBoardPad, Height(a) - 2 * sheet::kStudioEdge - sheet::kPanelGap - panelH);
+    float mid = (a.left + a.right) / 2, top = a.top + (Height(a) - boardH - sheet::kPanelGap - panelH) / 2; // the two together, in the middle of the screen
+    D2D1_RECT_F board = Rect(mid - boardW / 2, top, boardW, boardH), panel = Rect(mid - panelW / 2, board.bottom + sheet::kPanelGap, panelW, panelH);
+    sheet::Surface(c, t, board, t.bg.Alpha(sheet::kBoardFill));
+    TileBoard(p, Inset(board, sheet::kBoardPad, sheet::kBoardPad));
+    sheet::Surface(c, t, panel, t.cardHi);
+    TilePicker(p, panel, here, cols);
+    bool onSheet = Inside(board, in.pressPos) || Inside(panel, in.pressPos);
+    if (heldTile < 0 && in.released && !onSheet) p.wantClose = true; // a click away, as in the long pill's editor
+    if (in.rclick && !Inside(board, in.mouse) && !Inside(panel, in.mouse)) p.wantClose = true;
 }
 
 void DrawTools(PageCtx& p) {

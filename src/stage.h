@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "access.h"
+#include "history.h"
 #include "lyricview.h"
 #include "model.h"
 #include "theme.h"
@@ -50,6 +51,7 @@ private:
     void SyncTheme(const Theme& media, float dt);
     void Backdrop(double now);
     void Clock(float y, float k);
+    enum EditPart { kPartClock, kPartLyrics, kPartText, kPartCover, kEditParts }; // the topmost first
     void Player(float show, float lyr);
     void SyncLyrics(double now);
     D2D1_RECT_F LyricRect() const; // the column the lyrics scroll in, right of the cover
@@ -68,6 +70,37 @@ private:
     void LyricsChoice(float show); // the faint mark in the corner, only while the controls are up
     void LyricsMenu(); // and what it opens: every source's version, and none
     D2D1_RECT_F ChoiceBox() const;
+    bool ChoiceShows() const { return !lyrKey.empty() && role != kCover && model.stageLyrBtn; }
+    D2D1_RECT_F EditBox() const; // the pencil, beside that mark
+    void EditButton(float show);
+    bool editing = false; // the layout is being arranged: stage_edit.cpp
+    int editTab = 0, editDrag = -1; // which version; what's held, a part times two, plus one by its corner
+    StagePrefs::Shape shapeNow[2]; // what's on screen: it glides after what's kept, only while editing
+    float textLaid[2] = {1, 1}, clockLaid[2] = {1, 1}; // type is laid out at this scale; on the way to another it's only drawn bigger, nothing laid out anew each frame
+    int editPart = kPartCover, editPage = 0, editPageNth = 0; // what's picked, and the panel's page; each opening of a page fades in afresh
+    History editHist; // both versions and the scene's switches: undo and redo
+    int editRun = 0; // bumps as the editor opens: its undo starts afresh
+    History::Snap EditSnap() const;
+    void EditLoad(const History::Snap& s);
+    bool barAuto = true, barLeft = false; // the panel: keeping clear of what's picked by itself, and on which side
+    float timesNow = 1; // the seek line's times, this layout's
+    float lyrLaidW = 0; // the lyrics wrap at this width: the column can move on while it's held, they re-wrap once it's let go
+    bool editSnapX = false, editSnapY = false; // caught on a screen's middle
+    LPCWSTR editCursor = nullptr; // over a part: how it moves
+    StagePrefs::Shape editFrom;
+    D2D1_POINT_2F editMid{}, barAt{-1, -1}, barGrab{};
+    D2D1_SIZE_F editSize{};
+    bool barHeld = false;
+    D2D1_RECT_F partCover{}, partText{}, partLyrics{}, partClock{}; // where they landed this frame
+    void StartEdit();
+    void EndEdit();
+    void EditNudge(int dx, int dy, bool big); // the arrows: the picked part, a little
+    bool TakeKey(UINT vk); // a two screen key is being picked: this one's it
+    D2D1_RECT_F BarRect(float show);
+    void EditParts(const D2D1_RECT_F& bar, float show);
+    void EditPage(const D2D1_RECT_F& body, bool live);
+    void EditPanel(const D2D1_RECT_F& bar, bool canWith, bool covered);
+    void EditLayer(bool canWith, float show);
     bool lyrMenu = false; // that list is open
     int lyrMenuNth = 0; // each opening fades in afresh
     bool lyrCycling = false; // asked for another version, not back yet

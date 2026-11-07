@@ -130,6 +130,16 @@ bool Drawer::Create(HINSTANCE instance) {
             if (deskOn != model.WatchesDesk()) WatchDesk();
             else OnDeskTimer();
         };
+        desk->onLook = [this] { SyncThemeNow(); };
+        desk->onStudioDone = [this] { // back to the panel it was opened from
+            SyncHide();
+            if (deskOn) OnDeskTimer();
+            int back = model.studioKind == Model::kStudioTiles ? Model::kPgTools : model.studioKind == Model::kStudioWidgets ? Model::kPgWidgets : page; // the rail's was opened over any page
+            if (page != back) prevPage = page, page = back, pageT = 1;
+            pageSet = true;
+            Open();
+            if (model.studioToSettings) model.studioToSettings = false, model.OpenSettings(), Redraw();
+        };
     } else {
         desk.reset();
     }
@@ -306,6 +316,7 @@ void Drawer::Open() {
         model.OnOpen();
         model.SetLive(true, page == Model::kPgSystem, page == Model::kPgNetwork); // fast polling only while visible, the process list only on the system page, latency only on the network page
     }
+    if (!tourSeen && model.tourNext && tourStep < 0) TourStart(); // the first time the panel opens this launch, while its switch is on
     Resize(Depth() + overshoot, true); // grow first so bounce isn't clipped
     spring.target = Depth();
     spring.damp = model.reduceMotion ? 1.0f : 0.62f; // underdamped, drips open with a bounce; calm: it just arrives
@@ -388,7 +399,7 @@ void Drawer::Close() {
     peeking = false;
     opened = false;
     island = false; // the island retracts with the same spring, its shape stays until it's gone
-    model.hexFocus = model.cityFocus = model.tilesEdit = model.faceSearch = false;
+    model.hexFocus = model.cityFocus = model.faceSearch = false;
     ++model.pageVisit;
     model.nameFor = -1;
     model.field = Model::kFieldNone;
@@ -783,7 +794,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             else if (islandNext) ShowIsland(); // an app below: the pill first, a tap opens the panel
             else Open();
         } else if (wp == kCloseTimer) {
-            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && Stays()) && !(opened && Pinned())) Close();
+            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && Stays()) && !(opened && Pinned()) && tourStep < 0) Close(); // the tour keeps it open until it's done or skipped
         } else if (wp == kTrimTimer) {
             if (island && !opened && !peeking && !dragging && !(devWide && RenewDev())) gfx::GiveBack(); // a resting pill, only its bars move: idle pages go back; after the panel, a fresh device too. d2d's caches stay: cleared under live brushes, the media page's glows came back flat
         } else if (wp == kReleaseTimer) {
@@ -1004,7 +1015,8 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         Redraw();
         return 0;
     case kDeskEditMsg:
-        DeskEdit();
+        if (wp) model.studioKind = (int)wp, WidgetStudio();
+        else DeskEdit();
         return 0;
     case kShelfMsg:
         if (wp == 1) ShelfPaste();
@@ -1459,6 +1471,8 @@ void Drawer::Frame() {
     }
     if (PlaceStale() && !opened && !dragging && !peeking && (spring.value <= 0.5f || island)) ApplyPlace(); // a pill that always stays would otherwise keep the old edge forever
     if (model.deskEditAsk) model.deskEditAsk = false, PostMessageW(hwnd, kDeskEditMsg, 0, 0); // never inside a frame: it takes the panel away
+    if (model.tourAsk) model.tourAsk = false, TourStart(); // asked for in settings: they close for it
+    if (model.studioAsk) PostMessageW(hwnd, kDeskEditMsg, model.studioAsk, 0), model.studioAsk = Model::kStudioNone;
     if (model.shelfDrag) PostMessageW(hwnd, kShelfMsg, 0, 0); // the drag runs its own loop: never inside a frame
     if (model.shelfPaste) PostMessageW(hwnd, kShelfMsg, 1, 0); // nor a paste: it hands the keyboard around
 }

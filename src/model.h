@@ -358,6 +358,7 @@ public:
     std::map<int, int> faceSize; // each one's size there if it was ever chosen: 0 small, 1 wide, 2 large
     void SetFaceSize(int kind, int size);
     void PlaceFaces(const std::vector<int>& order); // the same widgets, in a new order
+    void SetFaces(const std::vector<int>& on, const std::map<int, int>& sizes);
     bool faceSearch = false; // the widget gallery's search is taking the keyboard
     std::wstring faceQuery; // and what's typed there
     static constexpr size_t kFaceQueryMax = 40;
@@ -375,7 +376,10 @@ public:
     int PageAt(int slot) const { return pages[(size_t)(std::clamp)(slot, 0, (int)pages.size() - 1)]; } // past either end: the end
     int OpenPage() const; // the last or the picked page, or the first shown when that one is hidden
     void SetPages(const std::vector<int>& order); // persisted by name; an empty list is refused
+    static std::vector<int> DefaultPages();
+    static std::vector<int> DefaultTiles();
     static const wchar_t* PageName(int id);
+    static const wchar_t* PageAbout(int id);
     static int PageGlyph(int id);
     enum ToolTile { kTlSnip, kTlColor, kTlAwake, kTlAlerts, kTlDnd, kTlSaver, kTlAir, kTlSettings, kTlWork, kTlLang, kTlBin, kTlUpdates, kToolTiles }; // new ones go last: saved lists keep their meaning // the tools page's quick tiles
     std::vector<int> tiles; // the ones shown, in order, may be empty
@@ -383,11 +387,12 @@ public:
     void CheckTiler(); // installed or removed since the last look: the tile, pill word and dashboard tile come and go with it
     ULONGLONG tilerAt = 0;
     void SetTiles(const std::vector<int>& order);
-    bool tilesEdit = false; // the tools page shows its tiles with x and + marks; ends when the panel closes
     static const wchar_t* TileName(int id);
+    static const wchar_t* TileAbout(int id);
     static int TileGlyph(int id);
     int stageHide = 1; // the fullscreen player's controls fade while the mouse rests (on by default)
     int stageThump = 1; // the fullscreen cover thumps with the beat
+    int stageLyrBtn = 1, stageEditBtn = 1; // the fullscreen player's corner: wrong lyrics, and its editor
     int uiScale = 100; // percent, 80..130, folded into the dpi scale
     enum { kContrastAuto, kContrastOn, kContrastOff };
     static constexpr int kTextMin = 100, kTextMax = 200;
@@ -420,6 +425,19 @@ public:
     int pillLeft = kWWeather, pillRight = kWCpu; // its two status widgets
     int deskPill = 0; // the long pill on the desktop, in its own window
     int deskFillApps = 0; // its body while an app is under it
+    int deskLenApps = 560, deskGapApps = 10, deskFloatApps = 1; // not on desktop it can be its own length, stuck or floating
+    int deskPreview = -1; // its editor is showing this one's theme: 0 desktop, 1 not on desktop; -1 not open
+    enum StudioAsk { kStudioNone, kStudioWidgets, kStudioTiles, kStudioPages };
+    int studioAsk = kStudioNone; // an editor over the wallpaper, asked for: it opens after the frame
+    int tourNext = 1; // the tour plays when the panel first opens after a launch; everyone gets it once
+    bool tourAsk = false; // settings asked for it: it starts after the frame
+    int studioKind = kStudioWidgets; // which one it is
+    bool studioToSettings = false; // it was left for settings: they open with the panel
+    bool railAcross = false; // the rail as the panel has it: along the top or down the side
+    float railLen = 0, railThick = 0;
+    bool studioOpen = false; // the widgets' one is open: what's in it keeps fetching
+    int studioRun = 0; // bumps as an editor over the wallpaper opens: its undo starts afresh
+    float faceAreaW = 0, faceAreaH = 0, tileAreaW = 0, tileAreaH = 0; // the room they have on their pages: their editors show them at just this size
     int deskEdge = 0, deskPos = 500, deskLen = 560, deskThick = 30, deskGap = 10, deskFloat = 1, deskFill = 0; // its edge, place along it in thousandths, size, gap, stuck or floating, body
     int deskApps = 0; // it also stands in for the small pill over maximized apps, on the same rules
     enum DeskItem { kDClock = 20, kDDate, kDVolume, kDWifi, kDMusic, kDTimer, kDCover, kDBars }; // beyond the widgets above
@@ -493,6 +511,7 @@ private:
     std::mutex lock; // guards fields shared with worker
     std::condition_variable wake;
     bool quit = false, pollOn = false, wantProcs = false, ready = false; // ready = fresh sample waiting
+    ULONGLONG listAt = 0; // worker only: when the process list was last walked, its cpu baseline
     bool wantPing = false; // the network page is showing: measure latency
     bool wantList = false; // the process list, costly: only the system page or a processes tile
     bool sysContrast = false; // windows' high contrast is on

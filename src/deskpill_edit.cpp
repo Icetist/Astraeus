@@ -1,6 +1,8 @@
 // Arranging the desktop pill, as a phone's lock screen: the desktop comes up behind it and everything is moved with the mouse, on the pill itself.
 #include "deskpill.h"
 
+#include "pages.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -41,6 +43,7 @@ void DeskPill::Edit(HMONITOR on) {
     if (Editing() || !hwnd) return;
     Measure(on); // the saved values, one last time
     model.WantDeskAudio(); // the volume and the visualizer are live in here too
+    ++editRun;
     editing = true; // from here the working copy rules
     wantUp = false;
     drag = Drag::None;
@@ -51,6 +54,8 @@ void DeskPill::Edit(HMONITOR on) {
     intro = 0;
     inkDue = 0;
     previewApps = false;
+    model.deskPreview = 0; // it opens on the desktop's, and wears the desktop's theme whatever is behind it now
+    if (onLook) onLook();
     inkAfterIntro = FillNow() == kFillClear;
     wallFor = 0;
     input = Input{};
@@ -58,14 +63,85 @@ void DeskPill::Edit(HMONITOR on) {
     Poke();
 }
 
+void DeskPill::SetPreview(bool apps) {
+    previewApps = apps;
+    model.deskPreview = apps ? 1 : 0;
+    if (onLook) onLook();
+    if (FillNow() == kFillClear) inkDue = lastFrame + 0.05;
+    Poke();
+}
+
+void DeskPill::Studio(HMONITOR on) {
+    if (Editing() || !hwnd) return;
+    Measure(on);
+    editing = studio = true;
+    wantUp = false;
+    drag = Drag::None;
+    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & ~(LONG_PTR)WS_EX_NOACTIVATE); // its search takes the keyboard
+    FitWindow();
+    ShowWindow(hwnd, SW_SHOW);
+    RegisterHotKey(hwnd, kEscKey, 0, VK_ESCAPE);
+    pose = Goal();
+    intro = 0;
+    inkDue = 0;
+    inkAfterIntro = false;
+    wallFor = 0;
+    input = Input{};
+    cursor = IDC_ARROW;
+    model.studioOpen = model.studioKind == Model::kStudioWidgets;
+    ++model.studioRun;
+    model.SyncFaces(); // the panel's closed for this: what's on the board keeps fetching
+    Poke();
+}
+
+void DeskPill::DrawStudio(const Theme& t) {
+    constexpr float kScrim = 0.3f, kRise = 30;
+    cursor = IDC_ARROW;
+    canvas->Fill({-1, -1, MW + 1, MH + 1}, 0, Color{0, 0, 0, kScrim * intro});
+    bool fading = intro < 0.999f;
+    if (fading) ctx->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), intro), nullptr);
+    float rise = (1 - anim::EaseOut(intro)) * kRise, bottom = (work.bottom - monitor.top) / scale;
+    PageCtx pc{ui, model, t, t, nullptr, nullptr, 1.0f, Rect(0, rise, MW, bottom)};
+    if (model.studioKind == Model::kStudioTiles) DrawTileStudio(pc);
+    else if (model.studioKind == Model::kStudioPages) DrawPageStudio(pc);
+    else DrawWidgetStudio(pc);
+    if (fading) ctx->PopLayer();
+    if (editing && pc.wantClose) Finish();
+}
+
+History::Snap DeskPill::SpecSnap() const { // its place and size, both shapes, its bodies, then its items
+    History::Snap s{(float)spec.edge, spec.pos, spec.thick, spec.apps ? 1.0f : 0, (float)spec.fill, (float)spec.fillApps};
+    for (const Spec::Shape& sh : spec.shape) s.push_back(sh.len), s.push_back(sh.gap), s.push_back(sh.floats ? 1.0f : 0);
+    for (int k : spec.items) s.push_back((float)k);
+    return s;
+}
+
+void DeskPill::SpecLoad(const History::Snap& s) {
+    constexpr size_t kHead = 6, kPerShape = 3, kItems = kHead + 2 * kPerShape;
+    if (s.size() < kItems) return;
+    spec.edge = (int)s[0], spec.pos = s[1], spec.thick = s[2], spec.apps = s[3] > 0.5f, spec.fill = (int)s[4], spec.fillApps = (int)s[5];
+    for (int i = 0; i < 2; ++i) {
+        const float* f = &s[kHead + i * kPerShape];
+        spec.shape[i] = {f[0], f[1], f[2] > 0.5f};
+    }
+    spec.items.clear();
+    for (size_t i = kItems; i < s.size(); ++i) spec.items.push_back((int)s[i]);
+    if (!spec.apps) SetPreview(false); // the tab it was on may be gone
+    drag = Drag::None;
+    Commit();
+}
+
 void DeskPill::Commit() {
     auto num = [&](int& field, const wchar_t* key, int v) { if (field != v) model.SetPref(field, key, v); };
     num(model.deskEdge, L"DeskEdge", spec.edge);
     num(model.deskPos, L"DeskPos", (int)std::lround(spec.pos));
-    num(model.deskLen, L"DeskLen", (int)std::lround(spec.len));
+    num(model.deskLen, L"DeskLen", (int)std::lround(spec.shape[0].len));
+    num(model.deskLenApps, L"DeskLenApps", (int)std::lround(spec.shape[1].len));
     num(model.deskThick, L"DeskThick", (int)std::lround(spec.thick));
-    num(model.deskGap, L"DeskGap", (int)std::lround(spec.gap));
-    num(model.deskFloat, L"DeskFloat", spec.floats ? 1 : 0);
+    num(model.deskGap, L"DeskGap", (int)std::lround(spec.shape[0].gap));
+    num(model.deskGapApps, L"DeskGapApps", (int)std::lround(spec.shape[1].gap));
+    num(model.deskFloat, L"DeskFloat", spec.shape[0].floats ? 1 : 0);
+    num(model.deskFloatApps, L"DeskFloatApps", spec.shape[1].floats ? 1 : 0);
     num(model.deskApps, L"DeskApps", spec.apps ? 1 : 0);
     num(model.deskFill, L"DeskFill", spec.fill);
     num(model.deskFillApps, L"DeskFillApps", spec.fillApps);
@@ -74,7 +150,12 @@ void DeskPill::Commit() {
 
 void DeskPill::Finish() {
     if (!editing) return;
-    Commit();
+    if (studio) {
+        model.faceSearch = false;
+        input = Input{}; // a last click can't land on what's fading
+    } else {
+        Commit();
+    }
     UnregisterHotKey(hwnd, kEscKey);
     if (GetCapture() == hwnd) ReleaseCapture();
     drag = Drag::None;
@@ -89,12 +170,29 @@ void DeskPill::Leave() {
     wallFor = 0;
     wall.Reset();
     wallBlur.Reset();
+    bool wasStudio = studio;
+    if (studio) {
+        studio = false;
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_NOACTIVATE);
+        model.studioOpen = false;
+        model.faceQuery.clear();
+        model.SyncFaces();
+    }
+    model.deskPreview = -1;
     Measure(screen);
+    shapeShift = false;
+    rest = Goal();
     FitWindow();
+    input = Input{};
+    if (wasStudio) { // nothing of the pill was showing: the drawer decides again
+        appear = anim::Spring{};
+        wantUp = false;
+        if (onStudioDone) onStudioDone();
+        return;
+    }
     appear.value = appear.target = 100; // the pill the editor just showed: no drop-in for what's already there
     appear.vel = 0;
     wantUp = true;
-    input = Input{};
     if (FillNow() == kFillClear) inkDue = lastFrame + 0.2; // the real desktop again, not the editor's wallpaper
     if (onDone) onDone(); // the drawer's own look decides whether it stays
 }
@@ -200,6 +298,7 @@ bool DeskPill::Seg(const Theme& t, const char* key, const D2D1_RECT_F& r, const 
 void DeskPill::DrawBar(const Theme& t) {
     Canvas& c = *canvas;
     D2D1_RECT_F bar = BarRect();
+    hist.Sync(editRun, SpecSnap(), drag == Drag::None && !input.down); // a drag counts once it lands
     float rise = (1 - anim::EaseOut(intro)) * 40; // comes up after the desktop
     bar.top += rise, bar.bottom += rise;
     pressedOnBar = Inside(bar, input.down || input.pressed ? input.pressPos : input.mouse);
@@ -242,7 +341,7 @@ void DeskPill::DrawBar(const Theme& t) {
                     shake = 1; // no room on this edge
                 } else {
                     spec.items = std::move(more);
-                    spec.len = (std::max)(spec.len, need);
+                    Grow(need);
                     Commit();
                 }
             }
@@ -250,40 +349,40 @@ void DeskPill::DrawBar(const Theme& t) {
         x += w + 6;
     }
 
-    float bodies = bar.bottom - kBarPad - kChipH, row = bodies - kChipH - kRowGap;
-    constexpr float kFillW = 270, kDeskWord = 70, kAppsWord = 84, kFillGap = 16;
-    static const wchar_t* const kFills[] = {L"Theme", L"Accent", L"Glass", L"Clear"};
-    float fx = bar.left + kBarPad;
-    c.Text(L"On desktop", Rect(fx, bodies, kDeskWord, kChipH), Weight::Medium, 11, t.textDim);
-    if (Seg(t, "dk.fill", Rect(fx + kDeskWord, bodies, kFillW, kChipH), kFills, 4, spec.fill)) {
-        previewApps = false;
-        if (spec.fill == kFillClear) inkDue = lastFrame + 0.05;
-        Commit();
-    }
-    if (spec.apps) { // a body of its own over apps: an accent pill here, a black one there
-        float ax = fx + kDeskWord + kFillW + kFillGap;
-        c.Text(L"Not on desktop", Rect(ax, bodies, kAppsWord, kChipH), Weight::Medium, 11, t.textDim);
-        if (Seg(t, "dk.fillapps", Rect(ax + kAppsWord, bodies, kFillW, kChipH), kFills, 4, spec.fillApps)) {
-            previewApps = true;
-            if (spec.fillApps == kFillClear) inkDue = lastFrame + 0.05;
-            Commit();
-        }
-    }
-    static const wchar_t* const kHolds[] = {L"Stuck", L"Floating"};
-    int hold = spec.floats ? 1 : 0;
-    if (Seg(t, "dk.hold", Rect(bar.left + kBarPad + 300, row, 160, kChipH), kHolds, 2, hold)) { // the pill only: the island and the panel keep to the edge
-        spec.floats = hold == 1;
-        spec.gap = (std::max)(spec.gap, kDefGap);
-        Commit();
-    }
+    float bodies = bar.bottom - kBarPad - kChipH, row = bodies - kChipH - kRowGap, fx = bar.left + kBarPad;
+    constexpr float kTabW = 230, kDeskWord = 70, kAppsWord = 84, kWhereW = 190, kHoldW = 150, kFillW = 270, kGapX = 12;
     static const wchar_t* const kWhere[] = {L"Regular pill", L"Long pill"};
-    constexpr float kWhereW = 190;
     c.Text(L"Not on desktop", Rect(fx, row, kAppsWord, kChipH), Weight::Medium, 11, t.textDim);
     int where = spec.apps ? 1 : 0;
     if (Seg(t, "dk.where", Rect(fx + kAppsWord, row, kWhereW, kChipH), kWhere, 2, where)) { // long: it takes the regular pill's place over apps, on the same rules
         spec.apps = where == 1;
-        if (!spec.apps) previewApps = false;
+        if (!spec.apps) SetPreview(false);
         DropAppItems();
+        Commit();
+    }
+    float ox = fx; // what's under this is for the one the tab has picked: its theme, length, hold and body
+    if (spec.apps) {
+        static const wchar_t* const kTabs[] = {L"On desktop", L"Not on desktop"};
+        int tab = previewApps ? 1 : 0;
+        if (Seg(t, "dk.tab", Rect(ox, bodies, kTabW, kChipH), kTabs, 2, tab)) SetPreview(tab == 1);
+        ox += kTabW + kGapX;
+    } else {
+        c.Text(L"On desktop", Rect(ox, bodies, kDeskWord, kChipH), Weight::Medium, 11, t.textDim);
+        ox += kDeskWord;
+    }
+    static const wchar_t* const kHolds[] = {L"Stuck", L"Floating"};
+    Spec::Shape& shape = Sh();
+    int hold = shape.floats ? 1 : 0;
+    if (Seg(t, "dk.hold", Rect(ox, bodies, kHoldW, kChipH), kHolds, 2, hold)) { // the pill only: the island and the panel keep to the edge
+        shape.floats = hold == 1;
+        shape.gap = (std::max)(shape.gap, kDefGap);
+        Commit();
+    }
+    ox += kHoldW + kGapX;
+    static const wchar_t* const kFills[] = {L"Theme", L"Accent", L"Glass", L"Clear"};
+    int& fill = Ctx() ? spec.fillApps : spec.fill;
+    if (Seg(t, "dk.fill", Rect(ox, bodies, kFillW, kChipH), kFills, 4, fill)) {
+        if (fill == kFillClear) inkDue = lastFrame + 0.05;
         Commit();
     }
     auto button = [&](const char* key, const D2D1_RECT_F& r, const wchar_t* label, bool primary) {
@@ -294,10 +393,15 @@ void DeskPill::DrawBar(const Theme& t) {
         return h.clicked;
     };
     if (button("dk.reset", Rect(bar.right - kBarPad - 172, row, 76, kChipH), L"Reset", false)) {
-        spec.edge = 0, spec.pos = 500, spec.len = kDefLen, spec.thick = kDefThick, spec.gap = kDefGap, spec.floats = true, spec.apps = false, spec.fill = spec.fillApps = kFillTheme, previewApps = false;
+        spec.edge = 0, spec.pos = 500, spec.thick = kDefThick, spec.apps = false, spec.fill = spec.fillApps = kFillTheme;
+        for (Spec::Shape& s : spec.shape) s = {kDefLen, kDefGap, true};
         spec.items = Model::DeskDefaults();
+        SetPreview(false);
         Commit();
     }
+    int go = history::Buttons(ui, t, "dk.hist", bar.right - kBarPad - 172 - 8 - history::kW, row + kChipH / 2, hist, true);
+    if (go < 0) SpecLoad(hist.Undo());
+    else if (go > 0) SpecLoad(hist.Redo());
     if (button("dk.done", Rect(bar.right - kBarPad - 88, row, 88, kChipH), L"Done", true)) Finish();
     if (!input.down && !input.released) moved = false;
 }
@@ -309,7 +413,7 @@ void DeskPill::PressPill() {
     bareDown = false;
     if (std::fabs(std::fabs(m.x) - half) < kGripLen && m.y > -6 && m.y < th + 6) { // its ends first: they sit over the outermost items
         drag = Drag::Len;
-        grabLen = std::fabs(m.x) * 2 - spec.len;
+        grabLen = std::fabs(m.x) * 2 - Sh().len;
         return;
     }
     if (std::fabs(m.x) < 34 && m.y > th - 2 && m.y < th + kGripThick + 8) {
@@ -340,7 +444,7 @@ void DeskPill::DragNow() {
         float raw = std::fabs(m.x) * 2 - grabLen, least = (std::max)(kLenMin, NeedLen(spec.items, spec.thick)), most = hi - lo - kEdgeSpare;
         for (float pull : {least, (hi - lo) / 3, (hi - lo) / 2}) raw = Pull(raw, pull, kLenPull);
         if (raw < least) raw = least - (least - raw) * 0.12f; // resists: the items are in the way
-        spec.len = (std::min)(raw, most);
+        Sh().len = (std::min)(raw, most);
         cursor = spec.edge ? IDC_SIZENS : IDC_SIZEWE;
         break;
     }
@@ -366,13 +470,13 @@ void DeskPill::DragNow() {
             here = best == 0 ? dTop : best == 1 ? dLeft : dRight;
         }
         float along = best == 0 ? mm.x - grabX : best == 1 ? mm.y + grabX : mm.y - grabX, mid = (lo + hi) / 2;
-        float room = (std::min)(spec.len, hi - lo - kEdgeSpare) / 2 + kEdgeSpare / 2;
+        float room = (std::min)(Sh().len, hi - lo - kEdgeSpare) / 2 + kEdgeSpare / 2;
         along = (std::clamp)(along, lo + room, hi - room);
         if (std::fabs(along - mid) < kMidPull) along = mid, magnetMid = true;
         spec.pos = (along - lo) / (hi - lo) * 1000;
         float depth = here - grabY;
-        if (depth < kStickAt) spec.floats = false; // near the edge it sticks; pulled off, it floats
-        else spec.floats = true, spec.gap = (std::clamp)(depth, kGapMin, kGapMax);
+        if (depth < kStickAt) Sh().floats = false; // near the edge it sticks; pulled off, it floats
+        else Sh().floats = true, Sh().gap = (std::clamp)(depth, kGapMin, kGapMax);
         cursor = IDC_SIZEALL;
         break;
     }
@@ -398,7 +502,7 @@ void DeskPill::DragNow() {
         float need = NeedLen(next, spec.thick);
         if (need <= hi - lo - kEdgeSpare) {
             spec.items = std::move(next);
-            spec.len = (std::max)(spec.len, need);
+            Grow(need);
             offPill = false;
         } else {
             if (!offPill) shake = 1; // no room: it stays in the hand
@@ -424,7 +528,7 @@ void DeskPill::Land() {
         return;
     }
     if (kind == Drag::None) return;
-    spec.len = (std::max)(spec.len, (std::max)(kLenMin, NeedLen(spec.items, spec.thick))); // past what the items allow, it springs back
+    Grow((std::max)(kLenMin, NeedLen(spec.items, spec.thick))); // past what the items allow, it springs back
     Commit();
     if (FillNow() == kFillClear) inkDue = lastFrame + 0.15; // settled somewhere new
     Poke();

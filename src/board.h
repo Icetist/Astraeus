@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "access.h"
+#include "history.h"
 #include "lyricview.h"
 #include "model.h"
 #include "pages.h"
@@ -110,6 +111,10 @@ private:
 
     bool editing = false, picking = false;
     std::vector<Model::BoardTile> tiles; // what this screen shows
+    History hist; // the editor's undo: every tile's kind, place and size
+    int editRun = 0; // bumps as the editor opens: its undo starts afresh
+    History::Snap TilesSnap() const;
+    void TilesLoad(const History::Snap& s);
     int grab = -1; // the tile being dragged or resized
     bool sizing = false;
     D2D1_POINT_2F grabAt{}; // where the drag began, in tile cells

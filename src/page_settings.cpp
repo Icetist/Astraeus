@@ -30,7 +30,7 @@ int wheelPick = 0; // custom wheel: the handle being edited, 0 accent, 1 backgro
 constexpr int kHandles = 2;
 float settingsScroll = 0; // wanted scroll of the cards, eased by Scroll
 constexpr float kMinRow = 196; // cards never squeeze below this: the page scrolls instead
-constexpr float kLyricsRow = 112; // the lyrics card is a single switch, a shorter row
+constexpr float kLyricsRow = 112; // the motion card, a shorter row
 constexpr float kNoteLines = 44; // three short lines of a note beside a small picture
 constexpr float kDndW = 44; // the do not disturb pill in the notifications card
 constexpr float kDeskRowH = 30; // the island card's desktop switch
@@ -339,33 +339,6 @@ void Chip(PageCtx& p, const D2D1_RECT_F& r, int which, const wchar_t* name, bool
             m.hexEdit = HexText(Pick(m, which));
         }
     }
-}
-
-void Lyrics(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a tiny fullscreen player with lyrics beside the cover: tap to turn them on or off
-    Ui& ui = p.ui;
-    Canvas& c = ui.C();
-    const Theme& t = p.shell;
-    Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"Fullscreen lyrics");
-    Ui::Hit h = live ? ui.Button(Ui::Id("set.lyrics"), in) : Ui::Hit{};
-    float on = ui.Smooth(Ui::Id("set.lyrics", 1), m.fullLyrics ? 1.0f : 0, 12);
-    float mh = (std::min)(Height(in) - 6, 64.0f), mw = mh / 0.6f;
-    D2D1_RECT_F scr = Rect(in.left + 4, in.top + 1, mw, mh);
-    c.FillV(scr, 7, t.track.Alpha(0.9f), t.track.Alpha(0.5f));
-    c.Stroke(scr, 7, t.hairTop, 1);
-    float side = mh * 0.46f, ax = scr.left + mw * (0.5f - 0.27f * on) - side / 2; // the cover slides aside when the lyrics come in
-    c.Fill(Rect(ax, scr.top + mh * 0.18f, side, side), 3, t.accent.Alpha(0.85f));
-    c.Fill(Rect(ax, scr.top + mh * 0.18f + side + 4, side, 2.5f), 1.2f, t.text.Alpha(0.6f));
-    for (int i = 0; i < 4; ++i) { // lines of lyrics, the sung one bright
-        float lw = mw * (i == 1 ? 0.36f : 0.28f - 0.03f * (i % 2)), y = scr.top + mh * (0.22f + 0.17f * i);
-        c.Fill(Rect(scr.left + mw * 0.52f, y, lw, 3), 1.5f, t.text.Alpha((i == 1 ? 0.9f : 0.35f) * on));
-    }
-    if (h.hover) c.Stroke(Inset(in, -4, -4), 12, t.accent.Alpha(0.35f), 1.5f);
-    float x0 = scr.right + 16;
-    c.Text(m.fullLyrics ? L"On" : L"Off", Rect(x0, in.top + 6, in.right - x0, 20), Weight::Medium, 14, m.fullLyrics ? t.accentHi : t.textDim);
-    c.Text(m.fullLyrics ? L"Synced lyrics beside\nthe cover, for songs\nfrom music apps" : L"The fullscreen player\nshows just the song", // a narrow column: whole lines, nothing cut
-           Rect(x0, in.top + 26, in.right - x0, kNoteLines), Weight::Light, 10.5f, t.textDim);
-    if (h.clicked) m.SetPref(m.fullLyrics, L"FullLyrics", m.fullLyrics ? 0 : 1);
 }
 
 void Motion(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a tiny spring: bouncy when full, a smooth arrival when calm
@@ -798,7 +771,7 @@ void DrawSettings(PageCtx& p, float k) {
     float ch = (std::max)(kMinRow, (Height(grid) - rows * kGap - kLyricsRow) / rows); // short page: cards keep their size and the page scrolls
     static float prefsH = 0; // the newer cards' height, as they measured last frame
     float glassOpen = ui.Smooth(Ui::Id("set.glasscard"), p.m.look == 2 || p.m.look == Model::kLookClear ? 1.0f : 0, 14), glassH = (kGlassCardH + kGap) * glassOpen; // opens under the first row, whichever way the page is laid out
-    float content = rows * (ch + kGap) + kLyricsRow + (frame.tall ? kLyricsRow + kGap : 0) + kGap + prefsH + glassH + TabsH(p.m, Width(grid)) + kGap; // the sidebar stacks lyrics and motion
+    float content = rows * (ch + kGap) + kLyricsRow + kGap + prefsH + glassH + TabsH(p.m, Width(grid)) + kGap;
     static double scrolledAt = -10; // a scroll in flight keeps the wheel even as a slider passes under the mouse
     bool pageWheel = !OverSlider(ui) || ui.Now() - scrolledAt < kWheelHold;
     if (pageWheel && ui.In().wheel != 0 && Inside(grid, ui.In().mouse)) scrolledAt = ui.Now();
@@ -823,9 +796,7 @@ void DrawSettings(PageCtx& p, float k) {
         Screens(p, Rect(grid.left + 2 * (cw + kGap), grid.top, cw, ch), live);
         Notices(p, Rect(grid.left, under + glassH, cw, ch), live);
         Island(p, Rect(grid.left + cw + kGap, under + glassH, 2 * cw + kGap, ch), live);
-        float half = (Width(grid) - kGap) / 2;
-        Lyrics(p, Rect(grid.left, grid.top + 2 * (ch + kGap) + glassH, half, kLyricsRow), live);
-        Motion(p, Rect(grid.left + half + kGap, grid.top + 2 * (ch + kGap) + glassH, half, kLyricsRow), live);
+        Motion(p, Rect(grid.left, grid.top + 2 * (ch + kGap) + glassH, Width(grid), kLyricsRow), live);
         prefsH = DrawPrefs(p, {grid.left, grid.top + 2 * (ch + kGap) + glassH + kLyricsRow + kGap, grid.right, grid.bottom}, live, false);
     } else { // sidebar: two by two, the island across the bottom
         float cw = (Width(grid) - kGap) / 2;
@@ -834,9 +805,8 @@ void DrawSettings(PageCtx& p, float k) {
         Screens(p, Rect(grid.left, under + glassH, cw, ch), live);
         Notices(p, Rect(grid.left + cw + kGap, under + glassH, cw, ch), live);
         Island(p, Rect(grid.left, grid.top + 2 * (ch + kGap) + glassH, Width(grid), ch), live);
-        Lyrics(p, Rect(grid.left, grid.top + 3 * (ch + kGap) + glassH, Width(grid), kLyricsRow), live);
-        Motion(p, Rect(grid.left, grid.top + 3 * (ch + kGap) + glassH + kLyricsRow + kGap, Width(grid), kLyricsRow), live);
-        prefsH = DrawPrefs(p, {grid.left, grid.top + 3 * (ch + kGap) + glassH + 2 * (kLyricsRow + kGap), grid.right, grid.bottom}, live, true);
+        Motion(p, Rect(grid.left, grid.top + 3 * (ch + kGap) + glassH, Width(grid), kLyricsRow), live);
+        prefsH = DrawPrefs(p, {grid.left, grid.top + 3 * (ch + kGap) + glassH + kLyricsRow + kGap, grid.right, grid.bottom}, live, true);
     }
     c.PopClip();
     Fades(c, t, view, scroll, content);

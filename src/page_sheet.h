@@ -41,6 +41,12 @@ bool Knob(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const wchar
 constexpr float kSlideH = 46; // a Knob's row: its label line and the track under it
 bool OverSlider(const Ui& ui); // the mouse rests on a slider: the page leaves the wheel to it
 void Fades(Canvas& c, const Theme& t, const D2D1_RECT_F& view, float scroll, float content); // hint more above/below
+void FadesIn(Canvas& c, Color ink, const D2D1_RECT_F& view, float scroll, float content); // the same, on a surface of this color
+constexpr float kStudioEdge = 24, kPanelGap = 14, kBoardPad = 14, kSurfaceR = 26; // the editors over the wallpaper
+constexpr float kBoardFill = 0.97f; // what they lay out on: as near the panel as the wallpaper lets it be
+void Surface(Canvas& c, const Theme& t, const D2D1_RECT_F& r, Color fill); // one floating sheet, as the long pill's editor has
+constexpr float kPickH = 60, kPickGap = 8; // a card in an editor's gallery
+bool PickCard(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& card, int icon, const wchar_t* name, const wchar_t* about, bool on); // icon, name, a line about it, and a tick when it's on; true when tapped
 Color CardFill(const Theme& t); // what a settings card is filled with
 D2D1_RECT_F Box(Canvas& c, const Theme& t, const D2D1_RECT_F& r, const wchar_t* title); // a settings card, returns its inner area
 int Segmented(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, const wchar_t* const* labels, int n, int cur, bool live); // picked index, -1 none
@@ -80,20 +86,6 @@ struct Ids { // a few pages or tiles held inline: the editors rebuild their sets
     std::vector<int> Vec() const { return {begin(), end()}; } // for saving
 };
 
-struct Arrange { // an editable set, the widgets way: what's shown in order, and what could come back
-    Ids shown, hidden;
-    int (*glyph)(int) = nullptr;
-    const wchar_t* (*name)(int) = nullptr;
-    const wchar_t* (*shortName)(int) = nullptr; // when the name doesn't fit its cell; may be null
-    size_t keep = 0; // the fewest shown: at this count their x badges go
-    int lit = -1; // a shown item drawn picked, e.g. the page the panel opens on
-    float litMix = 1; // how strongly it shows, 0..1
-    int tapped = -1; // out: a shown item clicked, not carried
-};
-bool Arranger(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, int cols, float cellH, Arrange& a, bool live); // x takes one off, a drag moves it, + brings one back; true when shown changed
-constexpr float kArrangeGap = 8; // between its cells
-Arrange TileSet(const Model& m); // the tools page's tiles as an editor sees them: only those this pc can use
 void KeepTiles(Model& m, const Ids& set); // saves an edited set, keeping tiles this pc can't use
-const wchar_t* TileShort(int id); // a tile's name in one short word
 
 }

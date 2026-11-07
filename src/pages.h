@@ -20,6 +20,7 @@ struct PageCtx {
     const wchar_t* hint = nullptr; // a short tip the drawer shows just outside the panel, next to hintRect
     D2D1_RECT_F hintRect{};
     float hintFade = 0;
+    D2D1_RECT_F spotTiles{}, spotCover{}, spotAdd{}, spotSettings{}; // where the tour points, as the page drew them
     ID2D1Bitmap* coverPrev = nullptr; // the cover before the track changed, shown for the first half of the flip
     float flip = 1; // 0..1 the art turning over to the new cover
     float backdrop = 0; // 0..1 the album art fills the panel behind the media page: its card goes see-through
@@ -46,9 +47,10 @@ void DrawSys(PageCtx& p);
 void DrawNet(PageCtx& p);
 void DrawTools(PageCtx& p);
 void DrawShelf(PageCtx& p); // files and notes dropped on the island
-void DrawWidgetsPage(PageCtx& p); // the widgets picked in settings
-float WidgetsCardH(const Model& m, float w); // settings' card that picks them
-void WidgetsCard(PageCtx& p, const D2D1_RECT_F& r, bool live);
+void DrawWidgetsPage(PageCtx& p); // the board of widgets
+void DrawWidgetStudio(PageCtx& p); // arranging and adding to it, over the wallpaper; area: the screen. wantClose when it's done
+void DrawTileStudio(PageCtx& p); // the same for the tools page's tiles
+void DrawPageStudio(PageCtx& p); // and for the pages on the rail
 void ForgetShelfArt(); // the device is going: drop the shelf's preview bitmaps
 void ShelfClosed(); // the panel went up: the shelf's menus and open card go with it
 void ShelfToast(const wchar_t* text); // a word at the bottom of the shelf page, on its next frame

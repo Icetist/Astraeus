@@ -260,6 +260,7 @@ void SourceMenu(PageCtx& p) {
 }
 
 D2D1_RECT_F ArtHover(PageCtx& p, const D2D1_RECT_F& art) { // hover: the cover lifts and a tip offers fullscreen, a click goes there; a right click lists what else is playing
+    p.spotCover = art;
     if (!p.m.hasTrack) return art;
     uint32_t id = Ui::Id("md.art");
     Ui::Hit h = p.ui.Button(id, art);

@@ -62,6 +62,7 @@ private:
     bool pillView = false; // nothing of an app's lies under it
     bool longHeld = false; // it's standing in for the small pill over an app: called by a hover, or held by the stay rules
     void SyncDesk(); // it comes or goes with the desktop, the panel and fullscreen apps
+    void WidgetStudio(); // the widgets, tools tiles or pages, arranged and added to over the wallpaper
     void DeskEdit(); // the editor, on this screen; the panel and the island step aside
     bool AppIn(const RECT& area) const; // any app window over that part of the screen
     static constexpr UINT kDeskEditMsg = WM_APP + 63; // settings asked for it, run after the frame
@@ -374,6 +375,14 @@ private:
     int railTip = -1, railTipShown = -1; // rail icon under the mouse, and the one whose label is showing or fading
     D2D1_POINT_2F railTipAt{};
     void DrawRailTip(const Theme& t);
+    void DrawTour(const Theme& t, float panelW, float panelH); // drawer_tour.cpp: the light, the dim around it and the step's card
+    bool TourShows(int i) const; // that step has what it shows on this pc
+    void TourGo(int from, int dir); // to the next step this pc has, that way
+    void TourStart();
+    void TourEnd(); // done or skipped: the last card's switch says whether it comes again
+    int tourStep = -1, tourNth = 0, tourRun = 0; // the step showing, -1 none; each step and each run fades in afresh
+    bool tourAgain = false, tourSeen = false; // the last card's switch; shown once this launch already
+    D2D1_RECT_F tourSpots[4]{}; // where the pages last drew the quick tiles, the cover, add widgets and the settings tile
     int devTries = 0; // failed device builds in a row, retried on a short timer
     int bgNow = 0; // custom look background the themes were built with
     int pageDrawn = -1; // the page the last frame showed

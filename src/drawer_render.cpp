@@ -562,6 +562,8 @@ void Drawer::DrawBody(float h, float dt, double now) {
     local.mouse = {input.mouse.x - org.x, input.mouse.y - org.y}; // mouse into panel space
     local.pressPos = {input.pressPos.x - org.x, input.pressPos.y - org.y};
     ui.Begin(*canvas, local, dt, now);
+    bool touring = tourStep >= 0; // the tour's up: the panel shows, only its card takes a press
+    ui.Block(touring);
 
     if (!model.HasPage(page)) { // the page showing was just taken off the rail in settings: the first one stands in, no slide
         page = prevPage = model.pages.front();
@@ -617,7 +619,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
     pc.backdrop = backA;
     if (page != pageDrawn) pageDrawn = page, ++model.pageVisit;
     if (page != Model::kPgWidgets) model.faceSearch = false; // left the gallery: the keyboard goes back
-    ui.Block(sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f || csheet > 0.01f || msheet > 0.01f); // page under a sheet takes no input
+    ui.Block(touring || sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f || csheet > 0.01f || msheet > 0.01f); // page under a sheet takes no input
     if (under > 0.001f) { // a sheet that has taken over hides the page, skip drawing it
         switch (page) {
         case Model::kPgHome: DrawHome(pc); break;
@@ -631,7 +633,11 @@ void Drawer::DrawBody(float h, float dt, double now) {
     }
     if (fading) ctx->PopLayer();
     ctx->SetTransform(base);
-    ui.Block(false); // the sheets themselves take input
+    ui.Block(touring); // the sheets themselves take input
+    if (page == Model::kPgTools && under > 0.001f) tourSpots[3] = pc.spotSettings; // empty when its tile is taken off
+    if (Width(pc.spotTiles) > 0) tourSpots[0] = pc.spotTiles;
+    if (Width(pc.spotCover) > 0) tourSpots[1] = pc.spotCover;
+    if (Width(pc.spotAdd) > 0) tourSpots[2] = pc.spotAdd;
     if (sheet > 0.001f) {
         PageCtx bc{ui, model, shellNow, mediaNow, nullptr, nullptr, 1, area};
         DrawBt(bc, sheet);
@@ -657,6 +663,10 @@ void Drawer::DrawBody(float h, float dt, double now) {
         PageCtx mc{ui, model, shellNow, mediaNow, nullptr, nullptr, 1, area};
         DrawMixer(mc, msheet);
         pc.wantClose = pc.wantClose || mc.wantClose;
+    }
+    if (touring) {
+        ui.Block(false);
+        DrawTour(shellNow, panelW, panelH);
     }
     DrawRailTip(shellNow); // over the page and its sheets
     ui.DrawFocus(shellNow.accentHi, shellNow.onAccent.Alpha(1));
@@ -1091,7 +1101,7 @@ void Drawer::DrawRailTop(const Theme& t) {
         if (RailArrow(ui, t, Ui::Id("railt.prev"), {lo - room / 2, cy}, -1, 0, railScrollTo > 0.01f)) railScrollTo = std::round(railScrollTo) - 1, ui.Wake(); // one slot; RailScroll clamps
         if (RailArrow(ui, t, Ui::Id("railt.next"), {hi + room / 2, cy}, 1, 0, railScrollTo < most - 0.01f)) railScrollTo = std::round(railScrollTo) + 1, ui.Wake();
     }
-    if (ui.RClick({0, 0, CW(), kTopRail})) model.OpenSettings(); // settings stay a click away even with the tools page taken off
+    if (ui.RClick({0, 0, CW(), kTopRail})) model.railAcross = true, model.railLen = CW(), model.railThick = kTopRail, model.studioAsk = Model::kStudioPages;
 }
 
 void Drawer::DrawRailTip(const Theme& t) { // a word beside the rail icon under the mouse
@@ -1166,7 +1176,7 @@ void Drawer::DrawRail(const Theme& t) {
         if (RailArrow(ui, t, Ui::Id("rail.prev"), {kRailW / 2, top}, 0, -1, railScrollTo > 0.01f)) railScrollTo = std::round(railScrollTo) - 1, ui.Wake(); // one slot; RailScroll clamps
         if (RailArrow(ui, t, Ui::Id("rail.next"), {kRailW / 2, bot}, 0, 1, railScrollTo < most - 0.01f)) railScrollTo = std::round(railScrollTo) + 1, ui.Wake();
     }
-    if (ui.RClick({0, 0, kRailW, H})) model.OpenSettings(); // settings stay a click away even with the tools page taken off
+    if (ui.RClick({0, 0, kRailW, H})) model.railAcross = false, model.railThick = kRailW, model.studioAsk = Model::kStudioPages;
 }
 
 void Drawer::DrawBubble() { // a running timer, stopwatch or focus session: a ring and its time, beside the pill

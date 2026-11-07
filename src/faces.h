@@ -61,6 +61,7 @@ enum class Act { kNone, kPanel, kPlay, kNext, kPrev, kTray };
 
 // size: 0 small, 1 medium, 2 large; the rectangle's shape decides how much it says
 void Draw(Canvas& c, const Theme& t, int kind, int size, const D2D1_RECT_F& r, const Host& h);
+void Sampling(bool on); // while on, feeds draw made-up numbers: a preview of what a widget looks like before it's connected
 Act Click(int kind, bool right, const Host& h); // a click on its face
 int NextMs(const std::vector<int>& kinds, const Host& h); // how long before any of these has something new to draw, 0: nothing to wait for
 std::vector<std::string> Feeds(const std::vector<int>& kinds); // what they need fetched

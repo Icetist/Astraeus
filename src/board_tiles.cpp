@@ -280,7 +280,7 @@ void Board::TileLyrics(const D2D1_RECT_F& r, float k) { // the fullscreen player
         lyrics.Waiting(c, lr, 1, mt, ui.Now());
         return;
     }
-    const wchar_t* why = !model.hasTrack ? L"Nothing playing" : !model.fullLyrics ? L"Lyrics are off in settings" : !tr.music ? L"Lyrics show for songs from music apps"
+    const wchar_t* why = !model.hasTrack ? L"Nothing playing" : !model.fullLyrics ? L"Lyrics are off" : !tr.music ? L"Lyrics show for songs from music apps"
                                                                                                                               : L"No synced lyrics for this song";
     c.Icon(glyph::Lyrics, {(r.left + r.right) / 2, (r.top + r.bottom) / 2 - 14 * k}, 28 * k, t.textLow);
     c.Text(why, Rect(r.left + 12, (r.top + r.bottom) / 2 + 8 * k, Width(r) - 24, 20 * k), Weight::Light, 12.5f * k, t.textDim, Align::Center);

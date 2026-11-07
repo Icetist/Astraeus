@@ -1,4 +1,4 @@
-// The dashboard's tile editor: drag a tile to move it, its corner to resize it, x to take it off; a bar to add, start over or finish.
+// The dashboard's tile editor: drag a tile to move it, its corner to resize it, x to take it off; a bar to add, reset, undo or finish.
 #include "board.h"
 
 #include <algorithm>
@@ -9,7 +9,7 @@
 
 namespace {
 
-constexpr float kBarW = 420, kBarH = 46, kBtnH = 32; // the editor's bar
+constexpr float kBarW = 500, kBarH = 46, kBtnH = 32; // the editor's bar
 constexpr float kGrip = 24; // the resize corner's hit box
 constexpr float kPickCellW = 150, kPickCellH = 38; // a kind in the add list
 constexpr int kPickCols = 4;
@@ -36,7 +36,22 @@ bool Btn(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, c
 
 }
 
+History::Snap Board::TilesSnap() const { // five numbers a tile
+    History::Snap s;
+    for (const auto& tl : tiles) s.insert(s.end(), {(float)tl.kind, (float)tl.x, (float)tl.y, (float)tl.w, (float)tl.h});
+    return s;
+}
+
+void Board::TilesLoad(const History::Snap& s) {
+    constexpr size_t kPer = 5;
+    tiles.clear();
+    for (size_t i = 0; i + kPer <= s.size(); i += kPer) tiles.push_back({(int)s[i], (int)s[i + 1], (int)s[i + 2], (int)s[i + 3], (int)s[i + 4]});
+    grab = -1;
+    Save();
+}
+
 void Board::Edit() {
+    ++editRun;
     editing = true;
     picking = false;
     grab = -1;
@@ -104,6 +119,7 @@ void Board::Picker(const D2D1_RECT_F& bar) { // the kinds not on the board, as c
 void Board::EditFrame() {
     Canvas& c = *canvas;
     const Input& in = ui.In();
+    hist.Sync(editRun, TilesSnap(), grab < 0 && !in.down); // a drag counts once it lands
     for (int y = 0; y < rows; ++y) // the grid, faint: where tiles can go
         for (int x = 0; x < Model::kBoardCols; ++x) c.Fill(CellRect(x, y, 1, 1), 12, t.text.Alpha(0.035f));
 
@@ -179,11 +195,14 @@ void Board::EditFrame() {
     c.StrokeV(bar, kBarH / 2, t.hairTop, t.hairBot, 1);
     float bx = bar.left + 8, by = bar.top + (kBarH - kBtnH) / 2;
     if (Btn(ui, t, Ui::Id("bd.add"), Rect(bx, by, 128, kBtnH), glyph::Add, L"Add a tile", false)) picking = !picking;
-    if (Btn(ui, t, Ui::Id("bd.reset"), Rect(bx + 136, by, 128, kBtnH), glyph::Restart, L"Start over", false)) {
+    if (Btn(ui, t, Ui::Id("bd.reset"), Rect(bx + 136, by, 128, kBtnH), glyph::Restart, L"Reset", false)) { // undo brings it back
         tiles = model.BoardPreset(rows);
         Save();
         picking = false;
     }
+    int go = history::Buttons(ui, t, "bd.hist", bx + 272, by + kBtnH / 2, hist, true);
+    if (go < 0) TilesLoad(hist.Undo());
+    else if (go > 0) TilesLoad(hist.Redo());
     if (Btn(ui, t, Ui::Id("bd.done"), Rect(bar.right - 8 - 128, by, 128, kBtnH), glyph::Check, L"Done", true) || in.rclick) {
         editing = picking = false;
         grab = -1;

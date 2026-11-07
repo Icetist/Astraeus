@@ -10,6 +10,7 @@ struct Entry {
     bool focus = false; // taking keystrokes
     std::wstring text;
     double wrongAt = -10; // when the last check failed: a small shake
+    double rightAt = -10; // when the last one opened: the field glows green
 
     static Entry& Get();
     void Type(wchar_t ch); // a WM_CHAR while focused

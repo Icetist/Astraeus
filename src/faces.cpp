@@ -15,10 +15,20 @@ namespace faces {
 namespace {
 
 constexpr float kPi = 3.14159265f;
-constexpr float kPad = 9;
-constexpr float kTinyW = 60; // narrower than this: an icon and a number
-constexpr float kTallH = 72; // taller than this: a card with room to breathe
-constexpr uint32_t kUp = 0x4ADE80, kDown = 0xFF6B6B;
+constexpr float kPad = 14; // a tile's margin
+constexpr float kClockAspect = 2.7f; // four seven-segment digits and a colon, as wide as they are tall
+constexpr float kBigH = 180; // this tall: a large tile, with its own layout
+constexpr float kWideAt = 1.9f; // this much wider than tall: the words and the picture sit side by side
+constexpr float kHeadH = 16, kHeadIcon = 13; // the small line a tile opens with
+constexpr float kSparkEnd = 4; // room for the dot at a line's end
+constexpr float kBadge = 34; // the soft square behind a launcher's icon
+constexpr float kThreeFrom = 240; // narrower than this: two clock faces, not three
+constexpr float kCellLeast = 38; // a forecast's narrowest column
+constexpr float kWatchRoomy = 190; // this much room: a watchlist's prices fit beside its changes
+constexpr uint32_t kUp = 0x4ADE80, kDown = 0xFF6B6B, kUpPale = 0x15803D, kDownPale = 0xDC2626; // the pale ones for a light tile
+
+Color Good(const Theme& t) { return Color::Rgb(theme::Luma(t.text) < 0.4f ? kUpPale : kUp); }
+Color Bad(const Theme& t) { return Color::Rgb(theme::Luma(t.text) < 0.4f ? kDownPale : kDown); }
 
 constexpr int kClockG = glyph::Timer, kWebG = glyph::Web, kMoneyG = glyph::Bolt, kPeopleG = glyph::Phone;
 
@@ -160,44 +170,73 @@ double Frac(int kind) { // day, month, year
     return (doy + day) / (leap ? 366 : 365);
 }
 
-void Spark(Canvas& c, const D2D1_RECT_F& r, const std::vector<double>& pts, Color ink) {
-    if (pts.size() < 2) return;
+bool gSampling = false; // a preview in the gallery: what it would look like, with nothing fetched
+
+feeds::Series Sample(const std::string& id) {
+    feeds::Series s;
+    constexpr int kPoints = 30;
+    s.ok = true, s.value = 1284, s.total = 48210, s.week = 12840, s.change = 0.124, s.extra = 7, s.extra2 = 1250, s.text = L"Followers";
+    for (int i = 0; i < kPoints; ++i) s.points.push_back(40 + 25 * std::sin(i * 0.55) + i * 1.6);
+    if (id.rfind("quote:", 0) == 0) s.value = 212.48, s.change = 0.0087;
+    if (id == "sky") s.points = {360, 1080}, s.value = 12, s.extra = 0.4;
+    if (id == "thermal") s.value = 62;
+    if (id == "rates") s.value = 0.92, s.text = L"1 USD in EUR";
+    if (id == "metric") s.value = 68120, s.text = L"BTC-USD";
+    if (id == "supabase") s.text = L"Healthy";
+    if (id == "github.activity") {
+        s.points.clear();
+        for (int i = 0; i < 200; ++i) s.points.push_back((i * 7) % 5 == 0 ? 0 : (i * 13) % 9);
+    }
+    return s;
+}
+
+feeds::Series Feed(const std::string& id) { return gSampling ? Sample(id) : feeds::Get(id); }
+
+bool IsBig(float h) { return h >= kBigH; }
+bool IsWide(float w, float h) { return !IsBig(h) && w >= kWideAt * h; }
+
+float Fit(Canvas& c, const std::wstring& s, Weight weight, float most, float least, float room) { // as large as it can be in the room: whole sizes, so few cached fonts
+    float at = c.Measure(s, weight, most);
+    return at <= room || at <= 0 ? most : (std::max)(least, std::floor(most * room / at));
+}
+
+void FitText(Canvas& c, const std::wstring& s, const D2D1_RECT_F& r, Weight weight, float most, float least, Color ink, Align a = Align::Left) {
+    c.Text(s, r, weight, Fit(c, s, weight, most, least, Width(r)), ink, a);
+}
+
+void Head(Canvas& c, const Theme& t, const D2D1_RECT_F& r, int g, const std::wstring& name, Color lit, float rightRoom = 0) { // the small line every tile opens with
+    float x = r.left + kPad, y = r.top + kPad;
+    c.Icon(g, {x + kHeadIcon / 2, y + kHeadH / 2}, kHeadIcon, lit, true);
+    c.Text(name, Rect(x + kHeadIcon + 6, y, Width(r) - 2 * kPad - kHeadIcon - 6 - rightRoom, kHeadH), Weight::Medium, 11.5f, t.textDim);
+}
+
+void Spark(Canvas& c, const D2D1_RECT_F& r, const std::vector<double>& pts, Color ink) { // a line with its area fading out under it
+    if (pts.size() < 2 || Width(r) < 8 || Height(r) < 8) return;
     double lo = pts[0], hi = pts[0];
     for (double p : pts) lo = (std::min)(lo, p), hi = (std::max)(hi, p);
     if (hi - lo < 1e-9) hi = lo + 1;
-    float step = Width(r) / (float)(pts.size() - 1);
-    auto at = [&](size_t i) { return D2D1_POINT_2F{r.left + step * i, r.bottom - Height(r) * (float)((pts[i] - lo) / (hi - lo))}; };
-    for (size_t i = 1; i < pts.size(); ++i) c.Line(at(i - 1), at(i), ink, 1.4f);
-    c.Dot(at(pts.size() - 1), 2.2f, ink);
-}
-
-void Stat(Canvas& c, const Theme& t, const D2D1_RECT_F& r, int g, const std::wstring& name, const std::wstring& main, const std::wstring& sub, const std::vector<double>* pts = nullptr, Color ink = {}) { // the common face
-    float w = Width(r), h = Height(r), mid = (r.top + r.bottom) / 2;
-    Color lit = (ink.r + ink.g + ink.b) > 0 ? ink : t.accentHi;
-    if (w < kTinyW) {
-        c.Icon(g, {(r.left + r.right) / 2, mid - 4}, 17, lit);
-        c.Text(main, Rect(r.left - 2, mid + 5, w + 4, 12), Weight::Semi, 9, t.text, Align::Center);
-        return;
+    float step = Width(r) / (float)(pts.size() - 1), rise = Height(r) - kSparkEnd;
+    auto at = [&](size_t i) { return D2D1_POINT_2F{r.left + step * i, r.bottom - rise * (float)((pts[i] - lo) / (hi - lo))}; };
+    ComPtr<ID2D1PathGeometry> line, area;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(gfx::D2D()->CreatePathGeometry(&line)) || FAILED(gfx::D2D()->CreatePathGeometry(&area))) return;
+    if (SUCCEEDED(area->Open(&sink))) {
+        sink->BeginFigure({r.left, r.bottom}, D2D1_FIGURE_BEGIN_FILLED);
+        for (size_t i = 0; i < pts.size(); ++i) sink->AddLine(at(i));
+        sink->AddLine({r.right, r.bottom});
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+        sink->Close();
     }
-    if (h < kTallH) {
-        c.Icon(g, {r.left + kPad + 10, mid}, 19, lit, true);
-        float tx = r.left + kPad + 26;
-        float room = pts && w > 150 ? w * 0.48f : 0;
-        float tw = r.right - kPad - tx - room;
-        if (sub.empty()) {
-            c.Text(main, Rect(tx, r.top, tw, h), Weight::Semi, 12.5f, t.text);
-        } else {
-            c.Text(main, Rect(tx, mid - 15, tw, 16), Weight::Semi, 12.5f, t.text);
-            c.Text(sub, Rect(tx, mid + 1, tw, 14), Weight::Regular, 10.5f, t.textDim);
-        }
-        if (room > 0) Spark(c, {r.right - kPad - room + 6, r.top + 9, r.right - kPad - 2, r.bottom - 9}, *pts, lit);
-        return;
+    sink.Reset();
+    if (SUCCEEDED(line->Open(&sink))) {
+        sink->BeginFigure(at(0), D2D1_FIGURE_BEGIN_HOLLOW);
+        for (size_t i = 1; i < pts.size(); ++i) sink->AddLine(at(i));
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+        sink->Close();
     }
-    c.Icon(g, {r.left + 22, r.top + 22}, 18, lit, true);
-    c.Text(name, Rect(r.left + 40, r.top + 12, w - 50, 20), Weight::Medium, 12, t.textDim);
-    c.Text(main, Rect(r.left + 16, r.top + 38, w - 32, 36), Weight::Light, 25, t.text);
-    if (!sub.empty()) c.Text(sub, Rect(r.left + 16, r.top + 74, w - 32, 16), Weight::Regular, 11, t.textDim);
-    if (pts && r.bottom - (r.top + 96) > 14) Spark(c, {r.left + 16, r.top + 96, r.right - 16, r.bottom - 12}, *pts, lit);
+    c.FillGeoV(area.Get(), r, ink.Alpha(0.26f), ink.Alpha(0));
+    c.StrokeGeo(line.Get(), ink, 1.7f);
+    c.Dot(at(pts.size() - 1), 2.8f, ink);
 }
 
 void Lane(Canvas& c, const Theme& t, const D2D1_RECT_F& r, double v, Color ink) {
@@ -205,26 +244,114 @@ void Lane(Canvas& c, const Theme& t, const D2D1_RECT_F& r, double v, Color ink) 
     c.Fill(Rect(r.left, r.top, (std::max)(Height(r), Width(r) * (float)(std::clamp)(v, 0.0, 1.0)), Height(r)), Height(r) / 2, ink);
 }
 
-void RingFace(Canvas& c, const Theme& t, const D2D1_RECT_F& r, const std::wstring& name, double v, const std::wstring& inside, const std::wstring& sub) {
-    float w = Width(r), h = Height(r), mid = (r.top + r.bottom) / 2;
-    float rad = (std::min)(13.0f, h / 2 - 5);
-    bool tall = h >= kTallH;
-    D2D1_POINT_2F o = w < kTinyW ? D2D1_POINT_2F{(r.left + r.right) / 2, mid} : D2D1_POINT_2F{r.left + kPad + rad, mid};
-    if (tall) rad = (std::min)(w, h) * 0.32f, o = {(r.left + r.right) / 2, r.top + h * 0.45f};
-    Color hot = Color::Rgb(kDown);
-    c.Ring(o, rad, t.text.Alpha(0.14f), tall ? 5.0f : 2.5f);
-    c.Arc(o, rad, -kPi / 2, 2 * kPi * (float)(std::clamp)(v, 0.0, 1.0), v > 0.85 ? hot : t.accentHi, tall ? 5.0f : 2.5f);
-    if (tall) {
-        c.Text(inside, Rect(o.x - rad, o.y - 14, 2 * rad, 28), Weight::Medium, 18, t.text, Align::Center);
-        c.Text(name, Rect(r.left, r.bottom - 26, w, 16), Weight::Medium, 11.5f, t.textDim, Align::Center);
+struct StatOpts {
+    const std::vector<double>* pts = nullptr; // a line through its history
+    Color ink{}; // the icon and the line; none: the accent
+    Color subInk{}; // the sub line; none: dim
+    double bar = -1; // how full, 0..1; below zero: no bar
+};
+
+bool Set(Color c) { return c.r + c.g + c.b > 0; }
+
+void Stat(Canvas& c, const Theme& t, const D2D1_RECT_F& r, int g, const std::wstring& name, const std::wstring& main, const std::wstring& sub, const StatOpts& o = {}) { // the common tile: a small head, the number as large as it fits, a line under it
+    float w = Width(r), h = Height(r), x = r.left + kPad, room = w - 2 * kPad, bottom = r.bottom - kPad;
+    Color lit = Set(o.ink) ? o.ink : t.accentHi, soft = Set(o.subInk) ? o.subInk : t.textDim;
+    if (IsBig(h)) {
+        Head(c, t, r, g, name, lit);
+        if (o.pts) {
+            float y = r.top + kPad + kHeadH + 8;
+            FitText(c, main, Rect(x, y, room, 58), Weight::Light, 46, 20, t.text);
+            c.Text(sub, Rect(x, y + 58, room, 20), Weight::Regular, 13, soft);
+            Spark(c, {x, y + 92, r.right - kPad, bottom}, *o.pts, lit);
+            return;
+        }
+        float by = bottom; // nothing to fill the middle: it all sits at the foot
+        if (o.bar >= 0) {
+            Lane(c, t, Rect(x, by - 8, room, 8), o.bar, lit);
+            by -= 16;
+        }
+        if (!sub.empty()) {
+            c.Text(sub, Rect(x, by - 20, room, 20), Weight::Regular, 13, soft);
+            by -= 22;
+        }
+        FitText(c, main, Rect(x, by - 62, room, 62), Weight::Light, 56, 20, t.text);
         return;
     }
-    c.Text(inside, Rect(o.x - 13, mid - 7, 26, 14), Weight::Semi, 9.5f, t.text, Align::Center);
-    if (w >= kTinyW) {
-        float tx = o.x + rad + 8;
-        c.Text(name, Rect(tx, sub.empty() ? r.top : mid - 15, r.right - kPad - tx, sub.empty() ? h : 16), Weight::Semi, 12, t.text);
-        if (!sub.empty()) c.Text(sub, Rect(tx, mid + 1, r.right - kPad - tx, 14), Weight::Regular, 10.5f, t.textDim);
+    if (o.pts && IsWide(w, h)) { // the words on one side, the line on the other
+        float words = room * 0.46f;
+        Head(c, t, Rect(r.left, r.top, words + 2 * kPad, h), g, name, lit);
+        c.Text(sub, Rect(x, bottom - 16, words, 16), Weight::Regular, 11.5f, soft);
+        FitText(c, main, Rect(x, bottom - 56, words, 40), Weight::Light, 32, 15, t.text);
+        Spark(c, {x + words + 14, r.top + kPad + 2, r.right - kPad, bottom}, *o.pts, lit);
+        return;
     }
+    if (o.pts) { // small: what the sub line says moves up beside the head, the line takes the bottom
+        float side = sub.empty() ? 0 : c.Measure(sub, Weight::Medium, 11) + 6;
+        Head(c, t, r, g, name, lit, side);
+        c.Text(sub, Rect(x, r.top + kPad, room, kHeadH), Weight::Medium, 11, soft, Align::Right);
+        float y = r.top + kPad + kHeadH + 2;
+        FitText(c, main, Rect(x, y, room, 34), Weight::Light, 28, 13, t.text);
+        Spark(c, {x, y + 36, r.right - kPad, bottom}, *o.pts, lit);
+        return;
+    }
+    Head(c, t, r, g, name, lit);
+    float by = bottom;
+    if (o.bar >= 0) {
+        Lane(c, t, Rect(x, by - 6, room, 6), o.bar, lit);
+        by -= 12;
+    }
+    if (!sub.empty()) {
+        c.Text(sub, Rect(x, by - 16, room, 16), Weight::Regular, 11.5f, soft);
+        by -= 17;
+    }
+    FitText(c, main, Rect(x, by - 40, room, 40), Weight::Light, IsWide(w, h) ? 34.0f : 30.0f, 13, t.text);
+}
+
+void Rows(Canvas& c, const Theme& t, const D2D1_RECT_F& area, const std::vector<std::pair<std::wstring, std::wstring>>& rows, float size) { // label on the left, value on the right, evenly down the room
+    if (rows.empty()) return;
+    float rh = Height(area) / rows.size();
+    for (size_t i = 0; i < rows.size(); ++i) {
+        float y = area.top + rh * i, vw = c.Measure(rows[i].second, Weight::Medium, size) + 4;
+        c.Text(rows[i].first, Rect(area.left, y, Width(area) - vw - 6, rh), Weight::Regular, size, t.textDim);
+        c.Text(rows[i].second, Rect(area.left, y, Width(area), rh), Weight::Medium, size, t.text, Align::Right);
+    }
+}
+
+void Launch(Canvas& c, const Theme& t, const D2D1_RECT_F& r, int g, const std::wstring& name, const std::wstring& about) { // a tile that opens something: a soft badge, its name, what it does
+    float big = IsBig(Height(r)) ? 1.4f : 1.0f, s = kBadge * big, x = r.left + kPad, room = Width(r) - 2 * kPad, bottom = r.bottom - kPad;
+    D2D1_RECT_F badge = Rect(x, r.top + kPad, s, s);
+    c.Fill(badge, s * 0.3f, t.accent.Alpha(0.16f));
+    c.Icon(g, {x + s / 2, r.top + kPad + s / 2}, s * 0.58f, t.accentHi, true);
+    c.Text(about, Rect(x, bottom - 15 * big, room, 15 * big), Weight::Regular, 11 * big, t.textDim);
+    FitText(c, name, Rect(x, bottom - 15 * big - 20 * big, room, 20 * big), Weight::Semi, 13.5f * big, 11, t.text);
+}
+
+void RingFace(Canvas& c, const Theme& t, const D2D1_RECT_F& r, const std::wstring& name, double v, const std::wstring& inside, const std::wstring& sub) {
+    float w = Width(r), h = Height(r), mid = (r.top + r.bottom) / 2, cx = (r.left + r.right) / 2;
+    Color ink = v > 0.85 ? Bad(t) : t.accentHi;
+    auto ring = [&](D2D1_POINT_2F o, float rad, float thick, float type) {
+        c.Ring(o, rad, t.text.Alpha(0.12f), thick);
+        c.Arc(o, rad, -kPi / 2, 2 * kPi * (float)(std::clamp)(v, 0.0, 1.0), ink, thick);
+        FitText(c, inside, Rect(o.x - rad + thick, o.y - rad / 2, 2 * (rad - thick), rad), Weight::Medium, type, 10, t.text, Align::Center);
+    };
+    if (IsWide(w, h)) { // the ring on the left, its words beside it
+        float rad = h / 2 - 15, tx = r.left + kPad + 2 * rad + 16;
+        ring({r.left + kPad + rad + 1, mid}, rad, 7, 20);
+        c.Text(name, Rect(tx, sub.empty() ? r.top : mid - 20, r.right - kPad - tx, sub.empty() ? h : 20), Weight::Semi, 14, t.text);
+        if (!sub.empty()) c.Text(sub, Rect(tx, mid + 1, r.right - kPad - tx, 18), Weight::Regular, 12, t.textDim);
+        return;
+    }
+    if (IsBig(h)) {
+        float rad = (std::min)(w, h) * 0.3f;
+        ring({cx, r.top + kPad + rad + 8}, rad, 11, 34);
+        float y = r.top + kPad + 2 * rad + 26;
+        c.Text(name, Rect(r.left, y, w, 22), Weight::Semi, 15, t.text, Align::Center);
+        if (!sub.empty()) c.Text(sub, Rect(r.left, y + 22, w, 18), Weight::Regular, 12.5f, t.textDim, Align::Center);
+        return;
+    }
+    float rad = (h - 46) / 2;
+    ring({cx, r.top + 12 + rad}, rad, 7, 18);
+    c.Text(name, Rect(r.left + 6, r.bottom - 28, w - 12, 18), Weight::Medium, 11.5f, t.textDim, Align::Center);
 }
 
 void Analog(Canvas& c, const Theme& t, D2D1_POINT_2F o, float rad, int style, int hh, int mm) { // 0 white, 1 black, 2 bare ticks
@@ -233,14 +360,14 @@ void Analog(Canvas& c, const Theme& t, D2D1_POINT_2F o, float rad, int style, in
     if (style != 2) c.Dot(o, rad, face);
     if (style == 1) c.Ring(o, rad, Color{1, 1, 1, 0.14f}, 1);
     for (int i = 0; i < 12; ++i) {
-        if (rad < 16 && i % 3) continue; // too small for all twelve
-        float a = i * kPi / 6, s = std::sin(a), k = std::cos(a), in = rad * (i % 3 ? 0.84f : 0.76f);
-        c.Line({o.x + s * in, o.y - k * in}, {o.x + s * (rad - 2), o.y - k * (rad - 2)}, ink.Alpha(i % 3 ? 0.45f : 0.9f), i % 3 ? 1.0f : 1.4f);
+        if (rad < 22 && i % 3) continue; // too small for all twelve
+        float a = i * kPi / 6, s = std::sin(a), k = std::cos(a), in = rad * (i % 3 ? 0.88f : 0.8f);
+        c.Line({o.x + s * in, o.y - k * in}, {o.x + s * rad * 0.94f, o.y - k * rad * 0.94f}, ink.Alpha(i % 3 ? 0.4f : 0.9f), i % 3 ? 1.0f : 1.6f);
     }
     float ha = ((hh % 12) + mm / 60.0f) * kPi / 6, ma = mm * kPi / 30;
-    c.Line(o, {o.x + std::sin(ha) * rad * 0.5f, o.y - std::cos(ha) * rad * 0.5f}, ink, (std::max)(1.6f, rad * 0.09f));
-    c.Line(o, {o.x + std::sin(ma) * rad * 0.76f, o.y - std::cos(ma) * rad * 0.76f}, ink, (std::max)(1.2f, rad * 0.06f));
-    c.Dot(o, (std::max)(1.6f, rad * 0.07f), t.accent);
+    c.Line(o, {o.x + std::sin(ha) * rad * 0.5f, o.y - std::cos(ha) * rad * 0.5f}, ink, (std::max)(2.0f, rad * 0.075f));
+    c.Line(o, {o.x + std::sin(ma) * rad * 0.74f, o.y - std::cos(ma) * rad * 0.74f}, ink, (std::max)(1.5f, rad * 0.05f));
+    c.Dot(o, (std::max)(2.2f, rad * 0.07f), t.accentHi);
 }
 
 void Segment(Canvas& c, const D2D1_RECT_F& r, int digit, Color on, Color off) { // a b c d e f g, clockwise from the top, g across the middle
@@ -260,13 +387,13 @@ void Segment(Canvas& c, const D2D1_RECT_F& r, int digit, Color on, Color off) { 
 void Clock7(Canvas& c, const Theme& t, const D2D1_RECT_F& r, const SYSTEMTIME& st, bool h24) {
     int hh = h24 ? st.wHour : (st.wHour % 12 == 0 ? 12 : st.wHour % 12);
     int d[4] = {hh / 10, hh % 10, st.wMinute / 10, st.wMinute % 10};
-    float h = (std::min)(Height(r) - 12, Width(r) * 0.42f), dw = h * 0.52f, gap = dw * 0.26f, colon = dw * 0.34f;
+    float h = (std::min)(Height(r), Width(r) / kClockAspect), dw = h * 0.52f, gap = dw * 0.26f, colon = dw * 0.34f, dot = (std::max)(1.5f, h * 0.045f);
     float x = (r.left + r.right) / 2 - (4 * dw + 3 * gap + colon) / 2, y = (r.top + r.bottom) / 2 - h / 2;
     Color on = t.accentHi, off = t.text.Alpha(0.07f);
     for (int i = 0; i < 4; ++i) {
         if (i == 2) {
-            c.Dot({x + colon / 2 - gap / 2, y + h * 0.32f}, 1.5f, on);
-            c.Dot({x + colon / 2 - gap / 2, y + h * 0.68f}, 1.5f, on);
+            c.Dot({x + colon / 2 - gap / 2, y + h * 0.32f}, dot, on);
+            c.Dot({x + colon / 2 - gap / 2, y + h * 0.68f}, dot, on);
             x += colon;
         }
         Segment(c, Rect(x, y, dw, h), d[i], on, off);
@@ -274,7 +401,7 @@ void Clock7(Canvas& c, const Theme& t, const D2D1_RECT_F& r, const SYSTEMTIME& s
     }
 }
 
-Color Trend(const Theme& t, double change) { return change > 0.0005 ? Color::Rgb(kUp) : change < -0.0005 ? Color::Rgb(kDown) : t.textDim; }
+Color Trend(const Theme& t, double change) { return change > 0.0005 ? Good(t) : change < -0.0005 ? Bad(t) : t.textDim; }
 
 std::wstring Pct(double change) {
     wchar_t b[24];
@@ -282,29 +409,38 @@ std::wstring Pct(double change) {
     return b;
 }
 
-std::wstring NotYet(const feeds::Series& s) { return s.error.empty() ? std::wstring(L"Fetching…") : s.error; }
+std::wstring NotYet(const feeds::Series& s) { // a feed with nothing yet, in as few words as fit a tile
+    if (s.error.empty()) return L"Fetching…";
+    return s.error.rfind(L"Connect", 0) == 0 || s.error.rfind(L"Enter", 0) == 0 ? L"Click to connect" : s.error;
+}
 
 void MoneyFace(Canvas& c, const Theme& t, int kind, const D2D1_RECT_F& r) {
     const Meta& m = kAll[kind];
-    feeds::Series s = feeds::Get(m.feed);
+    feeds::Series s = Feed(m.feed);
     std::wstring sym = feeds::Setting("money.sym");
     if (sym.empty()) sym = L"$";
     bool chart = wcsstr(m.name, L"Chart") != nullptr;
     if (!s.ok) return Stat(c, t, r, m.glyph, m.name, L"--", NotYet(s));
-    if (chart) return Stat(c, t, r, m.glyph, m.name, sym + Short(s.week) + L" this week", Pct(s.change), &s.points, Trend(t, s.change));
+    StatOpts o;
+    if (chart) {
+        o.pts = &s.points, o.ink = o.subInk = Trend(t, s.change);
+        return Stat(c, t, r, m.glyph, m.name, sym + Short(s.week), Pct(s.change), o);
+    }
     Stat(c, t, r, m.glyph, m.name, sym + Short(s.total), L"Last 30 days");
 }
 
 void VisitFace(Canvas& c, const Theme& t, int kind, const D2D1_RECT_F& r, const wchar_t* unit) {
     const Meta& m = kAll[kind];
-    feeds::Series s = feeds::Get(m.feed);
+    feeds::Series s = Feed(m.feed);
     if (!s.ok) return Stat(c, t, r, m.glyph, m.name, L"--", NotYet(s));
-    Stat(c, t, r, m.glyph, m.name, Short(s.week) + L" " + unit, Pct(s.change) + L" this week", &s.points, Trend(t, s.change));
+    StatOpts o;
+    o.pts = &s.points, o.ink = o.subInk = Trend(t, s.change);
+    Stat(c, t, r, m.glyph, std::wstring(m.name) + L"  ·  " + unit, Short(s.week), Pct(s.change), o);
 }
 
 void CountFace(Canvas& c, const Theme& t, int kind, const D2D1_RECT_F& r, const std::wstring& words) {
     const Meta& m = kAll[kind];
-    feeds::Series s = feeds::Get(m.feed);
+    feeds::Series s = Feed(m.feed);
     if (!s.ok) return Stat(c, t, r, m.glyph, m.name, L"--", NotYet(s));
     Stat(c, t, r, m.glyph, m.name, Short(s.value), words);
 }
@@ -333,83 +469,77 @@ std::vector<std::wstring> Watch() {
 }
 
 void DrawClock(Canvas& c, const Theme& t, const std::string& key, const Meta& m, const D2D1_RECT_F& r, const Host& h, const SYSTEMTIME& st) {
-    float w = Width(r), rh = Height(r), mid = (r.top + r.bottom) / 2, cx = (r.left + r.right) / 2;
-    bool tiny = w < kTinyW, tall = rh >= kTallH;
-    auto twoLines = [&] {
-        wchar_t a[4], b[4];
-        swprintf_s(a, L"%02d", h.h24 ? st.wHour : (st.wHour % 12 == 0 ? 12 : st.wHour % 12)), swprintf_s(b, L"%02d", st.wMinute);
-        c.Text(a, Rect(r.left, mid - 15, w, 15), Weight::Semi, 12.5f, t.text, Align::Center);
-        c.Text(b, Rect(r.left, mid, w, 15), Weight::Semi, 12.5f, t.accentHi, Align::Center);
-    };
+    float w = Width(r), rh = Height(r), mid = (r.top + r.bottom) / 2, cx = (r.left + r.right) / 2, x = r.left + kPad, room = w - 2 * kPad;
+    bool big = IsBig(rh), wide = IsWide(w, rh);
     if (key == "clock.digital") {
         std::wstring time = ClockText(st, h.h24);
-        if (tiny) {
-            twoLines();
-        } else if (tall) {
-            wchar_t sec[8];
-            swprintf_s(sec, L":%02d", st.wSecond);
-            c.Text(time + sec, Rect(r.left + 12, mid - 30, w - 24, 44), Weight::Light, 32, t.text, Align::Center);
-            c.Text(DateText(st, L"dddd d MMMM"), Rect(r.left + 12, mid + 14, w - 24, 18), Weight::Regular, 12, t.textDim, Align::Center);
-        } else {
-            c.Text(time, Rect(r.left + kPad, mid - 16, w - 2 * kPad, 20), Weight::Semi, 16, t.text);
-            c.Text(DateText(st, L"ddd d MMM"), Rect(r.left + kPad, mid + 4, w - 2 * kPad, 13), Weight::Regular, 10, t.textDim);
-        }
+        wchar_t sec[8];
+        swprintf_s(sec, L":%02d", st.wSecond);
+        float most = big ? 72.0f : wide ? 52.0f : 40.0f, secRoom = room * 0.28f;
+        float size = Fit(c, time, Weight::Light, most, 18, room - secRoom), tiny = (std::max)(11.0f, std::floor(size * 0.42f));
+        float tw = c.Measure(time, Weight::Light, size), sw = c.Measure(sec, Weight::Regular, tiny), left = cx - (tw + sw + 2) / 2, boxH = size * 1.3f, y = mid - boxH / 2 - rh * 0.09f;
+        c.Text(time, Rect(left, y, tw + 2, boxH), Weight::Light, size, t.text);
+        c.Text(sec, Rect(left + tw + 2, y + (size - tiny) * 0.42f, sw + 2, boxH), Weight::Regular, tiny, t.textDim);
+        FitText(c, DateText(st, L"dddd d MMMM"), Rect(x, y + boxH - 2, room, 18), Weight::Regular, big ? 15.0f : 12.0f, 10, t.textDim, Align::Center);
     } else if (key == "clock.analog" || key == "clock.analogdark" || key == "clock.analogmin") {
         int style = key == "clock.analog" ? 0 : key == "clock.analogdark" ? 1 : 2;
-        Analog(c, t, {cx, mid}, (std::min)(w, rh) / 2 - 3, style, st.wHour, st.wMinute);
+        float rad = (std::min)(w, rh) / 2 - 10;
+        if (!wide) return Analog(c, t, {cx, mid}, rad, style, st.wHour, st.wMinute);
+        Analog(c, t, {r.left + kPad + rad, mid}, rad, style, st.wHour, st.wMinute); // room beside it: the time in words too
+        float tx = r.left + kPad + 2 * rad + 16;
+        FitText(c, ClockText(st, h.h24), Rect(tx, mid - 30, r.right - kPad - tx, 40), Weight::Light, 32, 16, t.text);
+        c.Text(DateText(st, L"ddd d MMM"), Rect(tx, mid + 10, r.right - kPad - tx, 18), Weight::Regular, 12, t.textDim);
     } else if (key == "clock.segment") {
-        Clock7(c, t, r, st, h.h24);
-        if (tall) c.Text(DateText(st, L"dddd d MMM"), Rect(r.left, r.bottom - 26, w, 16), Weight::Regular, 11, t.textDim, Align::Center);
+        Clock7(c, t, {x, r.top + kPad, r.right - kPad, r.bottom - kPad - 20}, st, h.h24);
+        c.Text(DateText(st, L"dddd d MMM"), Rect(r.left, r.bottom - kPad - 16, w, 16), Weight::Regular, big ? 13.0f : 11.0f, t.textDim, Align::Center);
     } else if (key == "clock.worldfaces") {
-        auto zones = state::Zones(3);
-        float cw = w / (float)(std::max)((size_t)1, zones.size());
+        auto zones = state::Zones(w < kThreeFrom ? 2 : 3);
+        float cw = room / (float)(std::max)((size_t)1, zones.size()), rad = (std::min)(cw / 2 - 6, (rh - 2 * kPad - 18) / 2);
         for (size_t i = 0; i < zones.size(); ++i) {
             SYSTEMTIME z = state::ZoneNow(zones[i]);
-            float zx = r.left + cw * (i + 0.5f), rad = (std::min)(cw / 2 - 4, tall ? rh * 0.3f : rh / 2 - 9);
-            Analog(c, t, {zx, tall ? mid - 8 : mid - 5}, rad, 1, z.wHour, z.wMinute);
-            c.Text(zones[i], Rect(zx - cw / 2, tall ? mid + rad : mid + rad - 4, cw, 12), Weight::Medium, 9, t.textDim, Align::Center);
+            float zx = x + cw * (i + 0.5f), top = mid - (2 * rad + 18) / 2;
+            Analog(c, t, {zx, top + rad}, rad, 1, z.wHour, z.wMinute);
+            c.Text(zones[i], Rect(zx - cw / 2, top + 2 * rad + 3, cw, 15), Weight::Medium, big ? 12.0f : 10.5f, t.textDim, Align::Center);
         }
     } else if (key == "clock.worldlist") {
         auto zones = state::Zones(3);
-        float row = (std::min)(rh / 3.2f, 26.0f), y = mid - row * zones.size() / 2;
+        float row = (rh - 2 * kPad + 4) / 3, y = mid - row * zones.size() / 2, size = big ? 16.0f : 12.5f;
         for (const auto& name : zones) {
             SYSTEMTIME z = state::ZoneNow(name);
-            c.Text(name, Rect(r.left + kPad, y, w * 0.5f, row), Weight::Medium, tall ? 12.0f : 9.5f, t.text);
-            c.Text(ClockText(z, h.h24) + L"  " + state::Offset(name), Rect(r.left, y, w - kPad, row), Weight::Regular, tall ? 11.5f : 9.5f, t.textDim, Align::Right);
+            std::wstring when = ClockText(z, h.h24), off = wide || big ? state::Offset(name) : L"";
+            float tw = c.Measure(when, Weight::Medium, size) + 4, ow = off.empty() ? 0 : c.Measure(off, Weight::Regular, size - 2) + 10;
+            c.Text(name, Rect(x, y, room - tw - ow - 4, row), Weight::Regular, size, t.textDim);
+            c.Text(when, Rect(x, y, room - ow, row), Weight::Medium, size, t.text, Align::Right);
+            if (!off.empty()) c.Text(off, Rect(x, y, room, row), Weight::Regular, size - 2, t.textLow, Align::Right);
             y += row;
         }
     } else if (key == "clock.worldone") {
         std::wstring name = Ticker("zone.one", L"Tokyo");
         SYSTEMTIME z = state::ZoneNow(name);
-        Stat(c, t, r, m.glyph, name, ClockText(z, h.h24), tiny ? L"" : name + L"  " + state::Offset(name));
+        Stat(c, t, r, m.glyph, name, ClockText(z, h.h24), state::Offset(name));
     } else if (key == "clock.today") {
-        c.Text(DateText(st, L"ddd d MMM"), Rect(r.left + kPad, mid - 16, w * 0.58f, 16), Weight::Semi, 12, t.text);
-        c.Text(ClockText(st, h.h24), Rect(r.left + kPad, mid + 1, w * 0.58f, 15), Weight::Regular, 11, t.textDim);
+        c.Text(DateText(st, L"dddd"), Rect(x, r.top + kPad - 1, room, 18), Weight::Semi, big ? 15.0f : 12.5f, t.accentHi);
+        FitText(c, DateText(st, L"d MMM"), Rect(x, r.top + kPad + 15, room, big ? 66.0f : 40.0f), Weight::Light, big ? 50.0f : 30.0f, 16, t.text);
+        float by = r.bottom - kPad - 18, size = big ? 15.0f : 12.5f;
+        c.Text(ClockText(st, h.h24), Rect(x, by, room, 18), Weight::Medium, size, t.textDim);
         if (h.wxValid) {
-            c.Icon(WxIcon(h.wxCode, h.wxDay), {r.right - 44, mid}, 19, t.accentHi, true);
-            c.Text(Deg(h.tempC, h.fahrenheit), Rect(r.right - 34, r.top, 30, rh), Weight::Semi, 12.5f, t.text);
+            std::wstring deg = Deg(h.tempC, h.fahrenheit);
+            float dw = c.Measure(deg, Weight::Medium, size) + 2;
+            c.Text(deg, Rect(x, by, room, 18), Weight::Medium, size, t.text, Align::Right);
+            c.Icon(WxIcon(h.wxCode, h.wxDay), {r.right - kPad - dw - 11, by + 9}, size + 3, t.accentHi, true);
         }
     } else if (key == "clock.date") {
-        if (tiny) {
-            c.Text(DateText(st, L"MMM"), Rect(r.left, mid - 15, w, 13), Weight::Medium, 9.5f, t.textDim, Align::Center);
-            c.Text(std::to_wstring(st.wDay), Rect(r.left, mid - 3, w, 18), Weight::Semi, 14, t.text, Align::Center);
-        } else if (tall) {
-            c.Text(DateText(st, L"dddd"), Rect(r.left, mid - 34, w, 18), Weight::Regular, 13, t.textDim, Align::Center);
-            c.Text(DateText(st, L"d MMMM"), Rect(r.left, mid - 14, w, 38), Weight::Light, 28, t.text, Align::Center);
-            c.Text(std::to_wstring(st.wYear), Rect(r.left, mid + 24, w, 16), Weight::Regular, 11.5f, t.textDim, Align::Center);
-        } else {
-            c.Text(DateText(st, L"d MMMM"), Rect(r.left + kPad, mid - 15, w - 2 * kPad, 17), Weight::Semi, 13, t.text);
-            c.Text(DateText(st, L"dddd"), Rect(r.left + kPad, mid + 2, w - 2 * kPad, 13), Weight::Regular, 10.5f, t.textDim);
-        }
+        Stat(c, t, r, m.glyph, DateText(st, L"dddd"), DateText(st, L"d MMMM"), std::to_wstring(st.wYear));
     } else if (key == "clock.daynum") {
-        float s = (std::min)(w, rh) - 8;
-        D2D1_RECT_F page = Rect(cx - s / 2, mid - s / 2, s, s);
-        c.Fill(page, s * 0.2f, t.text.Alpha(0.1f));
-        c.Fill({page.left, page.top, page.right, page.top + s * 0.3f}, s * 0.14f, t.accent);
-        c.Text(std::to_wstring(st.wDay), Rect(page.left, page.top + s * 0.28f, s, s * 0.7f), Weight::Semi, s * 0.46f, t.text, Align::Center);
+        float k = big ? 1.9f : 1.0f;
+        std::wstring day = DateText(st, L"ddd");
+        CharUpperBuffW(day.data(), (DWORD)day.size());
+        c.Text(day, Rect(r.left, r.top + kPad - 3, w, 16 * k), Weight::Semi, 11.5f * k, t.accentHi, Align::Center);
+        c.Text(std::to_wstring(st.wDay), Rect(r.left, r.top + kPad + 8 * k, w, 58 * k), Weight::Light, 46 * k, t.text, Align::Center);
+        c.Text(DateText(st, L"MMMM"), Rect(r.left, r.bottom - kPad - 12 * k, w, 15 * k), Weight::Regular, 10.5f * k, t.textDim, Align::Center);
     } else if (key == "clock.week") {
         int back = (st.wDayOfWeek + 6) % 7; // from monday
-        float cw = (w - 2 * kPad) / 7;
+        float cw = room / 7, ph = (std::min)(rh - 2 * kPad, big ? 92.0f : 64.0f), py = mid - ph / 2, k = (std::clamp)(cw / 22, 0.95f, 1.5f);
         static const wchar_t* const kNames[7] = {L"M", L"T", L"W", L"T", L"F", L"S", L"S"};
         FILETIME ft;
         SystemTimeToFileTime(&st, &ft);
@@ -419,81 +549,92 @@ void DrawClock(Canvas& c, const Theme& t, const std::string& key, const Meta& m,
             FILETIME f2 = {u.LowPart, u.HighPart};
             SYSTEMTIME d;
             FileTimeToSystemTime(&f2, &d);
-            float dx = r.left + kPad + cw * i;
+            float dx = x + cw * i;
             bool today = i == back;
-            if (today) c.Fill(Rect(dx + 1, mid - 16, cw - 2, 32), 8, t.accent);
-            c.Text(kNames[i], Rect(dx, mid - 15, cw, 13), Weight::Medium, 9, today ? t.onAccent : t.textDim, Align::Center);
-            c.Text(std::to_wstring(d.wDay), Rect(dx, mid - 2, cw, 16), Weight::Semi, 11.5f, today ? t.onAccent : t.text, Align::Center);
+            if (today) c.Fill(Rect(dx + 1, py, cw - 2, ph), (std::min)(cw / 2 - 1, 11.0f), t.accent);
+            c.Text(kNames[i], Rect(dx, mid - 17 * k, cw, 15 * k), Weight::Medium, 10 * k, today ? t.onAccent : t.textDim, Align::Center);
+            c.Text(std::to_wstring(d.wDay), Rect(dx, mid + 1, cw, 17 * k), Weight::Semi, 12.5f * k, today ? t.onAccent : t.text, Align::Center);
         }
     } else if (key == "clock.wx") {
-        float bw = (w - 2 * kPad - 8) / 3, half = (std::min)(rh / 2 - 5, 16.0f);
+        constexpr float kGapBlocks = 6;
+        float bw = (room - 2 * kGapBlocks) / 3, bh = (std::min)(rh - 2 * kPad, big ? 110.0f : 76.0f), top = mid - bh / 2;
         std::wstring parts[3] = {ClockText(st, h.h24), DateText(st, L"d MMM"), h.wxValid ? Deg(h.tempC, h.fahrenheit) : L"--"};
-        Color inks[3] = {t.accent, t.text.Alpha(0.12f), t.text.Alpha(0.06f)};
+        const wchar_t* const labels[3] = {L"Now", L"Today", L"Outside"};
+        Color inks[3] = {t.accent, t.text.Alpha(0.1f), t.text.Alpha(0.06f)};
         for (int i = 0; i < 3; ++i) {
-            D2D1_RECT_F b = Rect(r.left + kPad + i * (bw + 4), mid - half, bw, 2 * half);
-            c.Fill(b, 9, inks[i]);
-            c.Text(parts[i], b, Weight::Semi, 11.5f, i == 0 ? t.onAccent : t.text, Align::Center);
+            D2D1_RECT_F b = Rect(x + i * (bw + kGapBlocks), top, bw, bh);
+            c.Fill(b, 12, inks[i]);
+            Color main = i == 0 ? t.onAccent : t.text;
+            FitText(c, parts[i], Rect(b.left + 4, top + bh * 0.16f, bw - 8, bh * 0.46f), Weight::Medium, big ? 26.0f : 17.0f, 10, main, Align::Center);
+            c.Text(labels[i], Rect(b.left, top + bh * 0.6f, bw, bh * 0.28f), Weight::Regular, big ? 12.0f : 10.0f, main.Alpha(0.72f), Align::Center);
         }
     } else if (key == "clock.flip") {
-        if (tiny) return twoLines();
         wchar_t a[4], b[4];
         swprintf_s(a, L"%02d", h.h24 ? st.wHour : (st.wHour % 12 == 0 ? 12 : st.wHour % 12)), swprintf_s(b, L"%02d", st.wMinute);
-        float ph = (std::min)(rh - 10, w * 0.42f), pw = ph * 1.05f;
+        constexpr float kFlapGap = 6;
+        float pw = (std::min)((room - kFlapGap) / 2, (rh - 2 * kPad) * 1.05f), ph = (std::min)(rh - 2 * kPad, pw * 1.15f);
         for (int i = 0; i < 2; ++i) {
-            D2D1_RECT_F p = Rect(cx - pw - 2 + i * (pw + 4), mid - ph / 2, pw, ph);
-            c.FillV(p, ph * 0.22f, t.text.Alpha(0.12f), t.text.Alpha(0.06f));
-            c.Line({p.left + 2, mid}, {p.right - 2, mid}, t.bg.Alpha(0.6f), 1, false);
-            c.Text(i ? b : a, p, Weight::Semi, ph * 0.56f, t.text, Align::Center);
+            D2D1_RECT_F p = Rect(cx - pw - kFlapGap / 2 + i * (pw + kFlapGap), mid - ph / 2, pw, ph);
+            c.FillV(p, 12, t.text.Alpha(0.13f), t.text.Alpha(0.06f));
+            FitText(c, i ? b : a, Inset(p, 3, 0), Weight::Medium, ph * 0.66f, 14, t.text, Align::Center);
+            c.Line({p.left, mid}, {p.right, mid}, t.card.Alpha(0.9f), 1.5f, false);
         }
     }
 }
 
 void DrawWeather(Canvas& c, const Theme& t, const std::string& key, const Meta& m, const D2D1_RECT_F& r, const Host& h, const SYSTEMTIME& st) {
-    float w = Width(r), rh = Height(r), mid = (r.top + r.bottom) / 2, cx = (r.left + r.right) / 2;
-    bool tiny = w < kTinyW, tall = rh >= kTallH;
-    if (!h.wxValid && key != "wx.sun") return Stat(c, t, r, m.glyph, m.name, L"--", tiny ? L"" : L"Finding the forecast");
-    if (key == "wx.status") return Stat(c, t, r, WxIcon(h.wxCode, h.wxDay), m.name, WxText(h.wxCode), tiny ? L"" : h.place);
+    float w = Width(r), rh = Height(r), mid = (r.top + r.bottom) / 2, cx = (r.left + r.right) / 2, x = r.left + kPad, room = w - 2 * kPad;
+    bool big = IsBig(rh);
+    if (!h.wxValid && key != "wx.sun") return Stat(c, t, r, m.glyph, m.name, L"--", L"Finding the forecast");
+    if (key == "wx.status") {
+        float is = big ? 56.0f : 30.0f;
+        Stat(c, t, r, WxIcon(h.wxCode, h.wxDay), h.place.empty() ? std::wstring(m.name) : h.place, Deg(h.tempC, h.fahrenheit), WxText(h.wxCode));
+        c.Icon(WxIcon(h.wxCode, h.wxDay), {r.right - kPad - is / 2, big ? r.top + kPad + kHeadH + 8 + 29 : r.bottom - kPad - 28}, is, t.accentHi, true);
+        return;
+    }
     if (key == "wx.details") {
-        feeds::Series s = feeds::Get("sky");
-        wchar_t a[48], b[64];
-        swprintf_s(a, L"Wind %.0f km/h", s.value);
-        swprintf_s(b, L"Rain %.1f mm  ·  %ls–%ls", s.extra, Deg(h.lowC, h.fahrenheit).c_str(), Deg(h.highC, h.fahrenheit).c_str());
-        return Stat(c, t, r, WxIcon(h.wxCode, h.wxDay), m.name, s.ok ? std::wstring(a) : Deg(h.tempC, h.fahrenheit), tiny ? L"" : s.ok ? std::wstring(b) : NotYet(s));
+        feeds::Series s = Feed("sky");
+        wchar_t wind[32], rain[32];
+        swprintf_s(wind, L"%.0f km/h", s.value);
+        swprintf_s(rain, L"%.1f mm", s.extra);
+        Head(c, t, r, WxIcon(h.wxCode, h.wxDay), m.name, t.accentHi);
+        std::vector<std::pair<std::wstring, std::wstring>> rows;
+        rows.push_back({L"Now", Deg(h.tempC, h.fahrenheit)});
+        rows.push_back({L"Range", Deg(h.lowC, h.fahrenheit) + L" – " + Deg(h.highC, h.fahrenheit)});
+        if (s.ok) rows.push_back({L"Wind", wind}), rows.push_back({L"Rain", rain});
+        if (!big && rows.size() > 3) rows.pop_back();
+        Rows(c, t, {x, r.top + kPad + kHeadH + 2, r.right - kPad, r.bottom - kPad + 2}, rows, big ? 15.0f : 12);
+        return;
     }
     if (key == "wx.sun") {
-        feeds::Series s = feeds::Get("sky");
-        if (!s.ok || s.points.size() < 2 || s.points[0] < 0) return Stat(c, t, r, glyph::ClearDay, m.name, L"--", tiny ? L"" : NotYet(s));
+        feeds::Series s = Feed("sky");
+        if (!s.ok || s.points.size() < 2 || s.points[0] < 0) return Stat(c, t, r, glyph::ClearDay, m.name, L"--", NotYet(s));
         auto hm = [](double mins) {
             wchar_t b[12];
             swprintf_s(b, L"%02d:%02d", (int)mins / 60, (int)mins % 60);
             return std::wstring(b);
         };
         double nowMin = st.wHour * 60.0 + st.wMinute, k = (nowMin - s.points[0]) / (std::max)(1.0, s.points[1] - s.points[0]);
-        if (!tall) {
-            float lx = tiny ? r.left + 4 : r.left + kPad, lw = tiny ? w - 8 : w - 2 * kPad;
-            Lane(c, t, Rect(lx, mid + (tiny ? -2 : 2), lw, 4), k, t.accentHi);
-            if (!tiny) {
-                c.Text(hm(s.points[0]), Rect(lx, mid - 14, lw, 13), Weight::Medium, 10, t.textDim);
-                c.Text(hm(s.points[1]), Rect(lx, mid - 14, lw, 13), Weight::Medium, 10, t.textDim, Align::Right);
-            }
-            return;
-        }
-        float rad = (std::min)(w * 0.36f, rh * 0.5f);
-        D2D1_POINT_2F o = {cx, r.top + rh * 0.68f};
-        c.Arc(o, rad, -kPi, kPi, t.text.Alpha(0.16f), 2);
-        float ang = -kPi + kPi * (float)(std::clamp)(k, 0.0, 1.0);
-        c.Dot({o.x + std::cos(ang) * rad, o.y + std::sin(ang) * rad}, 5, t.accentHi);
-        c.Text(hm(s.points[0]), Rect(r.left + 12, r.bottom - 26, 70, 16), Weight::Medium, 11, t.textDim);
-        c.Text(hm(s.points[1]), Rect(r.right - 82, r.bottom - 26, 70, 16), Weight::Medium, 11, t.textDim, Align::Right);
+        float labelH = big ? 20.0f : 16.0f, base = r.bottom - kPad - labelH - 2, rad = (std::min)(room * 0.42f, base - r.top - kPad - 4);
+        D2D1_POINT_2F o = {cx, base};
+        c.Line({x, base}, {r.right - kPad, base}, t.text.Alpha(0.14f), 1.2f);
+        c.Arc(o, rad, -kPi, kPi, t.text.Alpha(0.16f), 2.5f);
+        float past = (float)(std::clamp)(k, 0.0, 1.0), ang = -kPi + kPi * past;
+        if (past > 0) c.Arc(o, rad, -kPi, kPi * past, t.accentHi, 2.5f);
+        if (k >= 0 && k <= 1) c.Dot({o.x + std::cos(ang) * rad, o.y + std::sin(ang) * rad}, big ? 8.0f : 5.5f, t.accentHi);
+        float size = big ? 13.0f : 11.0f;
+        c.Text(hm(s.points[0]), Rect(x, r.bottom - kPad - labelH, room, labelH), Weight::Medium, size, t.textDim);
+        c.Text(hm(s.points[1]), Rect(x, r.bottom - kPad - labelH, room, labelH), Weight::Medium, size, t.textDim, Align::Right);
         return;
     }
     bool hours = key == "wx.hourly", withToday = key == "wx.todayfc"; // rows of hours or days
-    int n = hours ? (std::min)(h.nHours, 6) : (std::min)(h.nDays, withToday ? 3 : 4);
+    int have = hours ? h.nHours : h.nDays, most = (std::max)(2, (int)(room / kCellLeast));
+    int n = (std::min)((std::min)(have, hours ? 6 : withToday ? 3 : 4), most - (withToday ? 1 : 0));
     int cells = n + (withToday ? 1 : 0);
     if (cells <= 0) return;
-    float cw = (w - 2 * kPad) / cells;
+    float cw = room / cells, k = big ? 1.5f : 1.0f;
     for (int i = 0; i < cells; ++i) {
-        float dx = r.left + kPad + cw * (i + 0.5f);
+        float dx = x + cw * (i + 0.5f);
         std::wstring top, val;
         int icon;
         if (withToday && i == 0) {
@@ -507,204 +648,237 @@ void DrawWeather(Canvas& c, const Theme& t, const std::string& key, const Meta& 
             SYSTEMTIME ds{(WORD)d.y, (WORD)d.m, 0, (WORD)d.d};
             top = DateText(ds, L"ddd"), val = Deg(d.hiC, h.fahrenheit), icon = WxIcon(d.code, true);
         }
-        if (tall) {
-            c.Text(top, Rect(dx - cw / 2, mid - 34, cw, 14), Weight::Medium, 10.5f, t.textDim, Align::Center);
-            c.Icon(icon, {dx, mid}, 22, t.accentHi, true);
-            c.Text(val, Rect(dx - cw / 2, mid + 18, cw, 16), Weight::Semi, 12, t.text, Align::Center);
-        } else {
-            c.Text(top, Rect(dx - cw / 2, mid - 17, cw, 11), Weight::Medium, 8.5f, t.textDim, Align::Center);
-            c.Icon(icon, {dx, mid - 1}, 13, t.accentHi, true);
-            c.Text(val, Rect(dx - cw / 2, mid + 6, cw, 12), Weight::Semi, 9.5f, t.text, Align::Center);
-        }
+        c.Text(top, Rect(dx - cw / 2, mid - 37 * k, cw, 16 * k), Weight::Medium, 11 * k, t.textDim, Align::Center);
+        c.Icon(icon, {dx, mid}, 24 * k, t.accentHi, true);
+        c.Text(val, Rect(dx - cw / 2, mid + 19 * k, cw, 18 * k), Weight::Semi, 13 * k, t.text, Align::Center);
     }
 }
 
 void DrawWork(Canvas& c, const Theme& t, const std::string& key, const Meta& m, const D2D1_RECT_F& r, const SYSTEMTIME& st) {
-    float w = Width(r), rh = Height(r), mid = (r.top + r.bottom) / 2;
-    bool tiny = w < kTinyW, tall = rh >= kTallH;
+    float w = Width(r), rh = Height(r), mid = (r.top + r.bottom) / 2, x = r.left + kPad, room = w - 2 * kPad;
+    bool big = IsBig(rh), wide = IsWide(w, rh);
     if (key == "time.timeline") {
         feeds::Screen s = feeds::ScreenTime();
-        feeds::Series sky = feeds::Get("sky");
-        D2D1_RECT_F lane = Rect(r.left + kPad, mid - 3, w - 2 * kPad, 8);
-        c.Fill(lane, 4, t.text.Alpha(0.08f));
-        float hw = Width(lane) / 24;
+        feeds::Series sky = Feed("sky");
+        Head(c, t, r, m.glyph, Hours(s.today) + L" today", t.accentHi);
+        float laneH = big ? 22.0f : 12.0f;
+        D2D1_RECT_F lane = Rect(x, mid - laneH / 2 + 5, room, laneH);
+        c.Fill(lane, laneH / 2, t.text.Alpha(0.08f));
+        float hw = room / 24;
         for (int i = 0; i < 24; ++i)
-            if (s.hours[i] > 0) c.Fill(Rect(lane.left + hw * i, lane.top, hw, 8), 2, t.accent.Alpha(0.25f + 0.75f * (std::min)(1.0f, s.hours[i] / 3600.0f)));
-        float nowX = lane.left + Width(lane) * (st.wHour * 60 + st.wMinute) / 1440;
-        c.Line({nowX, lane.top - 4}, {nowX, lane.bottom + 4}, t.text, 1.2f);
+            if (s.hours[i] > 0) c.Fill(Rect(lane.left + hw * i, lane.top, hw, laneH), 2, t.accent.Alpha(0.25f + 0.75f * (std::min)(1.0f, s.hours[i] / 3600.0f)));
+        float nowX = lane.left + room * (st.wHour * 60 + st.wMinute) / 1440;
+        c.Line({nowX, lane.top - 4}, {nowX, lane.bottom + 4}, t.text, 1.6f);
         if (sky.ok && sky.points.size() >= 2 && sky.points[0] >= 0)
-            for (double mins : sky.points) c.Dot({lane.left + Width(lane) * (float)(mins / 1440), lane.top - 5}, 2, Color::Rgb(0xFACC15));
-        c.Text(Hours(s.today) + L" today", Rect(lane.left, r.top + 2, Width(lane), 13), Weight::Semi, 10, t.textDim);
+            for (double mins : sky.points) c.Dot({lane.left + room * (float)(mins / 1440), lane.top - 7}, 2.5f, Color::Rgb(0xFACC15));
+        static const wchar_t* const kMarks[] = {L"00", L"06", L"12", L"18"};
+        for (int i = 0; i < 4; ++i) c.Text(kMarks[i], Rect(lane.left + room * i / 4, lane.bottom + 6, 30, 14), Weight::Regular, 10.5f, t.textLow);
     } else if (key == "time.screen") {
         feeds::Screen s = feeds::ScreenTime();
-        std::wstring top = s.apps.empty() ? L"Nothing yet today" : s.apps[0].app + (tall ? L"  " + Hours(s.apps[0].seconds) : L"");
+        std::wstring top = s.apps.empty() ? L"Nothing yet today" : s.apps[0].app + L"  " + Hours(s.apps[0].seconds);
         std::vector<double> pts(s.hours, s.hours + 24);
-        Stat(c, t, r, m.glyph, m.name, Hours(s.today), tiny ? L"" : top, tall ? &pts : nullptr);
+        StatOpts o;
+        if (big || wide) o.pts = &pts;
+        Stat(c, t, r, m.glyph, m.name, Hours(s.today), top, o);
     } else if (key == "time.timer") {
         double left = state::TimerLeft();
         bool on = state::TimerRunning();
         wchar_t b[16];
         swprintf_s(b, L"%d:%02d", (int)left / 60, (int)left % 60);
         std::wstring sub = on ? L"Click to pause" : left > 0 && left < state::TimerLength() ? L"Paused" : L"Click to start";
-        Stat(c, t, r, m.glyph, m.name, b, tiny ? L"" : sub, nullptr, on ? t.accentHi : t.textDim);
+        StatOpts o;
+        o.ink = on ? t.accentHi : t.textDim;
+        Stat(c, t, r, m.glyph, m.name, b, sub, o);
     } else if (key == "time.stopwatch") {
         double v = state::WatchSeconds();
         wchar_t b[20];
         swprintf_s(b, L"%d:%02d", (int)v / 60, (int)v % 60);
-        std::wstring sub = state::WatchRunning() ? L"Running" : v > 0 ? L"Paused" : L"Click to start";
-        Stat(c, t, r, m.glyph, m.name, b, tiny ? L"" : sub, nullptr, state::WatchRunning() ? t.accentHi : t.textDim);
+        StatOpts o;
+        o.ink = state::WatchRunning() ? t.accentHi : t.textDim;
+        Stat(c, t, r, m.glyph, m.name, b, state::WatchRunning() ? L"Running" : v > 0 ? L"Paused" : L"Click to start", o);
     } else if (key == "money.currency") {
-        feeds::Series s = feeds::Get("rates");
+        feeds::Series s = Feed("rates");
         wchar_t b[32];
         swprintf_s(b, L"%.4g", s.value);
-        Stat(c, t, r, m.glyph, m.name, s.ok ? std::wstring(b) : L"--", tiny ? L"" : s.ok ? s.text : NotYet(s));
+        Stat(c, t, r, m.glyph, m.name, s.ok ? std::wstring(b) : L"--", s.ok ? s.text : NotYet(s));
     } else if (key == "prog.day" || key == "prog.month") {
         double v = Frac(key == "prog.day" ? 0 : 1);
-        RingFace(c, t, r, m.name, v, std::to_wstring((int)(v * 100)), L"");
+        RingFace(c, t, r, key == "prog.day" ? L"Today" : DateText(st, L"MMMM"), v, std::to_wstring((int)(v * 100)) + L"%", L"");
     } else if (key == "prog.year") {
         double v = Frac(2);
-        int cols = (std::max)(12, (int)(w / 6)), rows = (std::clamp)((int)(rh / 6) - 1, 3, 26);
-        float sx = (w - 2 * kPad) / cols, sy = (rh - 8) / rows;
-        int lit = (int)(v * cols * rows);
-        for (int i = 0; i < cols * rows; ++i) c.Dot({r.left + kPad + sx * (i % cols + 0.5f), r.top + 4 + sy * (i / cols + 0.5f)}, (std::min)(sx, sy) * 0.3f, i < lit ? t.accentHi : t.text.Alpha(0.1f));
+        constexpr int kDays = 365;
+        wchar_t pct[12];
+        swprintf_s(pct, L"%d%%", (int)(v * 100));
+        Head(c, t, r, m.glyph, std::to_wstring(st.wYear), t.accentHi);
+        c.Text(pct, Rect(x, r.top + kPad, room, kHeadH), Weight::Medium, 11.5f, t.text, Align::Right);
+        D2D1_RECT_F dots = {x, r.top + kPad + kHeadH + 8, r.right - kPad, r.bottom - kPad};
+        float dw = Width(dots), dh = Height(dots);
+        int cols = (std::max)(7, (int)std::ceil(std::sqrt(kDays * dw / dh))), rows = (kDays + cols - 1) / cols, lit = (int)(v * kDays); // a dot a day, as square as the room allows
+        float sx = dw / cols, sy = dh / rows, rad = (std::min)(sx, sy) * 0.33f;
+        for (int i = 0; i < kDays; ++i) c.Dot({dots.left + sx * (i % cols + 0.5f), dots.top + sy * (i / cols + 0.5f)}, rad, i < lit ? t.accentHi : t.text.Alpha(0.12f));
     } else if (key == "list.water") {
         int have = state::Water(), goal = state::WaterGoal();
-        Stat(c, t, r, m.glyph, m.name, std::to_wstring(have) + L"/" + std::to_wstring(goal), tiny ? L"" : L"Glasses today", nullptr, have >= goal ? t.accentHi : t.textDim);
+        StatOpts o;
+        o.bar = goal > 0 ? (double)have / goal : 0;
+        Stat(c, t, r, m.glyph, m.name, std::to_wstring(have) + L" of " + std::to_wstring(goal), L"Glasses today", o);
     } else if (key == "list.notes") {
+        Head(c, t, r, m.glyph, m.name, t.accentHi);
         std::wstring note = feeds::Setting("notes");
-        std::wstring first = note.substr(0, note.find(L'\n'));
-        Stat(c, t, r, m.glyph, m.name, first.empty() ? L"Notes" : first, tiny || !first.empty() ? L"" : L"Click to write", nullptr, t.textDim);
+        float y = r.top + kPad + kHeadH + 6, line = big ? 22.0f : 18.0f;
+        if (note.empty()) return c.Text(L"Click to write", Rect(x, y, room, line), Weight::Regular, big ? 15.0f : 13.0f, t.textLow);
+        for (size_t a = 0; a < note.size() && y + line <= r.bottom - kPad + 4;) {
+            size_t e = (std::min)(note.find(L'\n', a), note.size());
+            c.Text(note.substr(a, e - a), Rect(x, y, room, line), Weight::Regular, big ? 15.0f : 13.0f, t.text);
+            y += line, a = e + 1;
+        }
     } else if (key == "list.habits") {
         auto hb = state::Habits();
         int today = state::Today(), done = 0;
-        for (const auto& x : hb) done += x.last == today;
-        Stat(c, t, r, m.glyph, m.name, std::to_wstring(done) + L" of " + std::to_wstring(hb.size()), tiny ? L"" : L"Today", nullptr, done && done == (int)hb.size() ? t.accentHi : t.textDim);
+        for (const auto& one : hb) done += one.last == today;
+        StatOpts o;
+        o.bar = hb.empty() ? 0 : (double)done / hb.size();
+        Stat(c, t, r, m.glyph, m.name, std::to_wstring(done) + L" of " + std::to_wstring(hb.size()), L"Today", o);
     }
 }
 
 void DrawSystem(Canvas& c, const Theme& t, const std::string& key, const Meta& m, const D2D1_RECT_F& r, const Host& h) {
-    float w = Width(r), rh = Height(r), mid = (r.top + r.bottom) / 2, cx = (r.left + r.right) / 2;
-    bool tiny = w < kTinyW, tall = rh >= kTallH;
     if (key == "sys.cpu") {
-        RingFace(c, t, r, L"Processor", h.cpu, std::to_wstring((int)std::lround(h.cpu * 100)), L"");
+        RingFace(c, t, r, L"CPU", h.cpu, std::to_wstring((int)std::lround(h.cpu * 100)) + L"%", L"");
     } else if (key == "sys.ram") {
         wchar_t b[32] = {};
         if (h.memTotalGb > 0) swprintf_s(b, L"%.1f of %.0f GB", h.memUsedGb, h.memTotalGb);
-        RingFace(c, t, r, L"Memory", h.mem, std::to_wstring((int)std::lround(h.mem * 100)), b);
+        RingFace(c, t, r, L"RAM", h.mem, std::to_wstring((int)std::lround(h.mem * 100)) + L"%", b);
     } else if (key == "sys.temp") {
-        feeds::Series s = feeds::Get("thermal");
+        feeds::Series s = Feed("thermal");
         wchar_t b[48];
         swprintf_s(b, L"CPU %d%%  ·  RAM %d%%", (int)std::lround(h.cpu * 100), (int)std::lround(h.mem * 100));
-        std::wstring why = s.error.empty() ? L"Reading…" : s.error;
-        Stat(c, t, r, m.glyph, m.name, s.ok ? std::to_wstring((int)std::lround(s.value)) + L"°" : L"--", tiny ? L"" : s.ok ? std::wstring(b) : why, nullptr, s.ok && s.value > 85 ? Color::Rgb(kDown) : t.accentHi);
+        StatOpts o;
+        o.ink = s.ok && s.value > 85 ? Bad(t) : t.accentHi;
+        Stat(c, t, r, m.glyph, m.name, s.ok ? std::to_wstring((int)std::lround(s.value)) + L"°" : L"--", s.ok ? std::wstring(b) : s.error.empty() ? L"Reading…" : s.error, o);
     } else if (key == "sys.lang") {
-        Stat(c, t, r, m.glyph, m.name, state::Language(), tiny ? L"" : L"Click to switch");
+        Stat(c, t, r, m.glyph, m.name, state::Language(), L"Click to switch");
     } else if (key == "sys.bright") {
-        if (h.bright < 0) return Stat(c, t, r, m.glyph, m.name, L"--", tiny ? L"" : L"Not on this display");
-        Stat(c, t, r, m.glyph, m.name, std::to_wstring(h.bright) + L"%", tiny ? L"" : L"Click for the slider");
+        if (h.bright < 0) return Stat(c, t, r, m.glyph, m.name, L"--", L"Not on this display");
+        StatOpts o;
+        o.bar = h.bright / 100.0;
+        Stat(c, t, r, m.glyph, m.name, std::to_wstring(h.bright) + L"%", L"", o);
     } else if (key == "sys.theme") {
-        Stat(c, t, r, m.glyph, m.name, state::LightTheme() ? L"Light" : L"Dark", tiny ? L"" : L"Click to switch");
-    } else if (key == "sys.tray") {
-        c.Icon(m.glyph, {cx, mid}, 19, t.textDim);
+        Stat(c, t, r, m.glyph, L"Windows", state::LightTheme() ? L"Light" : L"Dark", L"Click to switch");
     } else if (key == "sys.storage" || key == "sys.drives") {
         ULARGE_INTEGER freeBytes{}, total{};
         GetDiskFreeSpaceExW(L"C:\\", &freeBytes, &total, nullptr);
         double used = total.QuadPart ? 1 - (double)freeBytes.QuadPart / (double)total.QuadPart : 0;
-        wchar_t b[32];
-        swprintf_s(b, L"%.0f GB free", freeBytes.QuadPart / 1073741824.0);
-        if (tiny) return RingFace(c, t, r, m.name, used, std::to_wstring((int)(used * 100)), L"");
-        Stat(c, t, r, m.glyph, m.name, b, L"");
-        Color ink = used > 0.9 ? Color::Rgb(kDown) : t.accentHi;
-        if (tall) Lane(c, t, Rect(r.left + 16, r.bottom - 22, w - 32, 6), used, ink);
-        else Lane(c, t, Rect(r.left + kPad + 26, r.bottom - 10, w - 2 * kPad - 26, 3), used, ink);
-        (void)rh;
+        wchar_t main[32], sub[32];
+        swprintf_s(main, L"%.0f GB", freeBytes.QuadPart / 1073741824.0);
+        swprintf_s(sub, L"Free of %.0f GB", total.QuadPart / 1073741824.0);
+        StatOpts o;
+        o.bar = used, o.ink = used > 0.9 ? Bad(t) : t.accentHi;
+        Stat(c, t, r, m.glyph, m.name, main, sub, o);
     }
 }
 
 void DrawMediaFace(Canvas& c, const Theme& t, const std::string& key, const D2D1_RECT_F& r, const Host& h) {
-    float w = Width(r), rh = Height(r), mid = (r.top + r.bottom) / 2, cx = (r.left + r.right) / 2;
+    float w = Width(r), rh = Height(r), mid = (r.top + r.bottom) / 2, cx = (r.left + r.right) / 2, x = r.left + kPad, room = w - 2 * kPad;
+    bool big = IsBig(rh);
     std::wstring title = h.hasTrack ? h.title : L"Nothing playing";
     if (key == "media.mini") {
-        float rad = (std::min)(w, rh) / 2 - 4;
-        c.Ring({cx, mid}, rad, t.text.Alpha(0.14f), 2.5f);
-        if (h.hasTrack) c.Arc({cx, mid}, rad, -kPi / 2, 2 * kPi * (float)h.progress, t.accentHi, 2.5f);
-        c.Icon(h.playing ? glyph::Pause : glyph::Play, {cx, mid}, rad * 1.1f, t.text, true);
-    } else if (key == "media.compact") {
-        c.Icon(h.playing ? glyph::Pause : glyph::Play, {r.left + kPad + 11, mid}, 22, h.hasTrack ? t.accentHi : t.textLow, true);
-        float tx = r.left + kPad + 28, tw = r.right - kPad - tx;
-        c.Text(title, Rect(tx, mid - 15, tw, 16), Weight::Semi, 12, t.text);
-        if (h.hasTrack) c.Text(h.artist, Rect(tx, mid + 1, tw, 14), Weight::Regular, 10.5f, t.textDim);
-    } else {
-        float tx = r.left + kPad, tw = w - 2 * kPad - 26;
-        c.Text(title, Rect(tx, mid - 16, tw, 16), Weight::Semi, 12, t.text);
-        Lane(c, t, Rect(tx, mid + 6, tw, 4), h.hasTrack ? h.progress : 0, t.accentHi);
-        c.Icon(glyph::Next, {r.right - kPad - 10, mid}, 20, h.hasTrack ? t.text : t.textLow, true);
+        float rad = (std::min)(w, rh) / 2 - 12;
+        c.Ring({cx, mid}, rad, t.text.Alpha(0.12f), big ? 9.0f : 6.0f);
+        if (h.hasTrack) c.Arc({cx, mid}, rad, -kPi / 2, 2 * kPi * (float)h.progress, t.accentHi, big ? 9.0f : 6.0f);
+        c.Icon(h.playing ? glyph::Pause : glyph::Play, {cx, mid}, rad * 0.95f, h.hasTrack ? t.text : t.textLow, true);
+        return;
     }
+    bool bar = key == "media.bar";
+    float k = big ? 1.4f : 1.0f, ctl = 30 * k, bottom = r.bottom - kPad;
+    Head(c, t, r, glyph::Music, L"Now playing", h.hasTrack ? t.accentHi : t.textLow);
+    c.Icon(bar ? glyph::Next : h.playing ? glyph::Pause : glyph::Play, {r.right - kPad - ctl / 2, bar ? r.top + kPad + kHeadH / 2 : bottom - ctl / 2}, ctl * (bar ? 0.72f : 1.0f), h.hasTrack ? t.text : t.textLow, true);
+    float tw = bar ? room : room - ctl - 6, by = bottom;
+    if (bar) {
+        Lane(c, t, Rect(x, by - 5 * k, room, 5 * k), h.hasTrack ? h.progress : 0, t.accentHi);
+        by -= 13 * k;
+    }
+    if (h.hasTrack) {
+        c.Text(h.artist, Rect(x, by - 16 * k, tw, 16 * k), Weight::Regular, 11.5f * k, t.textDim);
+        by -= 17 * k;
+    }
+    FitText(c, title, Rect(x, by - 21 * k, tw, 21 * k), Weight::Semi, 14.5f * k, 12, h.hasTrack ? t.text : t.textDim);
 }
 
 void DrawOnline(Canvas& c, const Theme& t, int kind, const std::string& key, const Meta& m, const D2D1_RECT_F& r) {
-    float w = Width(r), rh = Height(r), mid = (r.top + r.bottom) / 2;
-    bool tiny = w < kTinyW, tall = rh >= kTallH;
-    feeds::Series s = m.feed ? feeds::Get(m.feed) : feeds::Series{};
+    float w = Width(r), rh = Height(r), x = r.left + kPad, room = w - 2 * kPad;
+    bool big = IsBig(rh);
+    feeds::Series s = m.feed ? Feed(m.feed) : feeds::Series{};
     if (key == "money.metric") {
         wchar_t b[32];
         swprintf_s(b, s.value >= 100 ? L"%.0f" : L"%.2f", s.value);
-        Stat(c, t, r, m.glyph, s.ok ? s.text : m.name, s.ok ? std::wstring(b) : L"--", tiny ? L"" : s.ok ? s.text : NotYet(s));
+        Stat(c, t, r, m.glyph, s.ok ? s.text : m.name, s.ok ? std::wstring(b) : L"--", s.ok ? L"" : NotYet(s));
     } else if (key == "stock.one" || key == "stock.chart") {
         std::wstring tick = Ticker("stock.id", L"AAPL");
-        feeds::Series q = feeds::Get(QuoteId(tick));
+        feeds::Series q = Feed(QuoteId(tick));
         wchar_t b[32];
         swprintf_s(b, L"%.2f", q.value);
-        if (!q.ok) return Stat(c, t, r, m.glyph, tick, tick, tiny ? L"" : NotYet(q));
-        Stat(c, t, r, q.change >= 0 ? glyph::Up : glyph::Down, tick, tick + L"  " + b, tiny ? L"" : Pct(q.change), key == "stock.chart" ? &q.points : nullptr, Trend(t, q.change));
+        if (!q.ok) return Stat(c, t, r, m.glyph, tick, L"--", NotYet(q));
+        StatOpts o;
+        o.ink = o.subInk = Trend(t, q.change);
+        if (key == "stock.chart") o.pts = &q.points;
+        Stat(c, t, r, q.change >= 0 ? glyph::Up : glyph::Down, tick, b, Pct(q.change), o);
     } else if (key == "stock.watch") {
         auto list = Watch();
-        float cw = (w - 2 * kPad) / (float)(std::max)((size_t)1, list.size());
-        for (size_t i = 0; i < list.size(); ++i) {
-            feeds::Series q = feeds::Get(QuoteId(list[i]));
-            float x = r.left + kPad + cw * i;
+        float row = (rh - 2 * kPad) / (float)(std::max)((size_t)1, list.size()), y = r.top + kPad, size = big ? 16.0f : 12.5f;
+        bool roomy = room >= kWatchRoomy;
+        for (const auto& one : list) {
+            feeds::Series q = Feed(QuoteId(one));
             wchar_t b[32];
             swprintf_s(b, L"%.2f", q.value);
-            c.Text(list[i], Rect(x, mid - 17, cw, 12), Weight::Semi, 10, t.text);
-            c.Text(q.ok ? std::wstring(b) : L"--", Rect(x, mid - 5, cw, 12), Weight::Regular, 10, t.textDim);
-            if (q.ok) c.Text(Pct(q.change), Rect(x, mid + 6, cw, 12), Weight::Medium, 9.5f, Trend(t, q.change));
+            c.Text(one, Rect(x, y, room * 0.4f, row), Weight::Semi, size, t.text);
+            if (q.ok) {
+                c.Text(Pct(q.change), Rect(x, y, room, row), Weight::Medium, size - 1, Trend(t, q.change), Align::Right);
+                if (roomy) c.Text(b, Rect(x, y, room * 0.68f, row), Weight::Regular, size, t.textDim, Align::Right);
+            } else {
+                c.Text(L"--", Rect(x, y, room, row), Weight::Regular, size, t.textLow, Align::Right);
+            }
+            y += row;
         }
     } else if (key == "web.plausible" || key == "web.datafast") {
         VisitFace(c, t, kind, r, L"visitors");
     } else if (key == "web.dub") {
         VisitFace(c, t, kind, r, L"clicks");
     } else if (key == "web.resend") {
-        if (!s.ok) return Stat(c, t, r, m.glyph, m.name, L"--", tiny ? L"" : NotYet(s));
-        Stat(c, t, r, m.glyph, m.name, Short(s.week) + L" sent", tiny ? L"" : L"This week");
+        if (!s.ok) return Stat(c, t, r, m.glyph, m.name, L"--", NotYet(s));
+        Stat(c, t, r, m.glyph, m.name, Short(s.week), L"Sent this week");
     } else if (key == "web.linear") {
-        CountFace(c, t, kind, r, tiny ? L"" : Short(s.extra) + L" started");
+        CountFace(c, t, kind, r, Short(s.extra) + L" started");
     } else if (key == "web.supabase") {
-        CountFace(c, t, kind, r, tiny ? L"" : s.text);
+        CountFace(c, t, kind, r, s.text);
     } else if (key == "web.gmail") {
-        CountFace(c, t, kind, r, tiny ? L"" : L"Unread");
+        CountFace(c, t, kind, r, L"Unread");
     } else if (key == "web.github") {
-        CountFace(c, t, kind, r, tiny ? L"" : L"Notifications");
+        CountFace(c, t, kind, r, L"Notifications");
     } else if (key == "web.githubover") {
         CountFace(c, t, kind, r, Short(s.extra) + L" PRs  ·  " + Short(s.extra2) + L" stars");
     } else if (key == "web.githubgrid") {
-        if (!s.ok) return Stat(c, t, r, m.glyph, m.name, L"--", tiny ? L"" : NotYet(s));
-        int rows = 7, cols = (std::max)(1, (int)((w - 2 * kPad) / (tall ? 8.0f : 4.6f)));
-        float cell = (std::min)((w - 2 * kPad) / cols, (rh - 8) / rows);
-        size_t show = (std::min)((size_t)(cols * rows), s.points.size()), from = s.points.size() - show;
+        if (!s.ok) return Stat(c, t, r, m.glyph, m.name, L"--", NotYet(s));
+        constexpr int kWeekDays = 7;
+        float cell = (rh - 2 * kPad) / kWeekDays;
+        int cols = (std::max)(1, (int)(room / cell));
+        size_t show = (std::min)((size_t)(cols * kWeekDays), s.points.size()), from = s.points.size() - show;
         double top = 1;
         for (size_t i = from; i < s.points.size(); ++i) top = (std::max)(top, s.points[i]);
+        float left = x + (room - cols * cell) / 2;
         for (size_t i = 0; i < show; ++i) {
             double v = s.points[from + i];
-            c.Fill(Rect(r.left + kPad + cell * (float)(i / rows), r.top + 4 + cell * (float)(i % rows), cell - 1, cell - 1), 1, v > 0 ? t.accent.Alpha(0.3f + 0.7f * (float)(v / top)) : t.text.Alpha(0.07f));
+            c.Fill(Rect(left + cell * (float)(i / kWeekDays), r.top + kPad + cell * (float)(i % kWeekDays), cell - 2, cell - 2), cell * 0.22f, v > 0 ? t.accent.Alpha(0.3f + 0.7f * (float)(v / top)) : t.text.Alpha(0.08f));
         }
     } else if (key == "web.leetcode") {
-        CountFace(c, t, kind, r, tiny ? L"" : L"Solved  ·  " + Short(s.extra) + L" day streak");
+        CountFace(c, t, kind, r, L"Solved  ·  " + Short(s.extra) + L" day streak");
     } else { // the follower counts
-        CountFace(c, t, kind, r, tiny ? L"" : s.text);
+        CountFace(c, t, kind, r, s.text.empty() ? L"Followers" : s.text);
     }
 }
 
 }
+
+void Sampling(bool on) { gSampling = on; }
 
 int Count() { return kKinds; }
 const Meta& Info(int kind) { return kAll[(std::clamp)(kind, 0, kKinds - 1)]; }
@@ -753,8 +927,6 @@ std::wstring Hours(int seconds) {
 void Draw(Canvas& c, const Theme& t, int kind, int, const D2D1_RECT_F& r, const Host& h) { // the rectangle says how much room there is
     if (kind < 0 || kind >= kKinds) return;
     const Meta& m = kAll[kind];
-    float w = Width(r), rh = Height(r), mid = (r.top + r.bottom) / 2, cx = (r.left + r.right) / 2;
-    bool tiny = w < kTinyW, tall = rh >= kTallH;
     SYSTEMTIME st;
     GetLocalTime(&st);
     std::string key = m.key;
@@ -766,16 +938,16 @@ void Draw(Canvas& c, const Theme& t, int kind, int, const D2D1_RECT_F& r, const 
     if (key.rfind("money.", 0) == 0 && key != "money.metric") return MoneyFace(c, t, kind, r);
     if (key == "money.metric" || key.rfind("stock.", 0) == 0 || key.rfind("web.", 0) == 0 || key.rfind("social.", 0) == 0) return DrawOnline(c, t, kind, key, m, r);
     if (key == "files.websearch") {
-        D2D1_RECT_F f = Inset(r, 5, (std::max)(5.0f, rh / 2 - 16));
-        if (tiny) return c.Icon(m.glyph, {cx, mid}, 19, t.textDim);
-        c.Fill(f, Height(f) / 2, t.text.Alpha(0.07f));
-        c.Icon(m.glyph, {f.left + 15, mid}, 15, t.textDim);
-        c.Text(L"Search the web", Rect(f.left + 28, f.top, Width(f) - 32, Height(f)), Weight::Regular, 12, t.textLow);
+        float mid = (r.top + r.bottom) / 2, fh = IsBig(Height(r)) ? 52.0f : 38.0f;
+        D2D1_RECT_F f = {r.left + kPad, mid - fh / 2, r.right - kPad, mid + fh / 2};
+        c.Fill(f, fh / 2, t.text.Alpha(0.08f));
+        c.Icon(m.glyph, {f.left + fh / 2, mid}, fh * 0.44f, t.textDim);
+        const wchar_t* says = c.Measure(L"Search the web", Weight::Regular, fh * 0.34f) <= Width(f) - fh ? L"Search the web" : L"Search";
+        c.Text(says, Rect(f.left + fh * 0.9f, f.top, Width(f) - fh, fh), Weight::Regular, fh * 0.34f, t.textDim);
         return;
     }
     if (key == "files.photo") return state::DrawPhoto(c, t, r);
-    if (tiny) return c.Icon(m.glyph, {cx, mid}, 19, t.textDim);
-    Stat(c, t, r, m.glyph, m.name, m.name, tall ? m.about : L"", nullptr, t.textDim);
+    Launch(c, t, r, m.glyph, m.name, m.about);
 }
 
 std::vector<std::string> Feeds(const std::vector<int>& kinds) {

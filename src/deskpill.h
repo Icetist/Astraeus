@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "anim.h"
+#include "history.h"
 #include "model.h"
 #include "theme.h"
 #include "ui.h"
@@ -28,6 +29,7 @@ public:
     void Want(bool up, HMONITOR on); // the drawer's verdict: the desktop is what's under it, or not
     bool Up() const { return wantUp; } // it's there or on its way: the island steps aside
     void Edit(HMONITOR on);
+    void Studio(HMONITOR on); // the same stage, the wallpaper filling the screen, for arranging the widgets
     bool Editing() const { return editing || leaving; }
     bool MouseOn() const; // the cursor's on its window
     RECT Spot(HMONITOR on); // where it sits, in screen pixels
@@ -38,7 +40,9 @@ public:
         if (v == onApp) return;
         onApp = v;
         if (FillNow() == kFillClear) inkDue = lastFrame + 0.05;
-        if (wantUp) Poke();
+        if (!wantUp) return;
+        if (!Editing()) shapeShift = true, FitWindow(); // room for both while it changes over
+        Poke();
     }
     void LookBehind() { if (wantUp && !Editing()) SampleInk(); } // windows moved, or the wallpaper changed: clear's ink looks again now
 
@@ -47,12 +51,17 @@ public:
     void Frame(const Theme& shell);
 
     std::function<void()> onOpen, onEdit, onDone; // a click, a right click, the editor gone
+    std::function<void()> onLook, onStudioDone; // the editor wants another theme showing; the widgets editor gone
 
 private:
     struct Spec { // what's kept; a working copy while editing, saved as each drag lands
+        struct Shape { // what it can be on its own in each place
+            float len = 560, gap = 10;
+            bool floats = true;
+        } shape[2]; // on the desktop, not on the desktop
         int edge = 0;
-        float pos = 500, len = 560, thick = 30, gap = 10;
-        bool floats = true, apps = false;
+        float pos = 500, thick = 30;
+        bool apps = false;
         int fill = 0, fillApps = 0; // its body on the desktop, and over an app
         std::vector<int> items;
     };
@@ -72,12 +81,21 @@ private:
     static LRESULT CALLBACK Proc(HWND, UINT, WPARAM, LPARAM);
     LRESULT Handle(UINT msg, WPARAM wp, LPARAM lp);
     void Poke() { dirty = true; }
-    int FillNow() const { return (editing || leaving ? previewApps : onApp) ? spec.fillApps : spec.fill; } // the editor shows the one last changed
+    int Ctx() const { return spec.apps && (editing || leaving ? previewApps : onApp) ? 1 : 0; } // which of its two it is now; the editor shows the tab that's picked
+    Spec::Shape& Sh() { return spec.shape[Ctx()]; }
+    const Spec::Shape& Sh() const { return spec.shape[Ctx()]; }
+    int FillNow() const { return Ctx() ? spec.fillApps : spec.fill; }
 
     void Measure(HMONITOR on); // the screen's size in dips
     void DropAppItems();
     void Span(int edge, float& lo, float& hi) const; // the stretch of that edge it may sit on
-    Pose Goal() const; // where the spec puts it
+    Pose Goal(int ctx) const; // where the spec puts that one
+    Pose Goal() const { return Goal(Ctx()); }
+    D2D1_RECT_F Reach(float pad) const; // the room both of its shapes take together
+    bool StepRest(float dt); // resting: eases over to the other shape as the place changes
+    void Grow(float need) { for (Spec::Shape& s : spec.shape) s.len = (std::max)(s.len, need); } // items are shared: both have to fit them
+    void SetPreview(bool apps); // the editor's tab: which of the two it shows and changes
+    void FitSong(std::vector<Placed>& all, size_t from, size_t to, float room, float gap, float thick); // a long title gives way, nothing else does
     D2D1_MATRIX_3X2_F Local(const Pose& p) const;
     D2D1_POINT_2F ToLocal(const Pose& p, D2D1_POINT_2F screen) const;
     D2D1_RECT_F Box(const Pose& p, float pad) const; // its bounds on the screen, in dips
@@ -117,11 +135,16 @@ private:
     D2D1_RECT_F BarRect() const;
     std::vector<int> Offered() const;
     void DrawFloater(const Theme& t);
+    void DrawStudio(const Theme& t);
 
     static constexpr int kEscKey = 0x52B1; // while editing: the pill never takes the keyboard, a hotkey reaches it anyway
 
     Model& model;
     Spec spec;
+    History hist; // the editor's undo: the whole spec
+    int editRun = 0; // bumps as the editor opens: its undo starts afresh
+    History::Snap SpecSnap() const;
+    void SpecLoad(const History::Snap& s);
     HWND hwnd = nullptr;
     HMONITOR screen = nullptr;
     RECT monitor = {}, work = {};
@@ -131,6 +154,9 @@ private:
     bool wantUp = false, editing = false, leaving = false, dirty = false, hot = false, tracking = false;
     anim::Spring appear; // 0 away .. 100 in place
     Pose pose; // what's drawn; follows Goal while editing
+    Pose rest; // what's drawn at rest
+    bool shapeShift = false; // going from one shape to the other: the window has room for both
+    bool studio = false; // the stage holds the widgets, not the pill
     float intro = 0; // the editor's backdrop, 0 the real desktop .. 1 the wallpaper
     float inkDark = 0, inkGoal = 0; // clear's ink, eased
     double inkDue = 0; // a look at what's behind, once it has settled

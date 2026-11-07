@@ -123,10 +123,13 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     defaultPage = (std::clamp)(sys::ReadNum(L"DefaultPage", 0), 0, kPageIds - 1); // identities: the numbers saved before the rail could change still mean the same pages
     lastPage = (std::clamp)(sys::ReadNum(L"LastPage", 0), 0, kPageIds - 1);
     pages = ParseList(sys::ReadText(kPagesVal), kPageKeys, kPageIds);
-    if (pages.empty()) pages = {kPgHome, kPgMedia, kPgSystem, kPgNetwork, kPgShelf, kPgTools}; // every page, the shelf above the tools
+    if (pages.empty()) pages = DefaultPages();
     std::wstring tl = sys::ReadText(kTilesVal);
-    tiles = tl.empty() ? std::vector<int>{kTlSnip, kTlColor, kTlAwake, kTlDnd, kTlSettings} : ParseList(tl, kTileKeys, kToolTiles); // the tiles the tools page always had
+    tiles = tl.empty() ? DefaultTiles() : ParseList(tl, kTileKeys, kToolTiles);
     stageHide = flag(L"StageHide", 1);
+    stageLyrBtn = flag(L"StageLyricsButton", 1);
+    stageEditBtn = flag(L"StageEditButton", 1);
+    tourNext = flag(L"TourNext", 1);
     stageThump = flag(L"StageThump", 1);
     uiScale = (std::clamp)(sys::ReadNum(L"UiScale", 100), 80, 130);
     a11yContrast = (std::clamp)(sys::ReadNum(L"A11yContrast", kContrastAuto), (int)kContrastAuto, (int)kContrastOff);
@@ -156,6 +159,9 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     deskThick = (std::clamp)(sys::ReadNum(L"DeskThick", 30), 24, 56);
     deskGap = (std::clamp)(sys::ReadNum(L"DeskGap", 10), 4, 120);
     deskFloat = flag(L"DeskFloat", 1);
+    deskLenApps = (std::clamp)(sys::ReadNum(L"DeskLenApps", deskLen), 60, 8000); // never set: as it is on the desktop
+    deskGapApps = (std::clamp)(sys::ReadNum(L"DeskGapApps", deskGap), 4, 120);
+    deskFloatApps = flag(L"DeskFloatApps", deskFloat);
     deskApps = flag(L"DeskApps", 0);
     deskFill = (std::clamp)(sys::ReadNum(L"DeskFill", 0), 0, 3);
     {
@@ -284,14 +290,14 @@ void Model::SetPillMeters(bool gpu, bool meters) {
 void Model::ApplyLive() { // the panel's wishes and the dashboards', together
     constexpr int kBoardGpuSec = 5; // a dashboard's gpu gauge: a look every few seconds
     constexpr int kPillGpuSec = 2; // a pill's: lively, without paying for windows' costly counter every second
-    sys::GpuWanted(panelProcs ? 1 : pillGpu ? kPillGpuSec : boardsUp > 0 && BoardHas(kBdGpu) ? kBoardGpuSec : 0); // the system page reads it every second, nobody else at all
+    sys::GpuWanted(panelProcs || pillGpu ? kPillGpuSec : boardsUp > 0 && BoardHas(kBdGpu) ? kBoardGpuSec : 0); // the system page reads it every second, nobody else at all
     bool up = boardsUp > 0, gauges = up && (BoardHas(kBdCpu) || BoardHas(kBdGpu) || BoardHas(kBdRam) || BoardHas(kBdProcs)); // the gauges come from the worker's sample
     bool list = panelProcs || (up && BoardHas(kBdProcs)); // walking every process is the costly part: only where a list shows it
     bool active = panelLive || up || pillGpu, processes = panelProcs || gauges || pillGpu, ping = panelPing; // the pill's reading comes from the worker's sample too; the process list stays off
     shown = panelLive || (up && (BoardHas(kBdCpu) || BoardHas(kBdRam) || BoardHas(kBdNet))); // ui thread: graphs sampled every second only while one shows
     {
         std::lock_guard<std::mutex> guard(lock);
-        bool wakeNow = active && ((processes && !wantProcs) || (ping && !wantPing)); // wake only if the system or network page just came up
+        bool wakeNow = active && ((processes && !wantProcs) || (list && !wantList) || (ping && !wantPing)); // wake only if the system or network page just came up; the list too, when the pill's meters already had it sampling
         pollOn = active;
         wantProcs = active && processes;
         wantList = active && list;
@@ -311,9 +317,19 @@ void Model::Worker() {
         if (quit) break;
         bool procsNow = wantProcs, pingNow = wantPing, listNow = wantList; // snapshot, flags may change while unlocked
         lk.unlock(); // slow sampling runs without lock
+        if (listNow) { // the list first, and sent at once: the gpu counter below can take a while
+            constexpr ULONGLONG kStaleMs = 3000, kPrimeMs = 250; // an old baseline, or none: a quick one, so the shares are real from the start
+            ULONGLONG at = GetTickCount64();
+            if (at - listAt > kStaleMs) procSrc.Top(6), Sleep((DWORD)kPrimeMs);
+            listAt = GetTickCount64();
+            std::vector<sys::ProcRow> top = procSrc.Top(6); // top 6 procs, only where a list shows them
+            lk.lock();
+            newProcs = std::move(top);
+            ready = true;
+            lk.unlock();
+            PostMessageW(notify, WM_APP_STATS, 0, 0);
+        }
         sys::Stats s = procsNow ? statSrc.Sample() : sys::Stats{}; // the gpu counter is costly: only where its gauge is
-        std::vector<sys::ProcRow> top;
-        if (listNow) top = procSrc.Top(6); // top 6 procs, only where a list shows them
         float ping = -2;
         if (pingNow) { // one echo to a public resolver, only while the network page shows
             if (icmp == INVALID_HANDLE_VALUE) icmp = IcmpCreateFile();
@@ -327,10 +343,9 @@ void Model::Worker() {
         lk.lock();
         newStats = s;
         newPing = ping;
-        if (listNow) newProcs = std::move(top);
         ready = true;
         PostMessageW(notify, WM_APP_STATS, 0, 0); // ui thread pulls via OnStats
-        wake.wait_for(lk, std::chrono::seconds(1), [this, procsNow] { return quit || (wantProcs && !procsNow); }); // 1s cadence, early wake if procs newly wanted
+        wake.wait_for(lk, std::chrono::seconds(1), [this, procsNow, listNow] { return quit || (wantProcs && !procsNow) || (wantList && !listNow); }); // 1s cadence, early wake if procs or the list newly wanted
     }
 }
 
@@ -574,7 +589,7 @@ std::wstring Model::ThemeKey(const wchar_t* key) const {
 }
 
 void Model::SyncThemeSet() {
-    int want = !appsTheme ? 0 : settingsOpen && setTab >= 0 ? setTab : overApp ? 1 : 0;
+    int want = !appsTheme ? 0 : deskPreview >= 0 ? deskPreview : settingsOpen && setTab >= 0 ? setTab : overApp ? 1 : 0; // the long pill's editor shows the theme of the one being edited, whatever is behind it
     if (want == setNow) return;
     if (hexFocus) CommitHex(); // what's being typed belongs to the one going out
     ThemeSet live{look, accentMode, accentHex, customBg, glassBlur, bgOpacity, glassTint};
@@ -607,6 +622,9 @@ void Model::SetPages(const std::vector<int>& order) {
     sys::SaveText(kPagesVal, JoinList(pages, kPageKeys));
 }
 
+std::vector<int> Model::DefaultPages() { return {kPgHome, kPgMedia, kPgSystem, kPgNetwork, kPgShelf, kPgTools}; } // every page, the shelf above the tools
+std::vector<int> Model::DefaultTiles() { return {kTlSnip, kTlColor, kTlAwake, kTlDnd, kTlSettings}; } // the tiles the tools page always had
+
 void Model::SetTiles(const std::vector<int>& order) {
     tiles = order;
     sys::SaveText(kTilesVal, JoinList(tiles, kTileKeys));
@@ -617,6 +635,11 @@ const wchar_t* Model::PageName(int id) {
     return kNames[(std::clamp)(id, 0, kPageIds - 1)];
 }
 
+const wchar_t* Model::PageAbout(int id) {
+    static const wchar_t* const kAbout[kPageIds] = {L"Your overview at a glance", L"What's playing and its controls", L"CPU, memory and what's running", L"Speed and what's connected", L"Power, timers and quick tiles", L"Files kept close at hand", L"Your board of widgets"};
+    return kAbout[(std::clamp)(id, 0, kPageIds - 1)];
+}
+
 int Model::PageGlyph(int id) {
     static const int kGlyphs[kPageIds] = {glyph::Overview, glyph::Music, glyph::System, glyph::Network, glyph::Tools, glyph::Shelf, glyph::Dashboard};
     return kGlyphs[(std::clamp)(id, 0, kPageIds - 1)];
@@ -625,6 +648,11 @@ int Model::PageGlyph(int id) {
 const wchar_t* Model::TileName(int id) {
     static const wchar_t* const kNames[kToolTiles] = {L"Screenshot", L"Color picker", L"Awake", L"Notifications", L"Do not disturb", L"Energy saver", L"Airplane", L"Settings", L"Workspaces", L"Keyboard language", L"Recycle bin", L"Updates"};
     return kNames[(std::clamp)(id, 0, kToolTiles - 1)];
+}
+
+const wchar_t* Model::TileAbout(int id) {
+    static const wchar_t* const kAbout[kToolTiles] = {L"Pick a region of the screen", L"Pick a color from the screen", L"Keep the screen on", L"Open the notification list", L"Silence notifications", L"Turn energy saver on or off", L"Turn every radio off", L"Astraeus' settings", L"Switch between workspaces", L"Switch keyboard language", L"See and empty the bin", L"Check for updates"};
+    return kAbout[(std::clamp)(id, 0, kToolTiles - 1)];
 }
 
 int Model::TileGlyph(int id) {
@@ -1073,6 +1101,13 @@ void Model::PlaceFaces(const std::vector<int>& order) {
     SaveFaces(faceOn, faceSize);
 }
 
+void Model::SetFaces(const std::vector<int>& on, const std::map<int, int>& sizes) { // the whole board at once: its editor's undo and reset
+    faceOn = on;
+    faceSize = sizes;
+    SaveFaces(faceOn, faceSize);
+    SyncFaces();
+}
+
 void Model::ToggleFace(int kind) {
     auto it = std::find(faceOn.begin(), faceOn.end(), kind);
     if (it != faceOn.end()) {
@@ -1106,7 +1141,7 @@ void Model::SyncFaces() {
     if (!notify) return;
     feeds::Start(notify, WM_APP_FEEDS, L"Astraeus");
     std::vector<std::string> ids = faces::Feeds(faceOn);
-    if (!panelLive) ids.erase(std::remove_if(ids.begin(), ids.end(), [](const std::string& id) { return id != "screen"; }), ids.end()); // nothing's in sight: only screen time needs to keep noting
+    if (!panelLive && !studioOpen) ids.erase(std::remove_if(ids.begin(), ids.end(), [](const std::string& id) { return id != "screen"; }), ids.end()); // nothing's in sight: only screen time needs to keep noting
     feeds::Want(ids);
     if (!wx.place.empty() && feeds::Setting("sky.place") != wx.place) feeds::SetSetting("sky.place", wx.place);
 }
@@ -1298,6 +1333,13 @@ std::wstring Model::DeskItemText(int k, int& icon) const {
         if (Activity() == kActNone) return L"";
         icon = glyph::Timer;
         return ActivityText();
+    case kWNet: { // the long pill has the room for both ways
+        auto rate = [](double bytes) {
+            double k = bytes / 1024;
+            return k < 1000 ? std::to_wstring((int)std::lround(k)) + L"K" : std::to_wstring((int)std::lround(k / 1024)) + L"M";
+        };
+        return L"↓ " + rate(downHist.Last()) + L"  ↑ " + rate(upHist.Last());
+    }
     default:
         return PillWidget(k, icon);
     }

@@ -11,6 +11,7 @@
 #include <cmath>
 
 #include "glyphs.h"
+#include "pages.h"
 #include "sys.h"
 
 namespace {
@@ -20,6 +21,8 @@ constexpr float kPad = 18; // room around it in its window: the bounce, the shou
 constexpr float kEdgeRoom = 12; // never closer than this to the end of its edge
 constexpr float kFillet = 10; // the shoulders where a stuck pill meets the edge
 constexpr float kItemGap = 12;
+constexpr float kSongLeast = 80; // a song's title is never squeezed below this, and never asks for more of the pill's own length
+constexpr float kShapeRate = 12, kShapeFlat = 8; // changing over between its two shapes
 constexpr float kBlurSigma = 22;
 constexpr float kInkToBlack = 0.52f, kInkToWhite = 0.42f; // apart, so a mid gray wallpaper doesn't flip it back and forth
 constexpr float kTextBox = 16; // text box height at the base size
@@ -39,6 +42,19 @@ double Seconds() {
 }
 
 float TypeScale(float thick) { return (std::clamp)(thick / kBaseThick, 0.8f, 1.35f); }
+
+std::wstring SongStem(std::wstring s) { // the title without what's in brackets at its end: "Song (Remastered 2011) [Live]" is "Song"
+    auto trim = [&] {
+        while (!s.empty() && (s.back() == L' ' || s.back() == L'-')) s.pop_back();
+    };
+    for (trim(); !s.empty(); trim()) {
+        wchar_t close = s.back(), open = close == L')' ? L'(' : close == L']' ? L'[' : close == L'}' ? L'{' : 0;
+        size_t at = open ? s.rfind(open) : std::wstring::npos;
+        if (at == std::wstring::npos || at == 0) break; // nothing but brackets: that is its name
+        s.resize(at);
+    }
+    return s;
+}
 
 bool WallInfo(const RECT& mon, std::wstring& path, DWORD& pos, Color& solid) { // this screen's picture, as windows places it
     ComPtr<IDesktopWallpaper> dw;
@@ -104,7 +120,22 @@ LRESULT CALLBACK DeskPill::Proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 LRESULT DeskPill::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_MOUSEACTIVATE:
-        return MA_NOACTIVATE; // never the keyboard's, not even while editing: esc comes by hotkey
+        return studio ? MA_ACTIVATE : MA_NOACTIVATE; // never the keyboard's while it's the pill: esc comes by hotkey. the widgets editor has a search to type in
+    case WM_MOUSEWHEEL:
+        input.wheel += GET_WHEEL_DELTA_WPARAM(wp) / (float)WHEEL_DELTA;
+        Poke();
+        return 0;
+    case WM_CHAR:
+        if (studio && model.faceSearch) {
+            wchar_t ch = (wchar_t)wp;
+            if (ch == VK_BACK) {
+                if (!model.faceQuery.empty()) model.faceQuery.pop_back();
+            } else if (ch >= 32 && model.faceQuery.size() < Model::kFaceQueryMax) {
+                model.faceQuery += ch;
+            }
+            Poke();
+        }
+        return 0;
     case WM_SETCURSOR:
         SetCursor(LoadCursorW(nullptr, cursor));
         return TRUE;
@@ -139,10 +170,18 @@ LRESULT DeskPill::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_RBUTTONUP:
+        if (studio) input.rclick = true, Poke();
         if (!editing && !leaving && onEdit) onEdit(); // press and hold on a phone; here a right click
         return 0;
     case WM_HOTKEY:
-        if ((int)wp == kEscKey && editing) Finish();
+        if ((int)wp != kEscKey || !editing) return 0;
+        if (studio && model.faceSearch) { // esc steps back: what's typed, then the search
+            if (model.faceQuery.empty()) model.faceSearch = false;
+            else model.faceQuery.clear();
+            Poke();
+            return 0;
+        }
+        Finish();
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
@@ -159,8 +198,10 @@ void DeskPill::Measure(HMONITOR on) {
     MW = (monitor.right - monitor.left) / scale;
     MH = (monitor.bottom - monitor.top) / scale;
     if (!editing) { // the saved values; while editing the working copy is what counts
-        spec.edge = model.deskEdge, spec.pos = (float)model.deskPos, spec.len = (float)model.deskLen, spec.thick = (float)model.deskThick;
-        spec.gap = (float)model.deskGap, spec.floats = model.deskFloat != 0, spec.apps = model.deskApps != 0, spec.fill = model.deskFill, spec.fillApps = model.deskFillApps, spec.items = model.deskItems;
+        spec.edge = model.deskEdge, spec.pos = (float)model.deskPos, spec.thick = (float)model.deskThick;
+        spec.shape[0] = {(float)model.deskLen, (float)model.deskGap, model.deskFloat != 0};
+        spec.shape[1] = {(float)model.deskLenApps, (float)model.deskGapApps, model.deskFloatApps != 0};
+        spec.apps = model.deskApps != 0, spec.fill = model.deskFill, spec.fillApps = model.deskFillApps, spec.items = model.deskItems;
         DropAppItems();
     }
 }
@@ -174,18 +215,39 @@ void DeskPill::Span(int edge, float& lo, float& hi) const {
     else lo = (work.top - monitor.top) / scale, hi = (work.bottom - monitor.top) / scale; // a side keeps clear of the taskbars
 }
 
-DeskPill::Pose DeskPill::Goal() const {
+DeskPill::Pose DeskPill::Goal(int which) const {
+    const Spec::Shape& s = spec.shape[which && spec.apps ? 1 : 0];
     float lo, hi;
     Span(spec.edge, lo, hi);
     Pose p;
     p.thick = spec.thick;
-    p.len = (std::min)(spec.len, hi - lo - 2 * kEdgeRoom);
-    float room = p.len / 2 + kEdgeRoom, along = (std::clamp)(lo + (hi - lo) * spec.pos / 1000, lo + room, hi - room), gap = spec.floats ? spec.gap : 0;
-    p.flat = spec.floats ? 0.0f : 1.0f;
+    p.len = (std::min)(s.len, hi - lo - 2 * kEdgeRoom);
+    float room = p.len / 2 + kEdgeRoom, along = (std::clamp)(lo + (hi - lo) * spec.pos / 1000, lo + room, hi - room), gap = s.floats ? s.gap : 0;
+    p.flat = s.floats ? 0.0f : 1.0f;
     if (spec.edge == 0) p.ax = along, p.ay = gap, p.angle = 0;
     else if (spec.edge == 1) p.ax = gap, p.ay = along, p.angle = -90;
     else p.ax = MW - gap, p.ay = along, p.angle = 90;
     return p;
+}
+
+D2D1_RECT_F DeskPill::Reach(float pad) const {
+    D2D1_RECT_F a = Box(Goal(0), pad);
+    if (!spec.apps) return a;
+    D2D1_RECT_F b = Box(Goal(1), pad);
+    return {(std::min)(a.left, b.left), (std::min)(a.top, b.top), (std::max)(a.right, b.right), (std::max)(a.bottom, b.bottom)};
+}
+
+bool DeskPill::StepRest(float dt) {
+    Pose g = Goal();
+    bool calm = model.reduceMotion != 0, moving = false;
+    float rate = calm ? 200.0f : kShapeRate;
+    moving = anim::Approach(rest.ax, g.ax, rate, dt, 0.02f) || moving;
+    moving = anim::Approach(rest.ay, g.ay, rate, dt, 0.02f) || moving;
+    moving = anim::Approach(rest.len, g.len, rate, dt, 0.02f) || moving;
+    moving = anim::Approach(rest.flat, g.flat, calm ? 200.0f : kShapeFlat, dt, 0.004f) || moving;
+    rest.thick = g.thick, rest.angle = g.angle;
+    if (!moving && shapeShift) shapeShift = false, FitWindow(); // settled: an empty window would only be in the way of clicks
+    return moving;
 }
 
 D2D1_MATRIX_3X2_F DeskPill::Local(const Pose& p) const {
@@ -217,12 +279,12 @@ bool DeskPill::MouseOn() const {
 
 RECT DeskPill::Spot(HMONITOR on) {
     if (!Editing()) Measure(on);
-    D2D1_RECT_F b = Box(Goal(), 0);
+    D2D1_RECT_F b = Reach(0); // both shapes: looking under only the one it has now, it could flip between them for ever
     return {monitor.left + (LONG)std::floor(b.left * scale), monitor.top + (LONG)std::floor(b.top * scale), monitor.left + (LONG)std::ceil(b.right * scale), monitor.top + (LONG)std::ceil(b.bottom * scale)};
 }
 
 void DeskPill::FitWindow() {
-    D2D1_RECT_F b = editing ? D2D1_RECT_F{0, 0, MW, MH} : Box(Goal(), kPad);
+    D2D1_RECT_F b = editing ? D2D1_RECT_F{0, 0, MW, MH} : shapeShift ? Reach(kPad) : Box(Goal(), kPad);
     view = {std::floor(b.left * scale) / scale, std::floor(b.top * scale) / scale};
     int w = (int)std::ceil((b.right - view.x) * scale), h = (int)std::ceil((b.bottom - view.y) * scale);
     SetWindowPos(hwnd, HWND_TOPMOST, monitor.left + (int)std::lround(view.x * scale), monitor.top + (int)std::lround(view.y * scale), w, h, SWP_NOACTIVATE);
@@ -358,6 +420,7 @@ void DeskPill::Text(int kind, std::wstring& text, int& icon, bool& idle) const {
     icon = 0;
     text = model.DeskItemText(kind, icon);
     idle = text.empty() && icon == 0;
+    if (kind == Model::kDMusic && !idle) text = SongStem(model.track.title); // from the whole title: the model's cap can cut a closing bracket off
 }
 
 float DeskPill::ItemW(int kind, const std::wstring& text, int icon, bool idle, float thick) {
@@ -397,6 +460,19 @@ bool DeskPill::StepBars(float dt, double now) {
     return moving;
 }
 
+void DeskPill::FitSong(std::vector<Placed>& all, size_t from, size_t to, float room, float gap, float thick) {
+    float sum = 0;
+    size_t song = to;
+    for (size_t i = from; i < to; ++i) {
+        sum += all[i].w + (i > from ? gap : 0);
+        if (all[i].kind == Model::kDMusic && !all[i].idle) song = i;
+    }
+    if (sum <= room || song == to) return;
+    Placed& p = all[song];
+    float others = sum - p.w;
+    p.w = (std::min)(p.w, (std::max)(room - others, kSongLeast * TypeScale(thick))); // it trims, ending in "..."
+}
+
 std::vector<DeskPill::Placed> DeskPill::LayOut(const std::vector<int>& items, float len, float thick) {
     float k = TypeScale(thick), gap = kItemGap * k, inner = len - thick; // the round ends keep their own room
     std::vector<Placed> all;
@@ -414,6 +490,7 @@ std::vector<DeskPill::Placed> DeskPill::LayOut(const std::vector<int>& items, fl
     }
     std::vector<Placed> out;
     if (clockAt < 0) { // no clock to anchor on: one row, centered
+        FitSong(all, 0, all.size(), inner, gap, thick);
         float sum = 0;
         size_t n = 0;
         for (; n < all.size(); ++n) { // what doesn't fit waits at the far end
@@ -431,6 +508,8 @@ std::vector<DeskPill::Placed> DeskPill::LayOut(const std::vector<int>& items, fl
     }
     all[clockAt].x = -all[clockAt].w / 2;
     float half = inner / 2 - all[clockAt].w / 2 - gap;
+    FitSong(all, 0, (size_t)clockAt, half, gap, thick);
+    FitSong(all, (size_t)clockAt + 1, all.size(), half, gap, thick);
     float used = 0, x = -inner / 2;
     for (int i = 0; i < clockAt; ++i) { // before the clock, from the pill's start
         used += all[i].w + (i ? gap : 0);
@@ -465,6 +544,7 @@ float DeskPill::NeedLen(const std::vector<int>& items, float thick) {
         Text(kind, text, ic, idle);
         if (idle) text = Model::DeskItemName(kind);
         float w = ItemW(kind, text, ic, idle, thick);
+        if (kind == Model::kDMusic) w = (std::min)(w, kSongLeast * TypeScale(thick)); // how long a song's title is never decides how long the pill must be
         if (kind == Model::kDClock) mid = w, past = true;
         else (past ? right : left) += w + gap;
     }
@@ -592,6 +672,8 @@ void DeskPill::Want(bool up, HMONITOR on) {
     if (!hwnd) return;
     if (up) {
         Measure(on);
+        shapeShift = false;
+        rest = Goal();
         FitWindow();
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         model.WantDeskAudio();
@@ -605,6 +687,7 @@ void DeskPill::Want(bool up, HMONITOR on) {
 }
 
 void DeskPill::Second() {
+    if (studio && editing) Poke(); // the clocks in it tick
     if (!wantUp || Editing()) return;
     if (std::find(spec.items.begin(), spec.items.end(), (int)Model::kWWeather) != spec.items.end()) model.Prefetch(); // a no-op while the forecast is fresh
     if (std::find(spec.items.begin(), spec.items.end(), (int)Model::kDVolume) != spec.items.end()) model.ReadAudio();
@@ -646,7 +729,14 @@ void DeskPill::Frame(const Theme& shell) {
         }
     }
     bool arranging = editing || leaving;
-    if (!arranging) moving = appear.Step(dt) || moving;
+    if (!arranging) {
+        moving = appear.Step(dt) || moving;
+        moving = StepRest(dt) || moving;
+        if (!EnsureDev()) { // settling can drop the buffers
+            dirty = false;
+            return;
+        }
+    }
     if (FillNow() == kFillGlass || editing) LoadWall(editing);
     moving = anim::Approach(inkDark, inkGoal, 8, dt, 0.004f) || moving;
     SyncCover();
@@ -659,21 +749,25 @@ void DeskPill::Frame(const Theme& shell) {
     ctx->SetTransform(D2D1::Matrix3x2F::Translation(-view.x, -view.y));
     if (arranging) {
         DrawBackdrop();
-        DrawGuides(shell);
-        DrawPill(shell, pose, 1);
-        if (editing) {
-            DrawGrips(shell);
-            DrawBar(shell);
-            if (editing && input.pressed && !pressedOnBar) PressPill();
-            if (editing && drag != Drag::None) DragNow();
-            if (editing) DrawFloater(shell);
-            if (editing && input.released) Land();
+        if (studio) {
+            DrawStudio(shell);
+        } else {
+            DrawGuides(shell);
+            DrawPill(shell, pose, 1);
+            if (editing) {
+                DrawGrips(shell);
+                DrawBar(shell);
+                if (editing && input.pressed && !pressedOnBar) PressPill();
+                if (editing && drag != Drag::None) DragNow();
+                if (editing) DrawFloater(shell);
+                if (editing && input.released) Land();
+            }
         }
     } else {
         float s = appear.value / 100, a = anim::Clamp01(s); // grows from a short bead, sliding out from its edge; a touch past full on the bounce
-        Pose p = Goal();
+        Pose p = rest;
         p.len = p.len * (0.45f + 0.55f * s);
-        float back = (1 - s) * (p.thick + (spec.floats ? spec.gap : 0) + 6);
+        float back = (1 - s) * (p.thick + (Sh().floats ? Sh().gap : 0) + 6);
         p.ax += spec.edge == 1 ? -back : spec.edge == 2 ? back : 0;
         p.ay += spec.edge == 0 ? -back : 0;
         DrawPill(shell, p, a);

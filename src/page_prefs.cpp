@@ -23,7 +23,6 @@ constexpr float kChipH = 28;
 constexpr float kNoteH = 17; // one line of a two-line label
 constexpr int kBatLowMin = 5, kBatLowMax = 50; // the low battery pill, in percent
 constexpr int kScaleMin = 80, kScaleMax = 130; // ui scale, percent
-constexpr int kLyricStep = 5; // lyric size moves in 5% steps
 constexpr float kHoldSec = 1.2f; // hold to reset everything
 constexpr float kOffAlpha = 0.4f; // a control that does nothing right now, greyed
 
@@ -189,61 +188,15 @@ void Dashboard(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a screen of til
     Note(c, t, in, in.bottom - 16, on ? L"Right click a dashboard to arrange its tiles" : L"Each one has its own layout, any size of screen");
 }
 
-constexpr float kPageCellH = 48, kTileCellH = 34; // the editors' cells: a page's icon over its name, a tile's beside it
-constexpr float kWideCols = 480; // an editor at least this wide puts every page, or four tiles, in one row
+constexpr float kEditedCardH = 30 + 2 * 16 + 4 + 12; // the pages and tiles card: its title and two lines
 constexpr float kBoxChrome = 30 + 10; // a card's title above and margin below its inner area
 
-int PageCols(float w) { return w >= kWideCols ? Model::kPageIds : 3; }
-int TileCols(float w) { return w >= kWideCols ? 4 : 2; }
-float GridH(int items, int cols, float cellH) {
-    int rows = (std::max)(1, (items + cols - 1) / cols);
-    return rows * cellH + (rows - 1) * kArrangeGap;
-}
-int TilesHere(const Model& m) {
-    int n = 0;
-    for (int i = 0; i < Model::kToolTiles; ++i) n += m.TileHere(i) ? 1 : 0;
-    return n;
-}
-float PagesH(float w) { return kBoxChrome + kRowH + 6 + GridH(Model::kPageIds, PageCols(w - 24), kPageCellH) + 6 + kNoteH; }
-float TilesH(const Model& m, float w) { return kBoxChrome + GridH(TilesHere(m), TileCols(w - 24), kTileCellH) + 6 + kNoteH; }
-
-void Pages(PageCtx& p, const D2D1_RECT_F& r, bool live) { // which pages the rail shows and in what order, and the one the panel opens on
-    Ui& ui = p.ui;
-    Canvas& c = ui.C();
+void Edited(PageCtx& p, const D2D1_RECT_F& r) { // they're edited where they are
+    Canvas& c = p.ui.C();
     const Theme& t = p.shell;
-    Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"Pages");
-    if (SwitchRow(ui, t, "set.page.last", Rect(in.left, in.top, Width(in), kRowH), L"Open on the last page", m.rememberPage != 0, live)) Flip(m, m.rememberPage, L"RememberPage");
-    Arrange a;
-    a.shown = m.pages;
-    for (int i = 0; i < Model::kPageIds; ++i)
-        if (!m.HasPage(i)) a.hidden.push_back(i);
-    a.glyph = Model::PageGlyph;
-    a.name = Model::PageName;
-    a.keep = 1; // one page always stays
-    a.lit = m.HasPage(m.defaultPage) ? m.defaultPage : m.pages.front(); // the picked page, or the first while that one is hidden
-    a.litMix = ui.Smooth(Ui::Id("set.page.fixed"), m.rememberPage ? 0.35f : 1.0f, 14); // the pick dims while the last page wins
-    int cols = PageCols(Width(in));
-    float gy = in.top + kRowH + 6, gh = GridH(Model::kPageIds, cols, kPageCellH);
-    if (Arranger(ui, t, "set.pages", Rect(in.left, gy, Width(in), gh), cols, kPageCellH, a, live)) m.SetPages(a.shown.Vec());
-    if (a.tapped >= 0) {
-        m.SetPref(m.defaultPage, L"DefaultPage", a.tapped);
-        if (m.rememberPage) m.SetPref(m.rememberPage, L"RememberPage", 0); // picking one means you want it
-    }
-    Note(c, t, in, gy + gh + 6, L"Tap a page to open on it, drag to reorder. Right-click the rail for settings");
-}
-
-void Tiles(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the tools page's quick tiles: which, and in what order
-    Ui& ui = p.ui;
-    Canvas& c = ui.C();
-    const Theme& t = p.shell;
-    Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"Tools tiles");
-    Arrange a = TileSet(m);
-    int cols = TileCols(Width(in));
-    float gh = GridH(TilesHere(m), cols, kTileCellH);
-    if (Arranger(ui, t, "set.tiles", Rect(in.left, in.top, Width(in), gh), cols, kTileCellH, a, live)) KeepTiles(m, a.shown);
-    Note(c, t, in, in.top + gh + 6, L"Right-click the tiles on the Tools page to edit them there too");
+    D2D1_RECT_F in = Box(c, t, r, L"Pages and tiles");
+    Note(c, t, in, in.top, L"Right-click the rail to edit your pages");
+    Note(c, t, in, in.top + 20, L"Right-click the tiles on the Tools page to edit them");
 }
 
 void Media(PageCtx& p, const D2D1_RECT_F& r, bool live) { // what the player is made of
@@ -263,11 +216,10 @@ void Media(PageCtx& p, const D2D1_RECT_F& r, bool live) { // what the player is 
         D2D1_RECT_F q = Rect(in.left + (i % 2) * (cw + 8), in.top + 2 + (i / 2) * (kChipH + 8), cw, kChipH);
         if (w::Chip(ui, t, Ui::Id("set.media", i), q, opts[i].label, *opts[i].field != 0) && live) Flip(m, *opts[i].field, opts[i].key);
     }
-    if (SwitchRow(ui, t, "set.stage.hide", Rect(in.left, in.top + 2 * (kChipH + 8) - 2, Width(in), kKnobH + 4), L"Fullscreen controls hide at rest", m.stageHide != 0, live))
-        Flip(m, m.stageHide, L"StageHide"); // off: the fullscreen player keeps its buttons up
+    Note(c, t, in, in.top + 2 * (kChipH + 8) + 2, L"Edit it from fullscreen"); // one short line: the card has no room for two
 }
 
-void ArtBack(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the cover behind the media page and the fullscreen player, each on its own switch, and how strongly
+void ArtBack(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the cover behind the media page; the fullscreen player's is in its editor
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.shell;
@@ -276,38 +228,29 @@ void ArtBack(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the cover behind 
     bool can = m.showArt != 0; // no art shown: nothing to lay behind anything
     if (SwitchRow(ui, t, "set.media.back", Rect(in.left, in.top, Width(in), kRowH), can ? L"Media page" : L"Album art is switched off", m.artBack != 0, live && can, can))
         m.SetArtBack(m.artBack == 0); // shared: halobar's player follows
-    if (SwitchRow(ui, t, "set.stage.back", Rect(in.left, in.top + kRowH, Width(in), kRowH), L"Fullscreen player", m.stageArt != 0, live && can, can))
-        Flip(m, m.stageArt, L"StageArtBg"); // apart from the media page: either, both or neither
-    bool any = can && (m.artBack || m.stageArt);
-    float dim = ui.Smooth(Ui::Id("set.art.dim"), any ? 1.0f : kOffAlpha, 14);
-    bool layered = dim < 0.999f;
-    if (layered) c.Target()->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), dim), nullptr);
-    constexpr int lo = Model::kVizAlphaMin, hi = 100, step = Model::kSlideStep;
-    float v = (m.vizAlpha - lo) / (float)(hi - lo);
-    bool done = false;
-    if (Knob(ui, t, Ui::Id("set.viz.alpha"), Rect(in.left, in.top + 2 * kRowH + 4, Width(in), kSlideH), L"Visualizer opacity", std::to_wstring(m.vizAlpha) + L"%", v, live && any, done,
-             (float)step / (hi - lo)))
-        m.vizAlpha = lo + (int)std::lround(v * (hi - lo) / step) * step; // live: the page behind shows it as it moves
-    if (done) m.SetPref(m.vizAlpha, L"VizAlpha", m.vizAlpha); // shared: halobar's player follows
-    if (layered) c.Target()->PopLayer();
 }
 
-void Visualizer(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how hard the music's light answers, everywhere it shows
+constexpr float kTourH = 30 + 10 + kRowH + 6; // the tour card: its title and one row
+constexpr float kTourBtnW = 128;
+
+void Tour(PageCtx& p, const D2D1_RECT_F& r, bool live) { // play it now, and whether it plays at the next launch
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"Visualizer");
-    constexpr int lo = Model::kVizGainMin, hi = Model::kVizGainMax, step = Model::kSlideStep;
-    float v = (m.vizGain - lo) / (float)(hi - lo);
-    bool done = false;
-    if (Knob(ui, t, Ui::Id("set.viz.gain"), Rect(in.left, in.top + 2, Width(in), kSlideH), L"Sensitivity", std::to_wstring(m.vizGain) + L"%", v, live, done, (float)step / (hi - lo)))
-        m.vizGain = lo + (int)std::lround(v * (hi - lo) / step) * step; // live: the bars answer as it moves
-    if (done) m.SetPref(m.vizGain, L"VizGain", m.vizGain); // shared: halobar's follow
-    float cw = (Width(in) - 8) / 2, y = in.top + kSlideH + 4; // its options: two chips is all a card's width can name
-    if (w::Chip(ui, t, Ui::Id("set.viz.wave"), Rect(in.left, y, cw, kChipH), L"Waveform", m.vizWave != 0) && live) Flip(m, m.vizWave, L"VizWave");
-    if (w::Chip(ui, t, Ui::Id("set.viz.full"), Rect(in.left + cw + 8, y, cw, kChipH), L"Any volume", m.vizFull != 0) && live) Flip(m, m.vizFull, L"VizFull");
-    if (SwitchRow(ui, t, "set.viz.bob", Rect(in.left, y + kChipH + 2, Width(in), kRowH), L"Cover thump in fullscreen", m.stageThump != 0, live)) Flip(m, m.stageThump, L"StageThump"); // the fullscreen cover, on the beat
+    D2D1_RECT_F in = Box(c, t, r, L"Tour");
+    if (Act(ui, t, Ui::Id("set.tour"), Rect(in.left, in.top, kTourBtnW, kRowH), L"Take the tour", false, false, live)) m.tourAsk = true; // a quiet button: the card shouldn't shout
+    if (SwitchRow(ui, t, "set.tour.next", Rect(in.left + kTourBtnW + 16, in.top, Width(in) - kTourBtnW - 16, kRowH), L"Show it when Astraeus starts", m.tourNext != 0, live)) Flip(m, m.tourNext, L"TourNext");
+}
+
+void FullBtns(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the two faint marks in the fullscreen player's corner: everything else about it is in its own editor
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    D2D1_RECT_F in = Box(c, t, r, L"Fullscreen");
+    if (SwitchRow(ui, t, "set.stage.lyrbtn", Rect(in.left, in.top, Width(in), kRowH), L"Show the wrong lyrics button", m.stageLyrBtn != 0, live)) Flip(m, m.stageLyrBtn, L"StageLyricsButton");
+    if (SwitchRow(ui, t, "set.stage.editbtn", Rect(in.left, in.top + kRowH, Width(in), kRowH), L"Show the edit button", m.stageEditBtn != 0, live)) Flip(m, m.stageEditBtn, L"StageEditButton");
 }
 
 void Opening(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the closed island: only the shortcut opens it, wherever it is
@@ -399,23 +342,6 @@ void Display(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how big everythin
     }
     Note(c, t, in, in.top + kSlideH + 8, L"The panel, the pill and their text");
     Note(c, t, in, in.top + kSlideH + 26, L"Applied when you let go of the slider");
-}
-
-void LyricType(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how big the fullscreen player's words are
-    Ui& ui = p.ui;
-    Canvas& c = ui.C();
-    const Theme& t = p.shell;
-    Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"Lyrics");
-    constexpr int lo = Model::kLyricMin, hi = Model::kLyricMax;
-    float v = (m.lyricScale - lo) / (float)(hi - lo);
-    bool done = false;
-    if (Knob(ui, t, Ui::Id("set.lyr.size"), Rect(in.left, in.top + 2, Width(in), kSlideH), L"Lyric size", std::to_wstring(m.lyricScale) + L"%", v, live, done,
-             (float)kLyricStep / (hi - lo)))
-        m.lyricScale = lo + (int)std::lround(v * (hi - lo) / kLyricStep) * kLyricStep; // live: an open player re-lays as it moves
-    if (done) m.SetPref(m.lyricScale, L"LyricScale", m.lyricScale);
-    Note(c, t, in, in.top + kSlideH + 8, L"The fullscreen and split lyrics");
-    if (!m.fullLyrics) Note(c, t, in, in.top + kSlideH + 26, L"Synced lyrics are switched off for now");
 }
 
 void Weather(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a city typed in, instead of finding you by your ip address
@@ -581,6 +507,9 @@ void Problem(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a report for the 
 constexpr float kFieldH = 30; // the code card's field
 constexpr double kShakeSec = 0.32; // a wrong code: a short shake, then still
 constexpr float kShakeAmp = 5, kShakeHz = 4.5f;
+constexpr double kFlashSec = 1.1; // the outline after a check: green or red, easing back to plain
+constexpr float kFlashW = 2, kHaloGrow = 7, kHaloAlpha = 0.4f; // the ring that blooms out from it as it fades
+const Color kRight = Color::Rgb(0x34C759);
 
 void Code(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a plain field: enter checks it, and it clears either way
     Ui& ui = p.ui;
@@ -596,8 +525,19 @@ void Code(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a plain field: enter
     }
     D2D1_RECT_F home = Rect(in.left, in.top + 2, Width(in), kFieldH), field = Rect(in.left + shake, in.top + 2, Width(in), kFieldH);
     Ui::Hit h = live ? ui.Button(Ui::Id("set.code"), home) : Ui::Hit{};
+    bool right = e.rightAt > e.wrongAt; // the last answer
+    float after = (float)(ui.Now() - (right ? e.rightAt : e.wrongAt)), flash = after < kFlashSec ? 1 - after / (float)kFlashSec : 0;
+    flash *= flash; // quick to show, slow to let go
+    Color said = right ? kRight : kDanger;
+    if (flash > 0.001f) {
+        ui.Wake();
+        float grow = kHaloGrow * (1 - flash); // a ring breathes out from the field and fades as it goes
+        c.Stroke(Inset(field, -grow, -grow), kFieldH / 2 + grow, said.Alpha(kHaloAlpha * flash), 1.5f);
+    }
     c.Fill(field, kFieldH / 2, t.track.Alpha(0.7f));
-    c.Stroke(field, kFieldH / 2, e.focus ? t.accent : h.hover ? t.text.Alpha(0.4f) : t.hairTop, e.focus ? 1.5f : 1);
+    if (flash > 0.001f) c.Fill(field, kFieldH / 2, said.Alpha(0.08f * flash)); // and a breath of the color inside
+    Color edge = e.focus ? t.accent : h.hover ? t.text.Alpha(0.4f) : t.hairTop;
+    c.Stroke(field, kFieldH / 2, edge.Mix(said, flash), (e.focus ? 1.5f : 1) + (kFlashW - 1) * flash);
     D2D1_RECT_F text = {field.left + 14, field.top, field.right - 30, field.bottom};
     if (e.focus) {
         float wdt = e.text.empty() ? 0 : c.TextOnce(e.text, text, Weight::Regular, 12, t.text); // shown as typed, never cached
@@ -703,7 +643,7 @@ void AdvancedHead(PageCtx& p, const D2D1_RECT_F& r, bool live, float open) { // 
     if (h.clicked) advOpen = !advOpen;
 }
 
-float Advanced(PageCtx& p, const D2D1_RECT_F& area, bool live, int cols) { // power, weather, volume keys, backup, display and lyric sizes, the live page's options, the code; returns its full height
+float Advanced(PageCtx& p, const D2D1_RECT_F& area, bool live, int cols) { // power, weather, volume keys, backup, display size, the live page's options, the code; returns its full height
     float cw = (Width(area) - (cols - 1) * kPrefGap) / cols, y = area.top;
     int n = 0;
     auto next = [&] {
@@ -717,11 +657,10 @@ float Advanced(PageCtx& p, const D2D1_RECT_F& area, bool live, int cols) { // po
     Hud(p, next(), live);
     Backup(p, next(), live);
     Display(p, next(), live); // the two sizes side by side
-    LyricType(p, next(), live);
     Opening(p, next(), live); // how the closed island opens: anywhere, then over apps
     Apps(p, next(), live);
-    ArtBack(p, next(), live); // the album art behind, and the music's light
-    Visualizer(p, next(), live);
+    ArtBack(p, next(), live);
+    FullBtns(p, next(), live);
     ShelfIntake(p, next(), live); // the shelf's intake and its history, side by side
     ShelfHistory(p, next(), live);
     OverFullscreen(p, next(), live);
@@ -750,14 +689,8 @@ float DrawPrefs(PageCtx& p, const D2D1_RECT_F& area, bool live, bool tall) {
     DeskCard(p, next(), live);
     y += ((n + cols - 1) / cols) * (kPrefRow + kPrefGap);
     n = 0;
-    float ph = PagesH(Width(area)), th = TilesH(p.m, Width(area)); // the two editors run across, as tall as their cells need
-    Pages(p, Rect(area.left, y, Width(area), ph), live);
-    y += ph + kPrefGap;
-    Tiles(p, Rect(area.left, y, Width(area), th), live);
-    y += th + kPrefGap;
-    float wh = WidgetsCardH(p.m, Width(area)); // clocks, money, stocks and the rest, for the widgets page
-    WidgetsCard(p, Rect(area.left, y, Width(area), wh), live);
-    y += wh + kPrefGap;
+    Edited(p, Rect(area.left, y, Width(area), kEditedCardH));
+    y += kEditedCardH + kPrefGap;
     Layout(p, next(), live); // how the panel shows, and the dashboard beside it
     Dashboard(p, next(), live);
     Media(p, next(), live);
@@ -779,5 +712,7 @@ float DrawPrefs(PageCtx& p, const D2D1_RECT_F& area, bool live, bool tall) {
     }
     Updates(p, Rect(area.left, y, Width(area), kUpdH), live); // under advanced, open or folded
     y += kUpdH + kPrefGap;
+    Tour(p, Rect(area.left, y, Width(area), kTourH), live);
+    y += kTourH + kPrefGap;
     return y - area.top;
 }

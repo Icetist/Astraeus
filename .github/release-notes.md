@@ -1,21 +1,20 @@
-## Astraeus 2.6.0
-
-![The long pill across the top of the desktop in an accent red, with the song, visualizer, clock, CPU and volume](https://raw.githubusercontent.com/Icetist/Astraeus/main/.github/assets/screenshots/long-pill.png)
+## Astraeus 2.6.1
 
 ### New
-- **The long pill.** A long pill for your desktop with the widgets you pick, including new RAM and GPU ones. Right-click it to arrange it on any edge, stuck or floating. Turn it on under **Long pill on the desktop** in Settings.
-- **Regular pill or long pill when not on desktop.** Keep the long pill for the desktop and let the regular pill take over on top of your apps, or keep the long one everywhere. It's a switch in Settings and a choice in the pill's editor.
-- **A different theme when not on desktop.** The desktop and your apps can each have a whole theme of their own: look, accent, background, blur and opacity. Each of Astraeus' two themes matches HaloBar's when one follows the other.
-- **The Clear look, and glass tints.** Clear has icons that turn black or white to suit what's behind them, and a panel tinted by your wallpaper. Glass can be tinted dark, white or any color.
-- **Stay up in fullscreen.** An advanced option, off by default, that keeps an always-shown pill over fullscreen apps. Clicking it opens the panel, or turn that off for only the pill. Exclusive fullscreen games still cover it.
+- **Edit fullscreen right where it is.** The pencil beside the lyrics mark opens an editor over the player. Drag and resize the cover, the song, the lyrics and the clock, with guides that snap them into line, and keep one layout for songs with lyrics and another for songs without. Its panel holds the cover's corners and glow, which parts of the song show, the lyric style, the background and the visualizer.
+- **Edit pages, tiles and widgets over your wallpaper.** Right-click the rail or the tiles on the Tools page to arrange them in an editor that shows them exactly as the panel does. The widget editor now matches the board too.
+- **Undo, redo and reset in every editor:** pages, tiles, widgets, fullscreen, the long pill and the display dashboard.
+- **A short tour** of where everything is, the first time the panel opens. Play it again from **Tour** in Settings.
 
 ### Better
-- **Long pill settings** are at the top of **Advanced**, with no long scroll to them.
-- **Sliders** stop with their knob inside the track at both ends.
+- **Widgets** have cleaner layouts at every size, and the gallery shows each one as it will look.
+- **The System page** shows its top processes straight away, with real numbers from the start.
+- **The long pill** leaves the extras in brackets, like "(feat. …)", off song names.
+- **Settings** is lighter: the fullscreen options live in the fullscreen editor now, and **Fullscreen** under **Advanced** hides the pencil or the wrong lyrics mark. Switches are a little larger, with more room around them.
 
 ### Fixed
-- The long pill could freeze after you finished editing it.
-- The Window widget no longer says "Program Manager" on the desktop.
+- Resizing the lyrics in fullscreen no longer changes their font size.
+- Lyrics no longer drop in from the top when their column changes size.
 
 > [!NOTE]
 > The executable is not code-signed yet, so Windows SmartScreen may show an "unknown publisher" warning the first time. Click **More info → Run anyway**.

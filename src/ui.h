@@ -125,6 +125,6 @@ void Gauge(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, float radius, f
 void Spark(Canvas& c, const D2D1_RECT_F& r, const std::vector<float>& values, uint64_t version, float maxV,
                Color line, bool flip = false, const D2D1_ROUNDED_RECT* in = nullptr); // in: kept inside a card's corners, and inside r
 bool Chip(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const std::wstring& label, bool selected);
-bool Switch(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, bool on, bool enabled = true); // 46x26 toggle
+bool Switch(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, bool on, bool enabled = true); // 40x22 toggle
 std::wstring Pct(float v);
 }

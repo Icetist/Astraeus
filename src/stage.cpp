@@ -20,6 +20,9 @@ constexpr double kLyrWaitSec = 12; // how long the lyrics layout waits for a new
 constexpr float kLeaveSec = 0.26f; // easing back toward the bezel as it fades
 constexpr double kIdleSec = 2.5; // controls and cursor fade after the mouse rests this long
 constexpr float kThump = 0.018f; // the cover on the kick: a share of its size
+constexpr float kShapeRate = 22; // the layout after the mouse in the editor: close behind it, with no hard edge to the motion
+constexpr float kLiftScale = 0.018f, kLiftShade = 0.18f; // the cover picked up in the editor
+constexpr float kTabRate = 7, kLyrRate = 3.2f; // the layouts trading places: briskly in the editor, slow and calm for a new song
 constexpr double kLyrCycleWait = 30; // seconds to wait for another version before saying nothing came
 constexpr float kChoiceFaint = 0.22f, kChoiceLit = 0.85f; // the wrong lyrics mark: how faint at rest and under the mouse
 constexpr float kChoiceSize = 34, kChoiceEdge = 10; // and how big, how near the screen's corner
@@ -219,7 +222,7 @@ LRESULT Stage::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_MOUSEWHEEL:
-        input.wheel += GET_WHEEL_DELTA_WPARAM(wp) / (float)WHEEL_DELTA; // scrolls the lyrics
+        if (!editing) input.wheel += GET_WHEEL_DELTA_WPARAM(wp) / (float)WHEEL_DELTA; // scrolls the lyrics
         lastMove = Seconds();
         return 0;
     case WM_LBUTTONDOWN:
@@ -234,23 +237,24 @@ LRESULT Stage::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         input.down = false;
         return 0;
     case WM_LBUTTONDBLCLK:
-        if (!ui.Hovered()) Leave(); // on empty space; double-clicking play shouldn't also leave
+        if (!ui.Hovered() && !editing) Leave(); // on empty space; double-clicking play shouldn't also leave
         else {
             input.pressPos = input.mouse;
             input.pressed = input.down = true;
         }
         return 0;
     case WM_RBUTTONUP:
-        Leave(); // right click leaves, like it closes sheets in the panel
+        if (editing) EndEdit();
+        else Leave(); // right click leaves, like it closes sheets in the panel
         return 0;
     case WM_SETCURSOR:
         if (LOWORD(lp) == HTCLIENT) {
-            SetCursor(Seconds() - lastMove < kIdleSec ? LoadCursorW(nullptr, ui.Hand() ? IDC_HAND : IDC_ARROW) : nullptr); // cursor rests out of sight
+            SetCursor(Seconds() - lastMove < kIdleSec ? LoadCursorW(nullptr, editing && editCursor ? editCursor : ui.Hand() ? IDC_HAND : IDC_ARROW) : nullptr); // cursor rests out of sight
             return TRUE;
         }
         break;
     case WM_SYSKEYDOWN: // alt held: only the two screen keys can use it
-        Keys((UINT)wp);
+        if (!TakeKey((UINT)wp)) Keys((UINT)wp);
         return 0;
     case WM_GETOBJECT: {
         LRESULT out = 0;
@@ -265,6 +269,7 @@ LRESULT Stage::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == VK_RETURN || wp == VK_SPACE) ui.KeyHold(false);
         return 0;
     case WM_KEYDOWN:
+        if (TakeKey((UINT)wp)) return 0;
         if (model.a11yKeys && (wp == VK_TAB || ui.Focused())) { // tab picks a control; until then the keys are the player's own
             bool arrow = wp == VK_LEFT || wp == VK_RIGHT || wp == VK_UP || wp == VK_DOWN;
             if (wp == VK_TAB || wp == VK_RETURN || wp == VK_SPACE || wp == VK_ESCAPE || arrow) {
@@ -276,6 +281,14 @@ LRESULT Stage::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 else if (!(lp & (1 << 30))) ui.FireFocus(), ui.KeyHold(true); // not a held key's repeat
                 return 0;
             }
+        }
+        if (editing) { // the editor first; the next esc leaves. the arrows move what's picked, not the music
+            bool big = GetKeyState(VK_SHIFT) < 0;
+            if (wp == VK_ESCAPE) EndEdit();
+            else if (wp == VK_LEFT || wp == VK_RIGHT) EditNudge(wp == VK_LEFT ? -1 : 1, 0, big);
+            else if (wp == VK_UP || wp == VK_DOWN) EditNudge(0, wp == VK_UP ? -1 : 1, big);
+            else if (wp == VK_SPACE) model.media.TogglePlay();
+            return 0;
         }
         if (wp == VK_ESCAPE && lyrMenu) { // the list first; the next esc leaves
             lyrMenu = false;
@@ -329,6 +342,15 @@ void Stage::SetRole(Role r) {
     if (r == role) return;
     if (lookSet) roleAt = Seconds(); // the first frame just starts as it is
     role = r;
+}
+
+bool Stage::TakeKey(UINT vk) {
+    StagePrefs& sp = StagePrefs::Get();
+    if (!sp.capture) return false;
+    if (vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU || vk == VK_LWIN || vk == VK_RWIN) return true; // a modifier alone: wait for the key with it
+    if (vk != VK_ESCAPE) sp.SetKey(sp.capture == 1 ? sp.keySplit : sp.keySwap, sp.capture == 1 ? L"StageSplitKey" : L"StageSwapKey", StagePrefs::Combo(vk));
+    sp.capture = 0;
+    return true;
 }
 
 void Stage::Keys(UINT vk) { // the two screen keys, as picked in settings; the player's own keys never reach here as a match
@@ -409,12 +431,25 @@ void Stage::Backdrop(double now) { // the media page's glow, scaled to the room:
     c.FillV(full, 0, floor.Alpha(light ? 0.05f : 0.10f), floor.Alpha(light ? 0.35f : glassy ? 0.30f : 0.45f)); // settles the bottom so the room doesn't feel lopsided
 }
 
-void Stage::Clock(float y, float k) { // just the time, faint, top center
+void Stage::Clock(float y, float k) { // just the time, faint, top center, unless it's been arranged
     SYSTEMTIME st;
     GetLocalTime(&st);
     wchar_t time[32] = {};
     GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &st, nullptr, time, 32);
-    canvas->Text(time, Rect(0, y, W, 34 * k), Weight::Light, 22 * k, look.text.Alpha(0.45f), Align::Center);
+    static const StagePrefs::Shape kPlain{};
+    const StagePrefs::Shape& s0 = role == kWhole ? shapeNow[0] : kPlain, &s1 = role == kWhole ? shapeNow[1] : kPlain;
+    float e = role == kCover ? 1 : lyrMix * lyrMix * (3 - 2 * lyrMix);
+    auto mix = [e](float a, float b) { return a + (b - a) * e; };
+    float laid = mix(role == kWhole ? clockLaid[0] : 1, role == kWhole ? clockLaid[1] : 1), zoom = mix(s0.clockS, s1.clockS) / laid;
+    float size = 22 * k * laid, h = 34 * k * laid, cx = W / 2 + mix(s0.clockX, s1.clockX) * W, cy = y + 17 * k + mix(s0.clockY, s1.clockY) * H;
+    float on = mix(s0.clockOn, s1.clockOn), alpha = mix(s0.clockA, s1.clockA) * on;
+    float tw = canvas->Measure(time, Weight::Light, size);
+    partClock = {cx - tw * zoom / 2, cy - h * zoom / 2, cx + tw * zoom / 2, cy + h * zoom / 2};
+    if (alpha < 0.004f) return;
+    bool zoomed = std::fabs(zoom - 1) > 0.0005f;
+    if (zoomed) ctx->SetTransform(D2D1::Matrix3x2F::Scale(zoom, zoom, {cx, cy}));
+    canvas->Text(time, Rect(cx - tw / 2 - 8 * k, cy - h / 2, tw + 16 * k, h), Weight::Light, size, look.text.Alpha(alpha), Align::Center);
+    if (zoomed) ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 }
 
 void Stage::Seek(const D2D1_RECT_F& r, float show) { // the media page's wave, scaled up for the room
@@ -440,11 +475,12 @@ void Stage::Seek(const D2D1_RECT_F& r, float show) { // the media page's wave, s
     float grow = ui.Smooth(id + 2, ui.IsActive(id) || (show > 0.5f && Inside(r, ui.In().mouse)) ? 1.0f : 0, 16);
     float hh = (12 + 3 * grow) * k;
     c.Fill({x - 2.5f, cy - hh, x + 2.5f, cy + hh}, 2.5f, look.accentHi); // vertical bar playhead
-    if (show < 0.01f) return;
+    float times = show * timesNow;
+    if (times < 0.01f) return;
     double total = tr.duration / 1e7, elapsed = preview >= 0 ? total * preview : tr.Elapsed() / 1e7;
     float ty = cy + 14 * k;
-    c.Text(fmt::Clock(elapsed), Rect(r.left, ty, 100, 20), Weight::Regular, 13 * k, look.textDim.Alpha(show));
-    c.Text(fmt::Clock(total), Rect(r.right - 100, ty, 100, 20), Weight::Regular, 13 * k, look.textDim.Alpha(show), Align::Right);
+    c.Text(fmt::Clock(elapsed), Rect(r.left, ty, 100, 20), Weight::Regular, 13 * k, look.textDim.Alpha(times));
+    c.Text(fmt::Clock(total), Rect(r.right - 100, ty, 100, 20), Weight::Regular, 13 * k, look.textDim.Alpha(times), Align::Right);
 }
 
 float Stage::LyricSize() const {
@@ -459,7 +495,11 @@ D2D1_RECT_F Stage::LyricRect() const {
         return {(W - cw) / 2, 0, (W + cw) / 2, H};
     }
     float m = W * 0.065f, lw = W * 0.34f, lx = m + lw + W * 0.05f;
-    return {lx, H * 0.07f, W - W * 0.05f, H * 0.93f};
+    D2D1_RECT_F r = {lx, H * 0.07f, W - W * 0.05f, H * 0.93f};
+    if (role != kWhole) return r;
+    const StagePrefs::Shape& s = shapeNow[1]; // as it was arranged
+    float mx = (r.left + r.right) / 2 + s.lyrX * W, my = (r.top + r.bottom) / 2 + s.lyrY * H, hw = Width(r) * s.lyrW / 2, hh = Height(r) * s.lyrH / 2;
+    return {mx - hw, my - hh, mx + hw, my + hh};
 }
 
 void Stage::SyncLyrics(double now) { // asks for the song's lyrics once its length is known, picks them up when they land
@@ -521,8 +561,28 @@ D2D1_RECT_F Stage::ChoiceBox() const {
     return Rect(W - size - edge, edge, size, size);
 }
 
+D2D1_RECT_F Stage::EditBox() const { // the corner when the other's away
+    D2D1_RECT_F box = ChoiceBox();
+    float step = ChoiceShows() ? Width(box) : 0;
+    return {box.left - step, box.top, box.right - step, box.bottom};
+}
+
+void Stage::EditButton(float show) { // the same faint mark as the wrong lyrics one: it comes and goes with the controls
+    if (!model.stageEditBtn || role != kWhole || show < 0.01f) return;
+    Canvas& c = *canvas;
+    float k = K();
+    D2D1_RECT_F box = EditBox();
+    uint32_t id = Ui::Id("st.edit");
+    Ui::Hit h = show > 0.5f ? ui.Button(id, box) : Ui::Hit{};
+    if (show > 0.5f) ui.Name(L"Edit fullscreen");
+    float lit = ui.Smooth(id + 1, h.hover ? 1.0f : 0, 14);
+    c.Icon(glyph::Edit, {(box.left + box.right) / 2, (box.top + box.bottom) / 2}, 17 * k, look.text.Alpha((kChoiceFaint + (kChoiceLit - kChoiceFaint) * lit) * show));
+    if (h.hover) c.Text(L"Edit fullscreen", Rect(box.left - 150 * k, box.top, 146 * k, Height(box)), Weight::Regular, 12 * k, look.textDim.Alpha(lit * show), Align::Right);
+    if (h.clicked) StartEdit();
+}
+
 void Stage::LyricsChoice(float show) { // nothing at all while the song just plays: it comes up with the other controls, faint, and goes with them
-    if (lyrKey.empty() || role == kCover || show < 0.01f) return;
+    if (!ChoiceShows() || show < 0.01f) return;
     Canvas& c = *canvas;
     const sys::Track& tr = model.track;
     float k = K();
@@ -532,7 +592,8 @@ void Stage::LyricsChoice(float show) { // nothing at all while the song just pla
     if (show > 0.5f) ui.Name(L"Wrong lyrics? Choose another version");
     float lit = ui.Smooth(id + 1, h.hover || lyrMenu ? 1.0f : 0, 14);
     c.Icon(glyph::Lyrics, {(box.left + box.right) / 2, (box.top + box.bottom) / 2}, 17 * k, look.text.Alpha((kChoiceFaint + (kChoiceLit - kChoiceFaint) * lit) * show));
-    if (h.hover && !lyrMenu) c.Text(L"Wrong lyrics?", Rect(box.left - 150 * k, box.top, 146 * k, Height(box)), Weight::Regular, 12 * k, look.textDim.Alpha(lit * show), Align::Right);
+    float past = model.stageEditBtn && role == kWhole ? Width(box) : 0; // the words clear the pencil beside it
+    if (h.hover && !lyrMenu) c.Text(L"Wrong lyrics?", Rect(box.left - past - 150 * k, box.top, 146 * k, Height(box)), Weight::Regular, 12 * k, look.textDim.Alpha(lit * show), Align::Right);
     if (h.clicked) {
         lyrMenu = !lyrMenu;
         if (lyrMenu) {
@@ -612,21 +673,30 @@ void Stage::Player(float show, float lyr) { // the cover big on the left and the
     // the classic layout
     float side = (std::min)(H * 0.54f, W * 0.36f) * (1 + 0.14f * zz), gap = side * 0.16f, colW = (std::min)(W * 0.40f, 760.0f * k);
     float x0 = (W - side - gap - colW) / 2, cy = H * 0.5f;
-    float tx = x0 + side + gap, lineH = 66 * k, colH = 22 * k + lineH + 66 * k + 76 * k + 42 * k; // header, title, artist to the wave, wave to the controls, the play button
-    float ty = cy - colH / 2, waveY = ty + 22 * k + lineH + 66 * k;
+    float colH = (22 + 66 + 66 + 76 + 42) * k; // header, title, artist to the wave, wave to the controls, the play button
     // the lyrics layout: a column on the left, cover over title over the wave over the controls
     bool alone = role == kCover; // the song's half of a pair: the stacked layout, centred on its own screen
     float lw = alone ? (std::min)(W * 0.5f, H * 0.95f) : W * 0.34f, lcx = alone ? W / 2 : W * 0.065f + lw / 2;
     float side2 = (std::min)(H * 0.44f + 92 * k * zz, lw * (0.80f + 0.12f * zz));
     float blockH = side2 + 20 * k + 44 * k + 28 * k + 40 * k + (66 * k + 34 * k) * (1 - zz);
-    float ly = (std::max)(H * 0.09f, H * 0.53f - blockH / 2), lty = ly + side2 + 20 * k, lWaveY = lty + 44 * k + 28 * k + 40 * k;
+    float ly = (std::max)(H * 0.09f, H * 0.53f - blockH / 2);
 
-    float sd = mix(side, side2), pulse = 1 + (model.stageThump && !model.reduceMotion ? kThump * beat : 0); // the cover thumps with the kick, when that's on
-    D2D1_POINT_2F mid = {mix(x0 + side / 2, lcx), mix(cy, ly + side2 / 2)};
+    static const StagePrefs::Shape kPlain{};
+    const StagePrefs::Shape& s0 = role == kWhole ? shapeNow[0] : kPlain, &s1 = role == kWhole ? shapeNow[1] : kPlain; // a screen of a pair keeps its own layout
+    float laid0 = role == kWhole ? textLaid[0] : 1, laid1 = role == kWhole ? textLaid[1] : 1;
+    float side0 = side * s0.coverS, side1 = side2 * s1.coverS;
+    D2D1_POINT_2F mid0 = {x0 + side / 2 + s0.coverX * W, cy + s0.coverY * H}, mid1 = {lcx + s1.coverX * W, ly + side2 / 2 + s1.coverY * H};
+    float lift = ui.Smooth(Ui::Id("st.ed.lift"), editing && editDrag >= 0 && editDrag / 2 == kPartCover ? 1.0f : 0, 18);
+    float sd = mix(side0, side1), pulse = 1 + (model.stageThump && !model.reduceMotion && !editing ? kThump * beat : 0) + kLiftScale * lift; // the cover thumps with the kick, when that's on
+    D2D1_POINT_2F mid = {mix(mid0.x, mid1.x), mix(mid0.y, mid1.y)};
     D2D1_RECT_F art = Rect(mid.x - sd * pulse / 2, mid.y - sd * pulse / 2, sd * pulse, sd * pulse);
-    float rad = sd * 0.06f;
-    c.Glow({mid.x, mid.y + sd * 0.08f}, sd * 1.05f, sd * 0.95f, look.accent.Alpha(0.30f + 0.30f * beat)); // light spilling from the cover
-    c.Glow({mid.x, art.bottom}, sd * 0.70f, sd * 0.20f, Color{0, 0, 0, LightRoom() ? 0.18f : 0.45f}); // and a soft shadow under it
+    partCover = Rect(mid.x - sd / 2, mid.y - sd / 2, sd, sd);
+    // the song's words and controls keep to the cover as it moves, then go by their own arranging
+    float tk0 = k * laid0, colW0 = colW * laid0, colH0 = colH * laid0, tx0 = mid0.x + side0 / 2 + gap + s0.textX * W, ty0 = mid0.y - colH0 / 2 + s0.textY * H, waveY0 = ty0 + (22 + 66 + 66) * tk0;
+    float tk1 = k * laid1, lw1 = lw * laid1, lcx1 = mid1.x + s1.textX * W, lty1 = mid1.y + side1 / 2 + 20 * k + s1.textY * H, lWaveY1 = lty1 + (44 + 28 + 40) * tk1;
+    float rad = sd * mix(s0.coverRound, s1.coverRound);
+    c.Glow({mid.x, mid.y + sd * 0.08f}, sd * 1.05f, sd * 0.95f, look.accent.Alpha((0.30f + 0.30f * beat) * mix(s0.coverGlow, s1.coverGlow))); // light spilling from the cover
+    c.Glow({mid.x, art.bottom + 10 * lift}, sd * 0.70f, sd * (0.20f + 0.06f * lift), Color{0, 0, 0, (LightRoom() ? 0.18f : 0.45f) + kLiftShade * lift}); // and a soft shadow under it
     Ui::Hit artHit = ui.Button(Ui::Id("st.art"), art);
     if (artHit.clicked) Leave(); // the cover brought you here, the cover takes you back
     if (cover) c.Art(cover.Get(), coverBlur.Get(), art, rad, 1);
@@ -642,27 +712,34 @@ void Stage::Player(float show, float lyr) { // the cover big on the left and the
         c.Text(L"Close fullscreen?", pill, Weight::Medium, 13 * k, look.text.Alpha(tip), Align::Center);
     }
 
+    float zoom = mix(s0.textS / laid0, s1.textS / laid1); // being resized: the laid out song, drawn bigger or smaller about the place it grows from
+    D2D1_POINT_2F grows = {mix(tx0, lcx1), mix(ty0 + colH0 / 2, lty1)};
+    bool zoomed = std::fabs(zoom - 1) > 0.0005f; // only ever in the editor, where nothing under it can be pressed
+    if (zoomed) ctx->SetTransform(D2D1::Matrix3x2F::Scale(zoom, zoom, grows));
     std::wstring title = has && !tr.title.empty() ? tr.title : L"Nothing playing";
-    std::wstring sub = !has ? L"Start music or a video in any app" : tr.album.empty() || tr.album == tr.artist ? tr.artist : tr.artist + L"  \u00B7  " + tr.album;
+    std::wstring sub = !has ? L"Start music or a video in any app" : tr.album.empty() || tr.album == tr.artist || s0.albumOn < 0.5f ? tr.artist : tr.artist + L"  \u00B7  " + tr.album;
     if (e < 0.999f) { // the classic column slides out to the left as the lyrics come in
-        float a = (1 - e) * (1 - e), dx = -40 * k * e, y = ty;
-        c.TextSp(fmt::Upper(has ? tr.app : L"Idle"), Rect(tx + dx, y, colW, 20 * k), Weight::Medium, 13 * k, look.accentHi.Alpha(a), 3.0f);
-        y += 22 * k;
-        c.Text(title, Rect(tx + dx, y, colW, lineH), Weight::Medium, 52 * k, look.text.Alpha(a));
-        y += lineH;
-        c.Text(sub, Rect(tx + dx, y, colW, 34 * k), Weight::Light, 24 * k, look.textDim.Alpha(a));
+        float a = (1 - e) * (1 - e), dx = -40 * k * e, y = ty0;
+        c.TextSp(fmt::Upper(has ? tr.app : L"Idle"), Rect(tx0 + dx, y, colW0, 20 * tk0), Weight::Medium, 13 * tk0, look.accentHi.Alpha(a * s0.appOn), 3.0f);
+        y += 22 * tk0;
+        c.Text(title, Rect(tx0 + dx, y, colW0, 66 * tk0), Weight::Medium, 52 * tk0, look.text.Alpha(a));
+        y += 66 * tk0;
+        c.Text(sub, Rect(tx0 + dx, y, colW0, 34 * tk0), Weight::Light, 24 * tk0, look.textDim.Alpha(a));
     }
     if (e > 0.001f) { // under the cover, centered: just the song and who sings it
         float dy = 24 * k * (1 - e);
-        c.Text(title, Rect(lcx - lw / 2, lty + dy, lw, 44 * k), Weight::Medium, 34 * k, look.text.Alpha(e), Align::Center);
-        c.Text(tr.artist, Rect(lcx - lw / 2, lty + 44 * k + dy, lw, 28 * k), Weight::Light, 19 * k, look.textDim.Alpha(e), Align::Center);
+        c.Text(title, Rect(lcx1 - lw1 / 2, lty1 + dy, lw1, 44 * tk1), Weight::Medium, 34 * tk1, look.text.Alpha(e), Align::Center);
+        c.Text(tr.artist, Rect(lcx1 - lw1 / 2, lty1 + 44 * tk1 + dy, lw1, 28 * tk1), Weight::Light, 19 * tk1, look.textDim.Alpha(e), Align::Center);
     }
 
-    float ww = mix(colW, lw * 0.84f), wx = mix(tx, lcx - lw * 0.42f), wy = mix(waveY, lWaveY);
-    Seek(Rect(wx, wy - 16 * k, ww, 32 * k), show);
+    float ww = mix(colW0, lw1 * 0.84f), wx = mix(tx0, lcx1 - lw1 * 0.42f), wy = mix(waveY0, lWaveY1), wk = mix(tk0, tk1);
+    timesNow = mix(s0.timesOn, s1.timesOn);
+    Seek(Rect(wx, wy - 16 * wk, ww, 32 * wk), show);
 
     float alpha = show; // the controls leave with the cursor and come back with the mouse
-    float ck = k * mix(1.0f, 0.8f), ccx = mix(tx + colW / 2, lcx), y = mix(waveY + 76 * k, lWaveY + 66 * k);
+    float ck = mix(tk0, tk1 * 0.8f), ccx = mix(tx0 + colW0 / 2, lcx1), y = mix(waveY0 + 76 * tk0, lWaveY1 + 66 * tk1);
+    D2D1_RECT_F block = {mix(tx0, lcx1 - lw1 / 2), mix(ty0, lty1), mix(tx0 + colW0, lcx1 + lw1 / 2), y + 42 * ck};
+    partText = {grows.x + (block.left - grows.x) * zoom, grows.y + (block.top - grows.y) * zoom, grows.x + (block.right - grows.x) * zoom, grows.y + (block.bottom - grows.y) * zoom};
     D2D1_RECT_F row = {ccx - 270 * ck, y - 50 * ck, ccx + 270 * ck, y + 50 * ck};
     const Theme ctl = theme::Lift(look); // the play button leans toward the ink, so it stands clear of the light behind it
     if (alpha > 0.01f) { // hidden: not drawn at all
@@ -671,16 +748,19 @@ void Stage::Player(float show, float lyr) { // the cover big on the left and the
         if (w::IconBtn(ui, ctl, Ui::Id("st.prev"), {ccx - 100 * ck, y}, 60 * ck, glyph::Prev, 38 * ck, has && tr.canPrev)) model.media.Previous();
         if (w::PlayBtn(ui, ctl, Ui::Id("st.play"), {ccx, y}, 84 * ck, has && tr.playing, has)) model.media.TogglePlay();
         if (w::IconBtn(ui, ctl, Ui::Id("st.next"), {ccx + 100 * ck, y}, 60 * ck, glyph::Next, 38 * ck, has && tr.canNext)) model.media.Next();
-        D2D1_POINT_2F shuf = {ccx - 196 * ck, y}, rep = {ccx + 196 * ck, y};
-        if (w::IconBtn(ui, ctl, Ui::Id("st.shuffle"), shuf, 48 * ck, glyph::Shuffle, 26 * ck, has && tr.canShuf, has && tr.shuffle)) model.media.ToggleShuffle();
-        if (w::IconBtn(ui, ctl, Ui::Id("st.repeat"), rep, 48 * ck, has && tr.repeat == 1 ? glyph::RepeatOne : glyph::Repeat, 26 * ck, has && tr.canRep,
-                       has && tr.repeat != 0))
-            model.media.CycleRepeat();
-        float sOn = ui.Smooth(Ui::Id("st.shuffle", 7), has && tr.shuffle ? 1.0f : 0, 14), rOn = ui.Smooth(Ui::Id("st.repeat", 7), has && tr.repeat != 0 ? 1.0f : 0, 14);
-        if (sOn > 0.01f) c.Dot({shuf.x, shuf.y + 22 * ck}, 2.8f * ck * sOn, ctl.accent.Alpha(sOn)); // on: a dot under it, not just a color change
-        if (rOn > 0.01f) c.Dot({rep.x, rep.y + 22 * ck}, 2.8f * ck * rOn, ctl.accent.Alpha(rOn));
+        if (mix(s0.extrasOn, s1.extrasOn) > 0.5f) { // arranged away: the three that matter stay
+            D2D1_POINT_2F shuf = {ccx - 196 * ck, y}, rep = {ccx + 196 * ck, y};
+            if (w::IconBtn(ui, ctl, Ui::Id("st.shuffle"), shuf, 48 * ck, glyph::Shuffle, 26 * ck, has && tr.canShuf, has && tr.shuffle)) model.media.ToggleShuffle();
+            if (w::IconBtn(ui, ctl, Ui::Id("st.repeat"), rep, 48 * ck, has && tr.repeat == 1 ? glyph::RepeatOne : glyph::Repeat, 26 * ck, has && tr.canRep,
+                           has && tr.repeat != 0))
+                model.media.CycleRepeat();
+            float sOn = ui.Smooth(Ui::Id("st.shuffle", 7), has && tr.shuffle ? 1.0f : 0, 14), rOn = ui.Smooth(Ui::Id("st.repeat", 7), has && tr.repeat != 0 ? 1.0f : 0, 14);
+            if (sOn > 0.01f) c.Dot({shuf.x, shuf.y + 22 * ck}, 2.8f * ck * sOn, ctl.accent.Alpha(sOn)); // on: a dot under it, not just a color change
+            if (rOn > 0.01f) c.Dot({rep.x, rep.y + 22 * ck}, 2.8f * ck * rOn, ctl.accent.Alpha(rOn));
+        }
         if (layer) ctx->PopLayer();
     }
+    if (zoomed) ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 
     if (e > 0.001f && !alone) { // the lyrics drift in from the right
         D2D1_RECT_F lr = LyricRect();
@@ -766,6 +846,17 @@ void Stage::Frame(const Theme& media) {
     lastFrame = now;
     SyncCover(); // first: a new cover brings its colors
     SyncTheme(media, dt);
+    bool shapeMoving = false;
+    for (int v = 0; v < 2; ++v) {
+        const StagePrefs::Shape& to = StagePrefs::Get().shape[v];
+        if (editing) shapeMoving |= StagePrefs::Ease(shapeNow[v], to, kShapeRate, dt);
+        else shapeNow[v] = to;
+    }
+    if (!shapeMoving && editDrag < 0) { // settled: the type at its true size, once
+        for (int v = 0; v < 2; ++v) textLaid[v] = shapeNow[v].textS, clockLaid[v] = shapeNow[v].clockS;
+    }
+    if (!(shapeMoving || editDrag == kPartLyrics * 2 + 1) || lyrLaidW <= 0) lyrLaidW = Width(LyricRect());
+    partLyrics = LyricRect();
 
     float pl = 0, pr = 0;
     bool playing = model.hasTrack && model.track.playing;
@@ -782,11 +873,14 @@ void Stage::Frame(const Theme& media) {
     beat *= std::exp(-dt * 6);
     frameDt = dt;
 
+    if (editing && role != kWhole) EndEdit(); // gone to two screens: each keeps its own layout
+    if (editing) lastMove = now; // the controls and the cursor stay
     bool paused = !model.hasTrack || !model.track.playing;
     float show = ui.Smooth(Ui::Id("st.show"), !model.stageHide || now - lastMove < kIdleSec || paused || lyrMenu || ui.Captured() ? 1.0f : 0, 6); // the hide-at-rest switch off: they stay
 
     SyncLyrics(now);
     bool lyrOn = lyrDoc && !lyrDoc->lines.empty();
+    if (editing && !lyrOn) editTab = 0; // no words for this song: only the version without
     bool waiting = !lyrDoc && !lyrKey.empty() && now - lyrKeyAt < kLyrWaitSec && (lyrMix > 0.5f || role == kLyrics); // next song's lyrics on their way: the layout holds still
     if (role != styled) { // the lyrics half sets its words its own way; the full player's are as they always were
         styled = role;
@@ -794,11 +888,17 @@ void Stage::Frame(const Theme& media) {
         if (role == kLyrics) ls = {kWordsAt, 0.2f, 0.82f, 120, 8, 0.95f, 0.36f, 0.42f, 1.0f, 0.05f}; // the lyrics half: the sung line big, the rest smaller and dimmer, a slow soft glide
         lyrics.Style(ls);
     }
-    if (lyrOn) lyrics.Sync(ctx.Get(), lyrDoc, Width(LyricRect()), LyricSize()); // lays out a new song's lines before the frame starts
-    else if (waiting) lyrics.Sync(ctx.Get(), nullptr, Width(LyricRect()), LyricSize()); // the old song's lines go, dots wait in their place
+    if (role == kWhole) { // the words as they were arranged
+        const StagePrefs::Shape& s = shapeNow[1];
+        LyricView::Look ls;
+        ls.anchor = s.lyrAnchor, ls.dim = s.lyrDim, ls.haze = s.lyrHaze, ls.align = (int)std::lround(StagePrefs::Get().shape[1].lyrAlign);
+        lyrics.Style(ls);
+    }
+    if (lyrOn) lyrics.Sync(ctx.Get(), lyrDoc, lyrLaidW, LyricSize()); // lays out a new song's lines before the frame starts
+    else if (waiting) lyrics.Sync(ctx.Get(), nullptr, lyrLaidW, LyricSize()); // the old song's lines go, dots wait in their place
     else if (lyrMix < 0.001f) lyrics.Sync(ctx.Get(), nullptr, 0, 0);
     lyrics.Prepare(ctx.Get()); // bakes a few lines' blur, never inside the frame
-    bool lyrMoving = anim::Approach(lyrMix, lyrOn || waiting ? 1.0f : 0, 3.2f, dt, 0.001f);
+    bool lyrMoving = anim::Approach(lyrMix, (editing ? editTab == 1 : lyrOn || waiting) ? 1.0f : 0, editing ? kTabRate : kLyrRate, dt, 0.001f);
     bool idle = now - lastMove >= kIdleSec && !ui.Captured();
     if (idle && !cursorGone) { // resting: the cursor goes too, not only when it next moves
         POINT p;
@@ -818,14 +918,24 @@ void Stage::Frame(const Theme& media) {
     if (mode == 2) ctx->Clear(D2D1::ColorF(0, 0, 0, 0)); // the other rooms start with an opaque fill over every pixel: a clear first would be a whole screen spent twice
     ui.Begin(*canvas, input, dt, now);
     Backdrop(now);
+    if (float dim = role == kWhole ? shapeNow[0].dim + (shapeNow[1].dim - shapeNow[0].dim) * lyrMix : 0; dim > 0.002f) canvas->Fill({0, 0, W, H}, 0, Color{0, 0, 0, dim});
     if (role != kWhole) canvas->Fill({0, 0, W, H}, 0, Color{0, 0, 0, kPairShade}); // the same shade on both, so the two screens read as one room
     if (role != kLyrics) Clock(H * 0.035f, std::clamp(H / 900.0f, 0.8f, 1.6f)); // the words' half: only the words
     bool menuUp = lyrMenu && !lyrKey.empty();
-    if (menuUp) ui.Block(true); // a click on the list never reaches the lines under it: a line seeks the song
+    if (menuUp || editing) ui.Block(true); // a click on the list never reaches the lines under it: a line seeks the song. in the editor it's all there to be moved, not pressed
     if (role == kLyrics) Words();
     else Player(show, role == kCover ? 1.0f : lyrMix); // the song's half of a pair: the stacked layout, on its own
     ui.Block(false);
-    LyricsChoice(show);
+    float editShow = ui.Smooth(Ui::Id("st.ed.show"), editing ? 1.0f : 0, 12); // it comes and goes softly
+    if (!editing) {
+        LyricsChoice(show);
+        EditButton(show);
+    }
+    if (editShow > 0.01f) {
+        if (!editing) ui.Block(true); // on its way out: only a picture
+        EditLayer(lyrOn, editShow);
+        ui.Block(false);
+    }
     if (lyrMenu) LyricsMenu();
     if (float nudge = anim::Clamp01((float)(1.6 - (now - nudgeAt)) / 0.3f); nudge > 0.001f && (lyrMix > 0.5f || role == kLyrics) && role != kCover) { // readout while nudging the lyrics
         float k = std::clamp(H / 900.0f, 0.8f, 1.6f), pw = 210 * k, ph = 34 * k;
@@ -837,7 +947,7 @@ void Stage::Frame(const Theme& media) {
         canvas->Text(model.lyricOffsetMs == 0 ? std::wstring(L"Lyrics in sync") : std::wstring(txt), pill, Weight::Medium, 13 * k, look.text.Alpha(nudge), Align::Center);
         ui.Wake();
     }
-    float since = (float)(now - openedAt), tip = anim::Clamp01(since / 0.3f) * anim::Clamp01((2.6f - since) / 0.4f); // in, hold ~2 s, out
+    float since = (float)(now - openedAt), tip = editing ? 0 : anim::Clamp01(since / 0.3f) * anim::Clamp01((2.6f - since) / 0.4f); // in, hold ~2 s, out
     if (float said = anim::Clamp01((float)(kHintSec - (now - hintAt)) / 0.3f) * anim::Clamp01((float)(now - hintAt) / 0.15f); said > 0.001f && hint) { // what a two screen key just did
         float k = K(), pw = (std::max)(220 * k, canvas->Measure(hint, Weight::Medium, 13 * k) + 40 * k), ph = 34 * k;
         D2D1_RECT_F pill = Rect((W - pw) / 2, H * 0.085f + 6 * (1 - said), pw, ph);
@@ -866,10 +976,10 @@ void Stage::Frame(const Theme& media) {
     if (hear) access.Publish(ui, *canvas, scale);
     input.pressed = input.released = input.rclick = false;
     input.wheel = 0;
-    bool fast = ui.Busy() || ui.Captured() || (show > 0.01f && show < 0.99f) || tip > 0.001f || lyrMoving || lyrics.Busy() || swapDim > 0.001f;
+    bool fast = editing || ui.Busy() || ui.Captured() || (show > 0.01f && show < 0.99f) || tip > 0.001f || lyrMoving || lyrics.Busy() || swapDim > 0.001f;
     bool ambient = left + right > 0.03f || beat > 0.02f; // only the music-driven light moves
     double hz = RefreshOf(screen);
     bool game = GameNow(now); // a game in front elsewhere: nothing needs more than the ambient rate
-    UINT sync = SyncFor(hz, fast && !game ? kFastFps : fast || ambient ? kAmbientFps : kQuietFps); // capped at 60 on fast screens; the slow drift needs far less
+    UINT sync = editing && (editDrag >= 0 || barHeld) ? 1 : SyncFor(hz, fast && !game ? kFastFps : fast || ambient ? kAmbientFps : kQuietFps); // capped at 60 on fast screens; the slow drift needs far less. a hand on something in the editor: every refresh the screen has
     if (FAILED(hr) || FAILED(swap->Present(sync, 0))) done = true; // device lost: just leave, the panel is one hover away
 }

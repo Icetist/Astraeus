@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
-#include <unordered_map>
 
 #include "anim.h"
 #include "glyphs.h"
@@ -167,10 +166,18 @@ float Scroll(Ui& ui, const char* id, float& target, const D2D1_RECT_F& view, flo
     return shown;
 }
 
-void Fades(Canvas& c, const Theme& t, const D2D1_RECT_F& view, float scroll, float content) {
+void FadesIn(Canvas& c, Color ink, const D2D1_RECT_F& view, float scroll, float content) {
     float maxS = content - Height(view);
-    if (scroll > 1) c.FillV({view.left, view.top, view.right, view.top + 18}, 0, t.card, t.card.Alpha(0));
-    if (scroll < maxS - 1) c.FillV({view.left, view.bottom - 18, view.right, view.bottom}, 0, t.card.Alpha(0), t.card);
+    if (scroll > 1) c.FillV({view.left, view.top, view.right, view.top + 18}, 0, ink, ink.Alpha(0));
+    if (scroll < maxS - 1) c.FillV({view.left, view.bottom - 18, view.right, view.bottom}, 0, ink.Alpha(0), ink);
+}
+
+void Fades(Canvas& c, const Theme& t, const D2D1_RECT_F& view, float scroll, float content) { FadesIn(c, t.card, view, scroll, content); }
+
+void Surface(Canvas& c, const Theme& t, const D2D1_RECT_F& r, Color fill) {
+    c.Fill(Rect(r.left, r.top + 3, Width(r), Height(r)), kSurfaceR, Color{0, 0, 0, 0.22f});
+    c.Fill(r, kSurfaceR, fill);
+    c.StrokeV(r, kSurfaceR, t.hairTop, t.hairBot, 1);
 }
 
 constexpr float kCardLift = 0.25f; // toward the track: about 1.12:1 on the sheet, enough to read with no border, and the controls on it still stand out
@@ -276,145 +283,22 @@ bool Knob(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const wchar
     return changed;
 }
 
-namespace {
-
-constexpr float kBadgeR = 8; // the x and + marks on a cell's corner
-constexpr float kDragStart = 6; // dips moved before a press is a drag
-constexpr float kStackH = 44; // cells at least this tall stack the icon over the name
-struct Carry {
-    int item = -1; // what's being dragged, -1 nothing
-    D2D1_POINT_2F grab{}; // where on it the mouse holds it
-};
-std::unordered_map<uint32_t, Carry> carries; // one per editor, a few at most
-
-void Badge(Canvas& c, const Theme& t, D2D1_POINT_2F o, bool add, float hover) {
-    if (add) c.Dot(o, kBadgeR, t.accent.Mix(t.accentHi, hover));
-    else c.Dot(o, kBadgeR, hover > 0.5f ? kDanger : t.textLow.Mix(t.textDim, 0.5f));
-    c.Icon(add ? glyph::Add : glyph::Close, o, 12, add ? t.onAccent : Color{1, 1, 1, 1});
-}
-
-void Cell(Canvas& c, const Theme& t, const D2D1_RECT_F& q, const Arrange& a, int item, bool ghost, float hover, float lit, float lift) {
-    float rad = (std::min)(Height(q) / 2, 14.0f);
-    if (lift > 0.01f) c.Fill(Inset(q, -2, -2), rad + 2, Color{0, 0, 0, 0.22f * lift}); // carried: it floats over the others
-    if (ghost) { // could be added: an outline waiting to be filled
-        c.Fill(q, rad, t.track.Alpha(0.20f + 0.30f * hover));
-        c.Stroke(q, rad, t.accent.Alpha(0.30f + 0.40f * hover), 1);
-    } else {
-        c.Fill(q, rad, t.cardHi.Mix(t.track, 0.5f * hover));
-        if (lit > 0.01f) c.Fill(q, rad, t.accent.Alpha(0.22f * lit));
-        c.StrokeV(q, rad, t.hairTop.Mix(t.accentHi.Alpha(0.75f), lit), t.hairBot, 1);
-    }
-    bool stack = Height(q) >= kStackH;
-    float size = stack ? 11 : 11.5f, room = stack ? Width(q) - 10 : Width(q) - 32 - kBadgeR - 4;
-    const wchar_t* label = a.name(item);
-    if (a.shortName && c.Measure(label, Weight::Medium, size) > room) label = a.shortName(item); // narrow: the short word, never a cut one
-    Color ink = ghost ? t.textDim.Mix(t.text, hover) : t.text;
-    Color iconInk = lit > 0.5f ? t.accentHi : ink;
-    if (stack) {
-        c.Icon(a.glyph(item), {(q.left + q.right) / 2, q.top + Height(q) * 0.38f}, 19, iconInk, lit > 0.5f);
-        c.Text(label, Rect(q.left + 5, q.top + Height(q) * 0.62f - 8, Width(q) - 10, 16), Weight::Medium, size, ink, Align::Center);
-    } else {
-        c.Icon(a.glyph(item), {q.left + 18, (q.top + q.bottom) / 2}, 17, iconInk, lit > 0.5f);
-        c.Text(label, {q.left + 32, q.top, q.left + 32 + room, q.bottom}, Weight::Medium, size, ink);
-    }
-}
-
-}
-
-bool Arranger(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, int cols, float cellH, Arrange& a, bool live) {
+bool PickCard(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& card, int icon, const wchar_t* name, const wchar_t* about, bool on) {
     Canvas& c = ui.C();
-    const Input& in = ui.In();
-    Carry& carry = carries[Ui::Id(id)];
-    cols = (std::max)(1, cols);
-    float cw = (Width(r) - kArrangeGap * (cols - 1)) / cols;
-    auto cell = [&](int k) { return Rect(r.left + (k % cols) * (cw + kArrangeGap), r.top + (k / cols) * (cellH + kArrangeGap), cw, cellH); };
-    int n = (int)a.shown.size();
-    Ids order = a.shown; // this frame's order: a carried item sits where it would land
-    auto held = std::find(order.begin(), order.end(), carry.item);
-    if (held == order.end() || !live) carry.item = -1;
-    if (carry.item >= 0) {
-        order.erase(held);
-        int best = 0;
-        float bestD = 1e12f;
-        for (int k = 0; k < n; ++k) { // the nearest of the shown cells
-            D2D1_RECT_F q = cell(k);
-            float dx = in.mouse.x - (q.left + q.right) / 2, dy = in.mouse.y - (q.top + q.bottom) / 2;
-            if (dx * dx + dy * dy < bestD) bestD = dx * dx + dy * dy, best = k;
-        }
-        order.insert(order.begin() + best, carry.item);
-    }
-    bool changed = false, canDrop = n > (int)a.keep;
-    int removeItem = -1, addItem = -1, top = -1;
-    D2D1_RECT_F topRect{};
-    for (int k = 0; k < n; ++k) {
-        int item = order[(size_t)k];
-        D2D1_RECT_F home = cell(k);
-        bool carried = item == carry.item;
-        D2D1_RECT_F q = carried ? Rect(in.mouse.x - carry.grab.x, in.mouse.y - carry.grab.y, cw, cellH) : home; // cells sit still: an eased place lagged the page's scroll
-        D2D1_POINT_2F bo = {q.right - 3, q.top + 3};
-        D2D1_RECT_F br = {bo.x - kBadgeR - 2, bo.y - kBadgeR - 2, bo.x + kBadgeR + 2, bo.y + kBadgeR + 2};
-        Ui::Hit xh = live && canDrop && carry.item < 0 ? ui.Button(Ui::Id(id, 200 + item), br) : Ui::Hit{}; // before the cell's: the first button under a press takes it
-        uint32_t cid = Ui::Id(id, 100 + item);
-        Ui::Hit h = live ? ui.Button(cid, carried ? q : home) : Ui::Hit{};
-        if (live && ui.IsActive(cid) && in.down && carry.item < 0 &&
-            std::fabs(in.mouse.x - in.pressPos.x) + std::fabs(in.mouse.y - in.pressPos.y) > kDragStart) { // pulled far enough: it's carried
-            carry.item = item;
-            carry.grab = {in.pressPos.x - home.left, in.pressPos.y - home.top};
-        }
-        if (xh.clicked) removeItem = item;
-        else if (h.clicked && !carried) a.tapped = item;
-        if (carried) {
-            top = item, topRect = q;
-            continue; // drawn last, over the rest
-        }
-        float hover = ui.Smooth(Ui::Id(id, 600 + item), h.hover ? 1.0f : 0, 16);
-        float lit = ui.Smooth(Ui::Id(id, 700 + item), item == a.lit ? a.litMix : 0, 14);
-        Cell(c, t, q, a, item, false, hover, lit, 0);
-        if (canDrop) Badge(c, t, bo, false, xh.hover ? 1.0f : 0);
-    }
-    for (size_t j = 0; j < a.hidden.size(); ++j) { // the ones that could come back, after the rest
-        int item = a.hidden[j];
-        D2D1_RECT_F q = cell(n + (int)j);
-        Ui::Hit h = live && carry.item < 0 ? ui.Button(Ui::Id(id, 300 + item), q) : Ui::Hit{};
-        float hover = ui.Smooth(Ui::Id(id, 600 + item), h.hover ? 1.0f : 0, 16);
-        Cell(c, t, q, a, item, true, hover, 0, 0);
-        Badge(c, t, {q.right - 3, q.top + 3}, true, hover);
-        if (h.clicked) addItem = item;
-    }
-    if (top >= 0) {
-        ui.Wake(); // it follows the mouse
-        Cell(c, t, topRect, a, top, false, 1, top == a.lit ? a.litMix : 0, 1);
-    }
-    if (carry.item >= 0 && !in.down) { // let go: the order it showed is kept
-        if (order != a.shown) a.shown = order, changed = true;
-        carry.item = -1;
-    }
-    if (removeItem >= 0) {
-        a.shown.erase(std::remove(a.shown.begin(), a.shown.end(), removeItem), a.shown.end());
-        changed = true;
-    }
-    if (addItem >= 0) {
-        a.shown.push_back(addItem);
-        changed = true;
-    }
-    return changed;
-}
-
-const wchar_t* TileShort(int id) {
-    static const wchar_t* const kShort[Model::kToolTiles] = {L"Snip", L"Color", L"Awake", L"Alerts", L"Quiet", L"Saver", L"Airplane", L"Settings", L"Spaces", L"Language", L"Bin", L"Updates"};
-    return kShort[(std::clamp)(id, 0, Model::kToolTiles - 1)];
-}
-
-Arrange TileSet(const Model& m) {
-    Arrange a;
-    for (int id : m.tiles)
-        if (m.TileHere(id)) a.shown.push_back(id);
-    for (int i = 0; i < Model::kToolTiles; ++i)
-        if (m.TileHere(i) && std::find(m.tiles.begin(), m.tiles.end(), i) == m.tiles.end()) a.hidden.push_back(i);
-    a.glyph = Model::TileGlyph;
-    a.name = Model::TileName;
-    a.shortName = TileShort;
-    return a;
+    Ui::Hit h = ui.Button(id, card);
+    ui.Mark(Ui::Role::Toggle, on);
+    ui.Name(name);
+    float hov = ui.Smooth(id + 1, h.hover ? 1.0f : 0, 16), sel = ui.Smooth(id + 2, on ? 1.0f : 0, 16);
+    c.Fill(card, 16, t.text.Alpha(0.04f + 0.05f * hov));
+    if (sel > 0.01f) c.Stroke(card, 16, t.accent.Alpha(0.8f * sel), 1.5f);
+    float mid = (card.top + card.bottom) / 2, room = Width(card) - 82;
+    c.Icon(icon, {card.left + 26, mid}, 21, t.text.Mix(t.accentHi, sel));
+    c.Text(name, Rect(card.left + 48, mid - 18, room, 18), Weight::Semi, 12, t.text);
+    c.Text(about, Rect(card.left + 48, mid, room, 16), Weight::Regular, 10.5f, t.textDim);
+    D2D1_POINT_2F o = {card.right - 20, mid};
+    c.Dot(o, 9, t.text.Alpha(0.1f).Mix(t.accent, sel));
+    c.Icon(on ? glyph::Check : glyph::Add, o, 13, on ? t.onAccent : t.textDim);
+    return h.clicked;
 }
 
 void KeepTiles(Model& m, const Ids& set) {

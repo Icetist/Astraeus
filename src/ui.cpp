@@ -466,17 +466,18 @@ bool Chip(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const std::
 }
 
 bool Switch(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, bool on, bool enabled) {
-    D2D1_RECT_F r = {c.x - 23, c.y - 13, c.x + 23, c.y + 13};
+    constexpr float kHalfW = 20, kHalfH = 11; // rows are 30 tall: this leaves air between stacked ones
+    D2D1_RECT_F r = {c.x - kHalfW, c.y - kHalfH, c.x + kHalfW, c.y + kHalfH};
     Ui::Hit h = enabled ? ui.Button(id, r) : Ui::Hit{};
     if (enabled) ui.Mark(Ui::Role::Toggle, on);
     float k = ui.Smooth(id, on ? 1.0f : 0, 18); // knob travel 0..1
     float hover = ui.Smooth(id + 1, h.hover ? 1.0f : 0, 16);
     float a = enabled ? 1.0f : 0.4f;
     Canvas& cv = ui.C();
-    cv.Fill(r, 13, t.track.Mix(t.accent, k).Alpha(a));
-    cv.Stroke(r, 13, t.hairTop.Mix(t.accentHi.Alpha(0.6f), k), 1);
-    float x = r.left + 13 + 20 * k;
-    float rad = 6.5f + 3 * k + hover; // m3 style: knob grows when on
+    cv.Fill(r, kHalfH, t.track.Mix(t.accent, k).Alpha(a));
+    cv.Stroke(r, kHalfH, t.hairTop.Mix(t.accentHi.Alpha(0.6f), k), 1);
+    float x = r.left + kHalfH + 2 * (kHalfW - kHalfH) * k;
+    float rad = 5.5f + 2.5f * k + hover; // m3 style: knob grows when on
     if (hover > 0.01f) cv.Dot({x, c.y}, rad + 6, t.text.Alpha(0.06f * hover));
     cv.Dot({x, c.y}, rad, t.textDim.Mix(t.onAccent, k).Alpha(a)); // dark knob on accent track
     return h.clicked;

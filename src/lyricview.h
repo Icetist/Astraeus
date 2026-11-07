@@ -27,6 +27,7 @@ public:
         float dim = 0.34f, dimLit = 0.42f; // lines out of turn, and the unsung words of the sung line
         float haze = 1; // how far out of focus the lines away from the sung one go
         float dimStep = 0.04f; // each line further out this much dimmer, up to four
+        int align = 0; // 0 left, 1 center, 2 right
     };
     void Style(const Look& l); // relays the sweep's colors if they change
 
