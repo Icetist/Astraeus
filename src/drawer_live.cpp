@@ -257,12 +257,13 @@ void Drawer::BoardKey() { // the screen under the mouse: its dashboard steps asi
 void Drawer::SyncDesk() {
     if (!desk || desk->Editing()) return;
     if (opened) longHeld = false; // the panel took over: a new call brings it back
-    desk->Want(model.deskPill && deskOn && (pillView || (model.deskApps && longHeld)) && !hidden && !stage && !opened && !peeking && !dragging && (!fullApp || model.pillFull), mon);
+    bool appsLong = model.deskApps && longHeld && !(deskView && !model.LongPill()); // held over an app: back on a desktop that wears the regular pill, it lets go
+    desk->Want(deskOn && (pillView || appsLong) && !hidden && !stage && !opened && !peeking && !dragging && (!fullApp || model.pillFull), mon);
 }
 
-void Drawer::DeskEdit() {
+void Drawer::DeskEdit(int from) {
     if (!desk || desk->Editing() || stage) return;
-    desk->Edit(mon);
+    desk->Edit(mon, from);
     SyncHide(); // the panel or the island goes, the editor has the screen
 }
 

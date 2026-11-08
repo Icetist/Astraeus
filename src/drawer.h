@@ -63,7 +63,7 @@ private:
     bool longHeld = false; // it's standing in for the small pill over an app: called by a hover, or held by the stay rules
     void SyncDesk(); // it comes or goes with the desktop, the panel and fullscreen apps
     void WidgetStudio(); // the widgets, tools tiles or pages, arranged and added to over the wallpaper
-    void DeskEdit(); // the editor, on this screen; the panel and the island step aside
+    void DeskEdit(int from = Model::kEditFromLong); // the editor, on this screen; the panel and the island step aside. from: which pill asked
     bool AppIn(const RECT& area) const; // any app window over that part of the screen
     static constexpr UINT kDeskEditMsg = WM_APP + 63; // settings asked for it, run after the frame
     std::vector<std::unique_ptr<Board>> boards; // a fullscreen dashboard per screen set to one, none on a screen switched back to the desktop
@@ -376,6 +376,8 @@ private:
     D2D1_POINT_2F railTipAt{};
     void DrawRailTip(const Theme& t);
     void DrawTour(const Theme& t, float panelW, float panelH); // drawer_tour.cpp: the light, the dim around it and the step's card
+    void DrawNotice(const Theme& t, float panelW, float panelH); // the update's one card: the long pill is on now, and how to go back
+    bool noticeUp = false;
     bool TourShows(int i) const; // that step has what it shows on this pc
     void TourGo(int from, int dir); // to the next step this pc has, that way
     void TourStart();

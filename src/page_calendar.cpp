@@ -290,8 +290,12 @@ void Agenda(PageCtx& p, const D2D1_RECT_F& list, int y, int mo, int d) { // the 
             break;
         }
         std::wstring when = e.allDay ? L"All day" : TimeText(e.start) + L" \u2013 " + TimeText(e.end);
-        c.Text(e.title.empty() ? std::wstring(L"(No title)") : e.title, Rect(row.left + 20, row.top + 3, Width(row) - 28, 18), Weight::Medium, 13, t.text);
-        c.Text(e.where.empty() ? when : when + L"  \u00B7  " + e.where, Rect(row.left + 20, row.top + 19, Width(row) - 28, 16), Weight::Light, 11.5f, t.accentHi);
+        bool isMine = sys::cal::HasMine(e.start, e.title); // added here, not from a linked calendar: it can go from here too
+        float textW = Width(row) - (isMine ? 60.0f : 28.0f);
+        c.Text(e.title.empty() ? std::wstring(L"(No title)") : e.title, Rect(row.left + 20, row.top + 3, textW, 18), Weight::Medium, 13, t.text);
+        c.Text(e.where.empty() ? when : when + L"  \u00B7  " + e.where, Rect(row.left + 20, row.top + 19, textW, 16), Weight::Light, 11.5f, t.accentHi);
+        if (isMine && w::IconBtn(ui, t, Ui::Id("cal.ag.rm", (int)i), {row.right - 20, (row.top + row.bottom) / 2}, 28, glyph::Delete, 17))
+            sys::cal::RemoveMine(e.start, e.title);
     }
 }
 
@@ -478,11 +482,11 @@ void DrawCalendar(PageCtx& p, float k) {
     c.Text(day, Rect(list.left + 4, dayY, narrow ? Width(list) - 8 : Width(list) * 0.6f, 20), Weight::Medium, 13, t.text);
     D2D1_RECT_F right = narrow ? Rect(list.left + 4, list.bottom - 30, Width(list) - 8, 24) : Rect(list.left + Width(list) * 0.4f, list.bottom - 30, Width(list) * 0.6f - 4, 24);
     D2D1_RECT_F connect = Rect(list.right - 150, list.bottom - 30, 150, 24);
-    size_t count = m.cals.Linked() ? m.cals.Day(sy, sm, sd).size() : 0;
+    size_t count = m.cals.Day(sy, sm, sd).size(); // linked and your own: a game added from the scores counts without a link too
     if (m.calWaiting) { // connecting: what to copy, and a way out
         c.Text(L"Copy the “Secret address in iCal format”", Rect(list.left + 4, list.bottom - 28, Width(list) - 90, 20), Weight::Medium, narrow ? 11.0f : 12.5f, t.accentHi);
         if (TextBtn(ui, t, "cal.wait.x", Rect(list.right - 80, list.bottom - 30, 80, 24), L"Cancel", false)) m.StopCalWait();
-    } else if (!m.cals.Linked()) { // nothing connected: one tap opens google calendar's settings, the copied link does the rest
+    } else if (!m.cals.Linked() && count == 0) { // nothing connected, nothing of your own that day: one tap opens google calendar's settings, the copied link does the rest
         if (TextBtn(ui, t, "cal.connect", connect, L"Connect calendar", true)) m.StartCalWait(true);
         if (ui.RClick(connect)) m.calLinks = true; // outlook, icloud, any link
     } else if (count > 0) { // the day has events: they open in the month's place

@@ -5,6 +5,7 @@
 #include "faces.h"
 #include "feeds.h"
 #include "glyphs.h"
+#include "sports.h"
 #include "duration.h"
 #include "pages.h"
 #include "picker.h"
@@ -151,7 +152,18 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     pillDesk = flag(L"PillDesktop", 1); // on out of the box: the island stays in sight on an empty desktop
     pillLeft = (std::clamp)(sys::ReadNum(L"PillLeft", kWWeather), 0, kWidgets - 1);
     pillRight = (std::clamp)(sys::ReadNum(L"PillRight", kWCpu), 0, kWidgets - 1);
-    deskPill = flag(L"DeskPill", 0);
+    int pillWas = sys::ReadNum(L"DeskPill", -1); // -1: never chosen, the regular desktop pill
+    deskPill = pillWas < 0 ? 1 : pillWas != 0; // the long pill is the desktop's to start with
+    if (!sys::ReadNum(L"LongPillDefault", 0)) { // once, with the update that made it the default
+        sys::SaveNum(L"LongPillDefault", 1);
+        bool usedBefore = sys::ReadNum(L"LastPage", -1) >= 0; // a new install has nothing to be told
+        if (pillWas != 1) { // on the regular desktop pill: the long one now; already on the long one: nothing changes
+            deskPill = 1;
+            sys::SaveNum(L"DeskPill", 1);
+            if (usedBefore && pillDesk) sys::SaveNum(L"LongPillNotice", 1); // no pill on their desktop: nothing changed they'd see
+        }
+    }
+    longPillNotice = sys::ReadNum(L"LongPillNotice", 0) != 0;
     deskFillApps = (std::clamp)(sys::ReadNum(L"DeskFillApps", sys::ReadNum(L"DeskFill", 0)), 0, 3);
     deskEdge = (std::clamp)(sys::ReadNum(L"DeskEdge", 0), 0, 2);
     deskPos = (std::clamp)(sys::ReadNum(L"DeskPos", 500), 0, 1000);
@@ -164,19 +176,22 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     deskFloatApps = flag(L"DeskFloatApps", deskFloat);
     deskApps = flag(L"DeskApps", 0);
     deskFill = (std::clamp)(sys::ReadNum(L"DeskFill", 0), 0, 3);
-    {
-        std::wstring saved = sys::ReadText(L"DeskItems");
-        if (saved.empty()) deskItems = DeskDefaults();
-        else if (saved != L"-") { // "-": taken all off on purpose
-            for (size_t at = 0; at < saved.size();) {
-                size_t end = saved.find(L',', at);
-                if (end == std::wstring::npos) end = saved.size();
-                int v = _wtoi(saved.substr(at, end - at).c_str());
-                if (((v > kWNone && v < kWidgets) || (v >= kDClock && v <= kDBars)) && std::find(deskItems.begin(), deskItems.end(), v) == deskItems.end()) deskItems.push_back(v);
-                at = end + 1;
-            }
+    auto items = [&](const wchar_t* name, std::vector<int>& out) { // "-": taken all off on purpose; nothing saved: the defaults
+        std::wstring saved = sys::ReadText(name);
+        if (saved.empty()) return (void)(out = DeskDefaults());
+        if (saved == L"-") return;
+        for (size_t at = 0; at < saved.size();) {
+            size_t end = saved.find(L',', at);
+            if (end == std::wstring::npos) end = saved.size();
+            int v = _wtoi(saved.substr(at, end - at).c_str());
+            if (((v > kWNone && v < kWidgets) || (v >= kDClock && v <= kDScore)) && std::find(out.begin(), out.end(), v) == out.end()) out.push_back(v);
+            at = end + 1;
         }
-    }
+    };
+    items(L"DeskItems", deskItems);
+    deskSplit = flag(L"DeskSplit", 0);
+    if (sys::ReadText(L"DeskItemsApps").empty()) deskItemsApps = deskItems; // never split yet: it starts as the desktop's
+    else items(L"DeskItemsApps", deskItemsApps);
     mediaCompact = flag(L"MediaCompact", 0);
     pillMusic = flag(L"PillMusic", 1);
     showArt = flag(L"ShowArt", 1);
@@ -579,6 +594,7 @@ void Model::SetAwake(bool on) {
 void Model::SetPref(int& field, const wchar_t* key, int value) {
     field = value;
     sys::SaveNum(ThemeKey(key).c_str(), value);
+    if (&field == &pillLeft || &field == &pillRight || &field == &deskPill || &field == &pillDesk || &field == &deskApps) SyncFaces(); // a pill may show the market now: it's fetched, or let go
 }
 
 std::wstring Model::ThemeKey(const wchar_t* key) const {
@@ -813,7 +829,7 @@ void Model::CheckTiler() {
 bool Model::WantsWs() const {
     if (tiler == sys::Tiler::kNone) return false; // no tiling manager: nothing reads desktops on its behalf
     if (pillLeft == kWWork || pillRight == kWWork) return true;
-    if (deskPill && std::find(deskItems.begin(), deskItems.end(), (int)kWWork) != deskItems.end()) return true;
+    if (AnyLong() && std::find(deskItems.begin(), deskItems.end(), (int)kWWork) != deskItems.end()) return true;
     if (boardsUp && BoardHas(kBdWork)) return true;
     return std::find(tiles.begin(), tiles.end(), (int)kTlWork) != tiles.end();
 }
@@ -1142,6 +1158,13 @@ void Model::SyncFaces() {
     feeds::Start(notify, WM_APP_FEEDS, L"Astraeus");
     std::vector<std::string> ids = faces::Feeds(faceOn);
     if (!panelLive && !studioOpen) ids.erase(std::remove_if(ids.begin(), ids.end(), [](const std::string& id) { return id != "screen"; }), ids.end()); // nothing's in sight: only screen time needs to keep noting
+    bool market = pillLeft == kWMarket || pillRight == kWMarket || (AnyLong() && std::find(deskItems.begin(), deskItems.end(), (int)kWMarket) != deskItems.end()); // a pill shows the market: it stays fetched while the panel's away
+    if (market && std::find(ids.begin(), ids.end(), kMarketQuote) == ids.end()) ids.push_back(kMarketQuote);
+    auto onPill = [&](int k) { return std::find(deskItems.begin(), deskItems.end(), k) != deskItems.end() || (deskSplit && std::find(deskItemsApps.begin(), deskItemsApps.end(), k) != deskItemsApps.end()); };
+    if (AnyLong() && onPill(kWMarket) && std::find(ids.begin(), ids.end(), kMarketQuote) == ids.end()) ids.push_back(kMarketQuote);
+    if (AnyLong() && onPill(kDScore)) // the long pill's score: its leagues stay fetched while the panel's away
+        for (const std::string& l : sports::Followed())
+            if (std::string id = sports::FeedId(l); std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id);
     feeds::Want(ids);
     if (!wx.place.empty() && feeds::Setting("sky.place") != wx.place) feeds::SetSetting("sky.place", wx.place);
 }
@@ -1297,6 +1320,8 @@ const wchar_t* Model::DeskItemName(int k) {
     case kWLang: return L"Language";
     case kWTitle: return L"Window";
     case kWDisk: return L"Disk";
+    case kWMarket: return L"Markets";
+    case kDScore: return L"Score";
     default: return L"";
     }
 }
@@ -1329,6 +1354,21 @@ std::wstring Model::DeskItemText(int k, int& icon) const {
     case kDBars: // drawn by the pill itself; the icon only says there's a song for them
         if (hasTrack && !track.title.empty()) icon = glyph::Music;
         return L"";
+    case kDScore: { // one game of the followed leagues: what's on first, then what's done, then what's next; the wheel steps through them
+        std::vector<sports::Game> live, done, next;
+        for (const std::string& l : sports::Followed())
+            for (const std::wstring& row : feeds::Get(sports::FeedId(l)).rows) {
+                sports::Game g = sports::Decode(row);
+                (g.state == sports::kLive ? live : g.state == sports::kFinal ? done : next).push_back(std::move(g));
+            }
+        std::vector<sports::Game> all = sports::Order(std::move(live));
+        for (auto* more : {&done, &next})
+            for (sports::Game& g : sports::Order(std::move(*more))) all.push_back(std::move(g));
+        if (all.empty()) return L"";
+        icon = glyph::Dashboard;
+        int n = (int)all.size();
+        return sports::Line(all[(size_t)(((scoreAt % n) + n) % n)]);
+    }
     case kDTimer:
         if (Activity() == kActNone) return L"";
         icon = glyph::Timer;
@@ -1350,6 +1390,15 @@ void Model::SetDeskItems(const std::vector<int>& items) {
     std::wstring s;
     for (int v : items) s += (s.empty() ? L"" : L",") + std::to_wstring(v);
     sys::SaveText(L"DeskItems", s.empty() ? L"-" : s);
+    SyncFaces(); // the market may have come on or gone off the long pill
+}
+
+void Model::SetDeskItemsApps(const std::vector<int>& items) {
+    deskItemsApps = items;
+    std::wstring s;
+    for (int v : items) s += (s.empty() ? L"" : L",") + std::to_wstring(v);
+    sys::SaveText(L"DeskItemsApps", s.empty() ? L"-" : s);
+    SyncFaces();
 }
 
 void Model::WantDeskAudio() {
@@ -1360,6 +1409,14 @@ void Model::WantDeskAudio() {
 
 std::wstring Model::PillWidget(int which, int& icon) const {
     switch (which) {
+    case kWMarket: { // the s&p 500's day, as the market widgets read it
+        feeds::Series q = feeds::Get(kMarketQuote);
+        if (!q.ok) return L"";
+        icon = q.change >= 0 ? glyph::Up : glyph::Down;
+        wchar_t b[32];
+        swprintf_s(b, L"S&P %+.1f%%", q.change * 100);
+        return b;
+    }
     case kWWeather:
         if (!cfg.weather || !wx.valid) return L"";
         icon = fmt::WxIcon(wx.code, wx.isDay);

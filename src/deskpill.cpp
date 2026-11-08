@@ -201,9 +201,18 @@ void DeskPill::Measure(HMONITOR on) {
         spec.edge = model.deskEdge, spec.pos = (float)model.deskPos, spec.thick = (float)model.deskThick;
         spec.shape[0] = {(float)model.deskLen, (float)model.deskGap, model.deskFloat != 0};
         spec.shape[1] = {(float)model.deskLenApps, (float)model.deskGapApps, model.deskFloatApps != 0};
-        spec.apps = model.deskApps != 0, spec.fill = model.deskFill, spec.fillApps = model.deskFillApps, spec.items = model.deskItems;
+        spec.apps = model.deskApps != 0, spec.desk = model.deskPill != 0, spec.fill = model.deskFill, spec.fillApps = model.deskFillApps, spec.items = model.deskItems;
+        spec.itemsOther = model.deskItemsApps, spec.split = model.deskSplit != 0, itemsCtx = 0;
         DropAppItems();
     }
+}
+
+void DeskPill::SyncItems() {
+    int want = spec.split && spec.apps ? Ctx() : 0;
+    if (want == itemsCtx) return;
+    std::swap(spec.items, spec.itemsOther);
+    itemsCtx = want;
+    Poke();
 }
 
 void DeskPill::DropAppItems() {
@@ -633,6 +642,7 @@ void DeskPill::DrawPill(const Theme& t, const Pose& p, float alpha) {
 
     float k = TypeScale(p.thick), cy = p.thick / 2, size = 11.5f * k, box = kTextBox * k;
     bool holding = editing && drag != Drag::None;
+    SyncItems(); // on the desktop or over an app: its set for there
     placed = LayOut(spec.items, p.len, p.thick);
     float content = anim::Clamp01((alpha - 0.35f) / 0.65f);
     for (Placed& it : placed) {
@@ -660,7 +670,16 @@ void DeskPill::DrawPill(const Theme& t, const Pose& p, float alpha) {
             c.Icon(it.icon, {x + is / 2, cy}, is, lit.Alpha(a), true);
             tx += is + 5 * k;
         }
-        if (!it.text.empty()) c.Text(it.text, Rect(tx, cy - box / 2, x + it.w - tx + 2, box), Weight::Medium, size, (it.kind == Model::kDClock ? ink : dim).Alpha(a));
+        if (!it.text.empty()) c.Text(it.text, Rect(tx, cy - box / 2, x + it.w - tx + 2, box), Weight::Medium, size, (it.kind == Model::kDClock || it.kind == Model::kDScore ? ink : dim).Alpha(a));
+    }
+    if (!editing && input.wheel != 0) { // the wheel over the score: the next game, or the one before
+        D2D1_POINT_2F m = ToLocal(pose, input.mouse);
+        for (const Placed& it : placed)
+            if (it.kind == Model::kDScore && m.x >= it.x - 4 && m.x <= it.x + it.w + 4) {
+                model.StepScore(input.wheel > 0 ? -1 : 1);
+                input.wheel = 0;
+                Poke();
+            }
     }
     ctx->SetTransform(D2D1::Matrix3x2F::Translation(-view.x, -view.y));
 }
@@ -752,12 +771,18 @@ void DeskPill::Frame(const Theme& shell) {
         if (studio) {
             DrawStudio(shell);
         } else {
+            bool shown = TabLong() && !askLong; // the regular pill picked here, or still asking: no long one to arrange
             DrawGuides(shell);
-            DrawPill(shell, pose, 1);
-            if (editing) {
-                DrawGrips(shell);
+            if (shown) DrawPill(shell, pose, 1);
+            if (editing && askLong) {
+                DrawAsk(shell);
+            } else if (editing) {
+                if (shown) DrawGrips(shell);
                 DrawBar(shell);
-                if (editing && input.pressed && !pressedOnBar) PressPill();
+                if (editing && input.pressed && !pressedOnBar) {
+                    if (shown) PressPill();
+                    else bareDown = true; // nothing to hold: a click away finishes
+                }
                 if (editing && drag != Drag::None) DragNow();
                 if (editing) DrawFloater(shell);
                 if (editing && input.released) Land();

@@ -9,10 +9,15 @@
 #include <cstring>
 #include <cwchar>
 
+#include <map>
+#include <string>
+#include <vector>
+
 #include "faces.h"
 #include "faces_state.h"
 #include "feeds.h"
 #include "glyphs.h"
+#include "sports.h"
 
 namespace faces {
 namespace {
@@ -63,6 +68,7 @@ const Setup kSetups[] = {
     {"stock.one", nullptr, {{"stock.id", L"Ticker", false, L"AAPL"}}, L"Public quotes, delayed"},
     {"stock.chart", nullptr, {{"stock.id", L"Ticker", false, L"AAPL"}}, L"Public quotes, delayed"},
     {"stock.watch", nullptr, {{"stock.watch", L"Three tickers", false, L"AAPL,MSFT,NVDA"}}, L"Public quotes, delayed"},
+    {"stock.us", nullptr, {{"us.more", L"Your tickers", false, L"AAPL,TSLA,BTC-USD"}}, L"Any symbol Yahoo Finance knows, comma separated; delayed"},
     {"money.metric", "metric", {{"metric.id", L"Pair", false, L"BTC-USD"}}, L"A public price"},
     {"money.currency", "rates", {{"rates.from", L"From", false, L"USD"}, {"rates.to", L"To", false, L"EUR"}}, L"Public daily rates"},
     {"clock.world", nullptr, {{"zones", L"Cities", false, L"London,New York,Tokyo"}}, L"Up to three of the world's big cities"},
@@ -94,6 +100,8 @@ std::vector<RowItem> rows; // what the panel lists, read once as it opens
 int editing = -1;
 std::wstring typed, draft;
 int panelKind = -1;
+void (*resyncHost)(void*) = nullptr; // what the host gave the panel last: a new ticker is fetched from now on
+void* resyncCtx = nullptr;
 
 bool Is(int kind, const char* key) { return !strcmp(Info(kind).key, key); }
 
@@ -162,14 +170,379 @@ void Save(const Setup* s) {
         feeds::SetSetting(f.key, typed);
     }
     Wipe(typed);
+    if (resyncHost) resyncHost(resyncCtx); // a new ticker or league is wanted from now: the host asks for it
     if (s->feed) feeds::Refresh(s->feed);
     for (const std::string& id : Feeds({panelKind})) feeds::Refresh(id); // a new ticker is its own feed
     editing = -1;
 }
 
+// ---- the richer panels: a quote, a market, the forecast, the games ----
+constexpr float kQuoteH = 246, kMarketRowH = 56, kForecastH = 292, kSportsH = 318;
+constexpr uint32_t kUp = 0x4ADE80, kDown = 0xFF6B6B, kUpPale = 0x15803D, kDownPale = 0xDC2626;
+constexpr wchar_t kAmexTick[] = L"^XAX";
+float marketScroll = 0; // the markets list, scrolled
+int sportTab = 0, sportPick = 0; // the games or the leagues; the sport whose leagues are listed
+constexpr float kEndRoom = 28; // a scrolled list goes this far past its last item: it comes clear of the card's rounded foot
+float gameScroll = 0, leagueScroll = 0, leagueH = 0; // the games and the leagues, scrolled; how tall the leagues ran last frame
+
+bool Pale(const Theme& t) { return (t.text.r + t.text.g + t.text.b) < 1.2f; } // dark ink: a light look
+Color TrendInk(const Theme& t, double change) { return change > 0.0005 ? Color::Rgb(Pale(t) ? kUpPale : kUp) : change < -0.0005 ? Color::Rgb(Pale(t) ? kDownPale : kDown) : t.textDim; }
+
+std::string QuoteOf(const std::wstring& tick) {
+    std::string id = "quote:";
+    for (wchar_t ch : tick) id += (char)ch;
+    return id;
+}
+
+std::wstring Num2(double v) {
+    wchar_t b[32];
+    swprintf_s(b, v >= 10000 ? L"%.0f" : L"%.2f", v);
+    return b;
+}
+
+std::wstring Big(double v) { // 3.4B shares
+    wchar_t b[24];
+    if (v >= 1e9) swprintf_s(b, L"%.1fB", v / 1e9);
+    else if (v >= 1e6) swprintf_s(b, L"%.1fM", v / 1e6);
+    else swprintf_s(b, L"%.0f", v);
+    return b;
+}
+
+void Chart(Canvas& c, const D2D1_RECT_F& r, const std::vector<double>& pts, Color ink, double base) { // the day's line, its area fading under it, the previous close dotted across
+    if (pts.size() < 2 || Width(r) < 8) return;
+    double lo = pts[0], hi = pts[0];
+    for (double p : pts) lo = (std::min)(lo, p), hi = (std::max)(hi, p);
+    if (base > 0) lo = (std::min)(lo, base), hi = (std::max)(hi, base);
+    if (hi - lo < 1e-9) hi = lo + 1;
+    float step = Width(r) / (float)(pts.size() - 1);
+    auto at = [&](size_t i) { return D2D1_POINT_2F{r.left + step * i, r.bottom - Height(r) * (float)((pts[i] - lo) / (hi - lo))}; };
+    ComPtr<ID2D1PathGeometry> area;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (SUCCEEDED(gfx::D2D()->CreatePathGeometry(&area)) && SUCCEEDED(area->Open(&sink))) {
+        sink->BeginFigure({r.left, r.bottom}, D2D1_FIGURE_BEGIN_FILLED);
+        for (size_t i = 0; i < pts.size(); ++i) sink->AddLine(at(i));
+        sink->AddLine({at(pts.size() - 1).x, r.bottom});
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+        sink->Close();
+        c.FillGeoV(area.Get(), r, ink.Alpha(0.24f), ink.Alpha(0));
+    }
+    if (base > 0) { // the previous close: where up and down are measured from
+        float by = r.bottom - Height(r) * (float)((base - lo) / (hi - lo));
+        for (float x = r.left; x < r.right; x += 8) c.Line({x, by}, {(std::min)(x + 4, r.right), by}, ink.Alpha(0.35f), 1, false);
+    }
+    for (size_t i = 1; i < pts.size(); ++i) c.Line(at(i - 1), at(i), ink, 1.8f);
+    c.Dot(at(pts.size() - 1), 3, ink);
+}
+
+void QuoteDetail(Canvas& c, const Theme& t, const D2D1_RECT_F& r, float& y, const std::wstring& tick, const wchar_t* label) {
+    float top = y;
+    feeds::Series q = feeds::Get(QuoteOf(tick));
+    std::wstring name = !q.name.empty() ? q.name : label ? label : tick;
+    if (!q.ok) {
+        c.Text(name, Rect(r.left, y, Width(r), 18), Weight::Semi, 15, t.text);
+        c.Text(q.error.empty() ? L"Fetching…" : q.error, Rect(r.left, y + 24, Width(r), 18), Weight::Regular, 12, t.textDim);
+        y = top + kQuoteH;
+        return;
+    }
+    feeds::Phase phase = feeds::MarketPhase(q);
+    c.Text(name + L"  ·  " + tick, Rect(r.left, y, Width(r) - 110, 18), Weight::Medium, 12.5f, t.textDim);
+    c.Text(feeds::PhaseName(phase), Rect(r.left, y, Width(r), 18), Weight::Medium, 12, phase == feeds::kOpen ? TrendInk(t, 1) : t.textDim, Align::Right);
+    y += 22;
+    Color ink = TrendInk(t, q.change);
+    double prev = q.more.size() > feeds::kPrevClose ? q.more[feeds::kPrevClose] : 0;
+    wchar_t move[48];
+    swprintf_s(move, L"%+.2f   %+.2f%%", prev > 0 ? q.value - prev : 0, q.change * 100);
+    c.Text(Num2(q.value), Rect(r.left, y, Width(r) * 0.5f, 40), Weight::Light, 34, t.text);
+    c.Text(move, Rect(r.left + Width(r) * 0.5f, y + 10, Width(r) * 0.5f, 24), Weight::Medium, 14, ink, Align::Right);
+    y += 46;
+    Chart(c, Rect(r.left, y, Width(r), 96), q.points, ink, prev);
+    y += 108;
+    if (q.more.size() >= feeds::kQuoteMore) {
+        struct Cell {
+            const wchar_t* label;
+            std::wstring value;
+        } cells[] = {{L"Previous close", Num2(prev)}, {L"Day's range", Num2(q.more[feeds::kDayLow]) + L" – " + Num2(q.more[feeds::kDayHigh])},
+                     {L"52-week range", Num2(q.more[feeds::kYearLow]) + L" – " + Num2(q.more[feeds::kYearHigh])}, {L"Volume", q.more[feeds::kVolume] > 0 ? Big(q.more[feeds::kVolume]) : L"—"}};
+        float cw = Width(r) / 4;
+        for (int i = 0; i < 4; ++i) {
+            c.Text(cells[i].label, Rect(r.left + cw * i, y, cw - 8, 14), Weight::Regular, 10.5f, t.textLow);
+            c.Text(cells[i].value, Rect(r.left + cw * i, y + 15, cw - 8, 18), Weight::Medium, 12, t.text);
+        }
+    }
+    y = top + kQuoteH;
+}
+
+void MarketRows(Canvas& c, const Theme& t, const D2D1_RECT_F& r, float& y, const std::vector<std::pair<std::wstring, std::wstring>>& list) { // label and ticker: each with its day as a small line
+    for (const auto& [label, tick] : list) {
+        if (y + kMarketRowH < r.top || y > r.bottom) { // scrolled out of the view: not drawn
+            y += kMarketRowH;
+            continue;
+        }
+        feeds::Series q = feeds::Get(QuoteOf(tick));
+        c.Text(label, Rect(r.left, y + 8, Width(r) * 0.3f, 20), Weight::Semi, 14, t.text);
+        c.Text(q.ok && !q.name.empty() && q.name != label ? q.name : tick, Rect(r.left, y + 28, Width(r) * 0.3f, 16), Weight::Regular, 11, t.textDim);
+        if (q.ok) {
+            Color ink = TrendInk(t, q.change);
+            Chart(c, Rect(r.left + Width(r) * 0.33f, y + 10, Width(r) * 0.3f, kMarketRowH - 20), q.points, ink, q.more.size() > feeds::kPrevClose ? q.more[feeds::kPrevClose] : 0);
+            c.Text(Num2(q.value), Rect(r.left, y + 8, Width(r), 20), Weight::Medium, 14, t.text, Align::Right);
+            wchar_t b[24];
+            swprintf_s(b, L"%+.2f%%", q.change * 100);
+            c.Text(b, Rect(r.left, y + 28, Width(r), 16), Weight::Medium, 12, ink, Align::Right);
+        } else {
+            c.Text(q.error.empty() ? L"Fetching…" : q.error, Rect(r.left, y + 16, Width(r), 18), Weight::Regular, 12, t.textDim, Align::Right);
+        }
+        c.Line({r.left, y + kMarketRowH - 1}, {r.right, y + kMarketRowH - 1}, t.text.Alpha(0.06f), 1);
+        y += kMarketRowH;
+    }
+}
+
+std::wstring Deg(double c, bool f) { return std::to_wstring((int)std::lround(f ? c * 9 / 5 + 32 : c)) + L"°"; }
+
+void Forecast(Canvas& c, const Theme& t, const D2D1_RECT_F& r, float& y, const Host& h) { // now, the coming hours, the coming days
+    float top = y;
+    if (!h.wxValid) {
+        c.Text(L"Finding the forecast…", Rect(r.left, y, Width(r), 20), Weight::Regular, 12.5f, t.textDim);
+        y = top + kForecastH;
+        return;
+    }
+    c.Icon(WxIcon(h.wxCode, h.wxDay), {r.left + 24, y + 26}, 42, t.accentHi, true);
+    c.Text(Deg(h.tempC, h.fahrenheit), Rect(r.left + 58, y, 120, 50), Weight::Light, 40, t.text);
+    c.Text(WxText(h.wxCode), Rect(r.left + 170, y + 6, Width(r) - 170, 20), Weight::Medium, 14, t.text);
+    c.Text(h.place + L"  ·  H " + Deg(h.highC, h.fahrenheit) + L"  L " + Deg(h.lowC, h.fahrenheit), Rect(r.left + 170, y + 28, Width(r) - 170, 18), Weight::Regular, 12, t.textDim);
+    y += 62;
+    int n = (std::min)(h.nHours, 8);
+    float cw = Width(r) / (float)(std::max)(1, n);
+    for (int i = 0; i < n; ++i) { // the next hours
+        float hx = r.left + cw * i + cw / 2;
+        wchar_t lab[8];
+        swprintf_s(lab, L"%02d:00", h.hours[i].hour);
+        c.Text(lab, Rect(hx - 30, y, 60, 14), Weight::Regular, 10.5f, t.textDim, Align::Center);
+        c.Icon(WxIcon(h.hours[i].code, h.hours[i].day), {hx, y + 28}, 20, t.text, true);
+        c.Text(Deg(h.hours[i].tempC, h.fahrenheit), Rect(hx - 30, y + 42, 60, 16), Weight::Medium, 12, t.text, Align::Center);
+    }
+    y += 70;
+    double lo = 1e9, hi = -1e9; // the days' bars share one scale
+    for (int i = 0; i < h.nDays; ++i) lo = (std::min)(lo, h.days[i].loC), hi = (std::max)(hi, h.days[i].hiC);
+    for (int i = 0; i < h.nDays && i < 5; ++i) {
+        const Host::Day& d = h.days[i];
+        SYSTEMTIME st{(WORD)d.y, (WORD)d.m, 0, (WORD)d.d};
+        wchar_t day[16] = {};
+        GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &st, L"dddd", day, 16, nullptr);
+        float ry = y + i * 30;
+        c.Text(i == 0 ? L"Today" : day, Rect(r.left, ry, 110, 26), Weight::Medium, 12.5f, t.text);
+        c.Icon(WxIcon(d.code, true), {r.left + 128, ry + 13}, 18, t.textDim, true);
+        c.Text(WxText(d.code), Rect(r.left + 146, ry, 120, 26), Weight::Regular, 11.5f, t.textDim);
+        c.Text(Deg(d.loC, h.fahrenheit), Rect(r.left + 270, ry, 40, 26), Weight::Regular, 12, t.textDim, Align::Right);
+        D2D1_RECT_F lane = Rect(r.left + 320, ry + 11, Width(r) - 370, 5);
+        c.Fill(lane, 2.5f, t.text.Alpha(0.1f));
+        float k = Width(lane) / (float)(std::max)(1.0, hi - lo);
+        c.Fill(Rect(lane.left + (float)(d.loC - lo) * k, lane.top, (std::max)(6.0f, (float)(d.hiC - d.loC) * k), 5), 2.5f, t.accentHi);
+        c.Text(Deg(d.hiC, h.fahrenheit), Rect(r.right - 44, ry, 44, 26), Weight::Medium, 12, t.text, Align::Right);
+    }
+    y = top + kForecastH;
+}
+
+void Games(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float& y, const Host& h, bool scores) { // scores: what's on and what's done, in full; fixtures: a few results, what's on, and what's coming, each to the calendar
+    Canvas& c = ui.C();
+    constexpr float kTabH = 28, kTabW = 96, kSecH = 20;
+    constexpr size_t kResults = 4;
+    float bottom = r.bottom - 4; // exactly the room the open card has: its lists scroll inside it, never past it
+    if (w::Chip(ui, t, Ui::Id("fc.sp.games"), Rect(r.left, y, kTabW, kTabH), L"Games", sportTab == 0)) sportTab = 0;
+    if (w::Chip(ui, t, Ui::Id("fc.sp.leagues"), Rect(r.left + kTabW + 8, y, kTabW, kTabH), L"Leagues", sportTab == 1)) sportTab = 1;
+    std::vector<std::string> followed = sports::Followed();
+    std::wstring which;
+    for (const std::string& l : followed)
+        if (const sports::League* lg = sports::Find(l)) which += (which.empty() ? L"" : L"  ·  ") + std::wstring(lg->name);
+    c.Text(which, Rect(r.left + 2 * kTabW + 24, y, Width(r) - 2 * kTabW - 24, kTabH), Weight::Regular, 11, t.textDim, Align::Right);
+    y += kTabH + 10;
+    if (sportTab == 1) { // the most followed first, then the sports and the chosen one's leagues: up to three followed
+        static const char* const kPopular[] = {"racing/f1", "soccer/eng.1", "soccer/eng.w.1", "basketball/nba", "basketball/wnba", "football/nfl", "soccer/uefa.champions", "tennis/atp", "tennis/wta"};
+        int flipPop = -1;
+        D2D1_RECT_F view = {r.left - 4, y, r.right + 4, bottom}; // it scrolls: football alone fills rows
+        float most = (std::max)(0.0f, leagueH + kEndRoom - Height(view));
+        if (float n = ui.Wheel(view); n != 0) leagueScroll = (std::clamp)(leagueScroll - n * 60, 0.0f, most);
+        leagueScroll = (std::min)(leagueScroll, most);
+        float startY = y, shownScroll = ui.Smooth(Ui::Id("fc.sp.lscroll"), leagueScroll, 18);
+        c.PushClip(view);
+        y -= shownScroll;
+        float x = r.left;
+        c.Text(L"Popular", Rect(r.left, y, Width(r), 16), Weight::Semi, 11, t.accentHi);
+        y += 20;
+        for (int p = 0; p < (int)std::size(kPopular); ++p) {
+            const sports::League* lg = sports::Find(kPopular[p]);
+            if (!lg) continue;
+            bool on = std::find(followed.begin(), followed.end(), lg->path) != followed.end();
+            float w = c.Measure(lg->name, Weight::Medium, 11.5f) + 22;
+            if (x + w > r.right) x = r.left, y += 30;
+            if (w::Chip(ui, t, Ui::Id("fc.sp.pop", p), Rect(x, y, w, 26), lg->name, on)) flipPop = p;
+            x += w + 6;
+        }
+        y += 36;
+        x = r.left;
+        for (int s = 0; s < sports::kSports; ++s) {
+            float w = c.Measure(sports::SportName(s), Weight::Medium, 11.5f) + 22;
+            if (x + w > r.right) x = r.left, y += 30;
+            if (w::Chip(ui, t, Ui::Id("fc.sp.sport", s), Rect(x, y, w, 26), sports::SportName(s), sportPick == s)) sportPick = s;
+            x += w + 6;
+        }
+        y += 38;
+        c.Text(std::to_wstring(followed.size()) + L" of 3 followed. Tap a league to follow it or let it go", Rect(r.left, y, Width(r), 16), Weight::Regular, 11, t.textDim);
+        y += 22;
+        x = r.left;
+        int flip = -1, i = 0;
+        for (const sports::League& lg : sports::All()) {
+            ++i;
+            if (lg.sport != sportPick) continue;
+            bool on = std::find(followed.begin(), followed.end(), lg.path) != followed.end();
+            float w = c.Measure(lg.name, Weight::Medium, 11.5f) + 22;
+            if (x + w > r.right) x = r.left, y += 30;
+            if (w::Chip(ui, t, Ui::Id("fc.sp.league", i), Rect(x, y, w, 26), lg.name, on)) flip = i - 1;
+            x += w + 6;
+        }
+        leagueH = y + 30 + shownScroll - startY; // how tall it all is, for the next frame's scroll
+        c.PopClip();
+        if (most > 0) {
+            float lane = Height(view) - 8, thumb = lane * Height(view) / (Height(view) + most);
+            c.Fill(Rect(r.right + 2, view.top + 4 + (lane - thumb) * shownScroll / most, 3, thumb), 1.5f, t.text.Alpha(0.18f));
+        }
+        y = bottom;
+        if (flip < 0 && flipPop < 0) return;
+        std::string path = flipPop >= 0 ? kPopular[flipPop] : sports::All()[(size_t)flip].path;
+        auto at = std::find(followed.begin(), followed.end(), path);
+        if (at != followed.end()) followed.erase(at);
+        else {
+            if (followed.size() >= sports::kMaxFollowed) followed.erase(followed.begin()); // full: the longest followed makes room
+            followed.push_back(path);
+        }
+        sports::SetFollowed(followed);
+        if (h.resync) h.resync(h.ctx); // the new leagues are fetched
+        for (const std::string& l : followed) feeds::Refresh(sports::FeedId(l)), feeds::Refresh(sports::NextId(l));
+        return;
+    }
+    std::vector<sports::Game> live, done, next;
+    auto seen = [&](const std::vector<sports::Game>& in, const sports::Game& g) {
+        return std::any_of(in.begin(), in.end(), [&](const sports::Game& o) { return o.a == g.a && o.b == g.b && o.when == g.when; });
+    };
+    std::map<std::wstring, std::wstring> leagueOf; // a game's league, by its sides: the calendar event says it
+    for (const std::string& l : followed) {
+        const sports::League* lg = sports::Find(l);
+        for (const std::string& id : {sports::FeedId(l), sports::NextId(l)})
+            for (const std::wstring& row : feeds::Get(id).rows) {
+                sports::Game g = sports::Decode(row);
+                std::vector<sports::Game>& to = g.state == sports::kLive ? live : g.state == sports::kFinal ? done : next;
+                if (seen(to, g)) continue;
+                leagueOf[g.a + L"|" + g.b] = lg ? lg->name : L"";
+                to.push_back(std::move(g));
+            }
+    }
+    live = sports::Order(std::move(live)), done = sports::Order(std::move(done)), next = sports::Order(std::move(next));
+    if (scores) next.clear(); // the scores' panel is about the scores: the fixtures have their own
+    else if (done.size() > kResults) done.resize(kResults);
+    if (live.empty() && done.empty() && next.empty()) {
+        feeds::Series s = followed.empty() ? feeds::Series{} : feeds::Get(sports::FeedId(followed[0]));
+        c.Text(followed.empty() ? L"Pick up to three leagues under Leagues" : s.ok ? L"Nothing played lately, nothing coming up" : s.error.empty() ? L"Fetching…" : s.error, Rect(r.left, y, Width(r), 20), Weight::Regular, 12.5f, t.textDim);
+        y = bottom;
+        return;
+    }
+    // every game as a soft card in one list that scrolls: live ones lit and breathing, the score on a pill, the coming ones with a way into the calendar
+    constexpr float kCardGap = 6, kPillH = 24, kCalPillW = 96, kLineCardH = 40, kScoreCardH = 66;
+    const float kCardH = scores ? kScoreCardH : kLineCardH; // the scores in full: each side on its own line
+    float total = 0;
+    for (const auto* list : {&live, &done, &next})
+        if (!list->empty()) total += kSecH + list->size() * (kCardH + kCardGap) + 4;
+    D2D1_RECT_F view = {r.left - 4, y, r.right + 4, bottom};
+    float most = (std::max)(0.0f, total + kEndRoom - Height(view));
+    if (float n = ui.Wheel(view); n != 0) gameScroll = (std::clamp)(gameScroll - n * (kCardH + kCardGap) * 1.5f, 0.0f, most);
+    gameScroll = (std::min)(gameScroll, most);
+    float shown = ui.Smooth(Ui::Id("fc.sp.scroll"), gameScroll, 18);
+    c.PushClip(view);
+    float gy = y - shown, pulse = 0.5f + 0.5f * std::sin((float)ui.Now() * 3.2f);
+    int added = -1;
+    auto section = [&](const wchar_t* title, const std::vector<sports::Game>& games, bool isLive, bool calendar) {
+        if (games.empty()) return;
+        c.Text(title, Rect(r.left, gy, Width(r), kSecH - 4), Weight::Semi, 11, isLive ? Color::Rgb(kDown) : t.accentHi);
+        gy += kSecH;
+        for (size_t i = 0; i < games.size(); ++i, gy += kCardH + kCardGap) {
+            if (gy + kCardH < view.top || gy > view.bottom) continue; // out of the view: not drawn, not hit
+            const sports::Game& g = games[i];
+            D2D1_RECT_F card = Rect(r.left, gy, Width(r), kCardH);
+            c.Fill(card, 12, isLive ? Color::Rgb(kDown).Alpha(0.07f) : t.text.Alpha(0.04f));
+            float cy = gy + kCardH / 2, right = card.right - 12;
+            if (calendar) {
+                D2D1_RECT_F pill = Rect(right - kCalPillW, cy - kPillH / 2, kCalPillW, kPillH);
+                bool isIn = sports::InCalendar(g); // added already: the same pill takes it back out
+                Ui::Hit hit = ui.Button(Ui::Id("fc.sp.cal", (int)i), pill);
+                ui.Name(isIn ? L"Remove from calendar" : L"Add to calendar");
+                c.Fill(pill, kPillH / 2, isIn ? t.text.Alpha(hit.hover ? 0.16f : 0.08f) : t.accent.Alpha(hit.hover ? 0.3f : 0.16f));
+                c.Icon(isIn ? glyph::Delete : glyph::Calendar, {pill.left + 14, cy}, 13, isIn ? t.textDim : t.accentHi);
+                c.Text(isIn ? L"Remove" : L"Add", Rect(pill.left + 24, pill.top, kCalPillW - 30, kPillH), Weight::Medium, 11.5f, isIn ? t.textDim : t.accentHi, Align::Center);
+                if (hit.clicked) added = (int)i;
+                right = pill.left - 10;
+            }
+            if (!scores || g.solo) { // the scores' own cards say it under them
+                float detailW = c.Measure(g.detail, Weight::Medium, 11.5f) + 8;
+                c.Text(g.detail, Rect(right - detailW, gy, detailW, kCardH), Weight::Medium, 11.5f, isLive ? Color::Rgb(kDown) : t.textDim, Align::Right);
+                right -= detailW + 10;
+            }
+            float x = card.left + 14;
+            if (isLive) { // a breathing dot: it's on now
+                c.Dot({x + 3, cy}, 3 + 1.2f * pulse, Color::Rgb(kDown).Alpha(0.6f + 0.4f * pulse));
+                x += 14;
+                ui.KeepAlive();
+            }
+            if (g.solo) {
+                c.Text(g.a, Rect(x, gy + 4, right - x, 18), Weight::Semi, 12.5f, t.text);
+                c.Text(g.b, Rect(x, gy + 20, right - x, 16), Weight::Regular, 11, t.textDim);
+                continue;
+            }
+            if (scores) { // each side on its own line, its score large at the right, its periods beside it; the clock and the ground under
+                bool aWon = g.state == sports::kFinal && _wtoi(g.as.c_str()) > _wtoi(g.bs.c_str()), bWon = g.state == sports::kFinal && _wtoi(g.bs.c_str()) > _wtoi(g.as.c_str());
+                float scoreX = card.right - 14 - 60, linesW = 150;
+                auto side = [&](const std::wstring& name, const std::wstring& score, const std::wstring& lines, float ly, bool won) {
+                    c.Text(name, Rect(x, ly, scoreX - linesW - x - 8, 20), won ? Weight::Semi : Weight::Medium, 13, t.text);
+                    c.Text(lines, Rect(scoreX - linesW, ly, linesW, 20), Weight::Regular, 11, t.textLow, Align::Right);
+                    c.Text(score, Rect(scoreX, ly - 2, 60, 22), Weight::Semi, 16, isLive ? Color::Rgb(kDown) : won ? t.text : t.textDim, Align::Right);
+                };
+                side(g.a, g.as, g.aLines, gy + 6, aWon);
+                side(g.b, g.bs, g.bLines, gy + 26, bWon);
+                std::wstring foot = g.venue.empty() ? g.detail : g.detail + L"  ·  " + g.venue;
+                c.Text(foot, Rect(x, gy + 46, card.right - 14 - x, 16), Weight::Regular, 10.5f, isLive ? Color::Rgb(kDown) : t.textLow);
+                continue;
+            }
+            std::wstring score = g.state == sports::kPre ? L"v" : g.as + L"  –  " + g.bs;
+            float sw = c.Measure(score, Weight::Semi, 13) + 22, mid = (x + right) / 2;
+            D2D1_RECT_F sp = Rect(mid - sw / 2, cy - kPillH / 2, sw, kPillH);
+            if (g.state != sports::kPre) c.Fill(sp, kPillH / 2, isLive ? Color::Rgb(kDown).Alpha(0.16f) : t.text.Alpha(0.08f));
+            c.Text(score, sp, Weight::Semi, 13, isLive ? Color::Rgb(kDown) : g.state == sports::kPre ? t.textLow : t.text, Align::Center);
+            c.Text(g.a, Rect(x, gy, sp.left - x - 10, kCardH), Weight::Medium, 12.5f, t.text, Align::Right);
+            c.Text(g.b, Rect(sp.right + 10, gy, right - sp.right - 10, kCardH), Weight::Medium, 12.5f, t.text);
+        }
+        gy += 4;
+    };
+    section(L"Live now", live, true, false);
+    section(L"Latest results", done, false, false);
+    section(L"Coming up", next, false, true);
+    c.PopClip();
+    if (most > 0) { // a slim thumb: there's more below
+        float lane = Height(view) - 8, thumb = lane * Height(view) / (Height(view) + most);
+        c.Fill(Rect(r.right + 2, view.top + 4 + (lane - thumb) * shown / most, 3, thumb), 1.5f, t.text.Alpha(0.18f));
+    }
+    if (added >= 0) {
+        const sports::Game& g = next[(size_t)added];
+        if (sports::InCalendar(g)) sports::RemoveFromCalendar(g);
+        else sports::AddToCalendar(g, leagueOf[g.a + L"|" + g.b]);
+    }
+    y = bottom;
+}
+
 float DetailH(int kind) {
     auto n = [](size_t c) { return (float)(std::max)((size_t)1, (std::min)(c, (size_t)kMaxRows)) * kRow; };
     std::string key = Info(kind).key;
+    if (key == "stock.one" || key == "stock.chart" || key == "stock.amex") return kQuoteH;
+    if (key == "stock.us") return 6 * kMarketRowH; // a scrolling list: this much shows at once
+    if (key == "stock.watch") return 3 * kMarketRowH;
+    if (key.rfind("wx.", 0) == 0 || key == "clock.wx" || key == "clock.today") return kForecastH;
+    if (key.rfind("sport.", 0) == 0) return kSportsH;
     if (key == "time.screen" || key == "time.timeline") return 86 + kMaxRows * kRow * 0.75f;
     if (key == "time.stopwatch") return 44 + n(state::WatchLaps().size());
     if (key == "time.timer") return 44;
@@ -338,7 +711,8 @@ Act Click(int kind, bool right, const Host& h) {
         SendInput(4, in, sizeof(INPUT));
         return Act::kNone;
     }
-    bool hasPanel = FieldCount(SetupFor(m.key)) > 0 || key == "time.screen" || key == "time.timeline" || key == "list.notes" || key == "list.habits" || key == "sys.drives" || key.rfind("files.", 0) == 0;
+    bool hasPanel = FieldCount(SetupFor(m.key)) > 0 || key == "time.screen" || key == "time.timeline" || key == "list.notes" || key == "list.habits" || key == "sys.drives" || key.rfind("files.", 0) == 0 ||
+                    key.rfind("stock.", 0) == 0 || key.rfind("sport.", 0) == 0 || key.rfind("wx.", 0) == 0 || key == "clock.wx" || key == "clock.today"; // markets, games and the forecast open in full
     return hasPanel ? Act::kPanel : Act::kNone;
 }
 
@@ -346,6 +720,7 @@ void Panel(Ui& ui, const Theme& t, int kind, const D2D1_RECT_F& r, const Host& h
     Canvas& c = ui.C();
     const Meta& m = Info(kind);
     std::string key = m.key;
+    resyncHost = h.resync, resyncCtx = h.ctx;
     c.Text(m.name, Rect(r.left, r.top - 2, Width(r), 18), Weight::Semi, 13, t.text);
     float y = r.top + kHead;
     bool caret = ((int)(ui.Now() * 2) & 1) == 0;
@@ -461,6 +836,43 @@ void Panel(Ui& ui, const Theme& t, int kind, const D2D1_RECT_F& r, const Host& h
         list(L"Nothing here yet", [](const RowItem& it) { Open(it.path); });
     } else if (key == "files.wallpaper") {
         list(L"No pictures in Pictures\\Wallpapers or Pictures", [](const RowItem& it) { SetWallpaper(it.path); });
+    } else if (key == "stock.one" || key == "stock.chart") {
+        std::wstring tick = feeds::Setting("stock.id");
+        QuoteDetail(c, t, r, y, tick.empty() ? L"AAPL" : tick, nullptr);
+    } else if (key == "stock.amex") {
+        QuoteDetail(c, t, r, y, kAmexTick, L"NYSE American");
+    } else if (key == "stock.us") { // every market it knows and every ticker added, scrolling under the field to add more
+        std::vector<std::pair<std::wstring, std::wstring>> list;
+        for (const Market& k : UsMarkets()) list.push_back({k.label, k.tick});
+        for (const std::wstring& one : UsMoreTickers()) list.push_back({one, one});
+        D2D1_RECT_F view = {r.left - 4, y, r.right + 4, r.bottom - kFieldH - kNoteH - 6};
+        float most = (std::max)(0.0f, list.size() * kMarketRowH + kEndRoom - Height(view));
+        if (float n = ui.Wheel(view); n != 0) marketScroll = (std::clamp)(marketScroll - n * kMarketRowH, 0.0f, most);
+        marketScroll = (std::min)(marketScroll, most);
+        float shown = ui.Smooth(Ui::Id("fc.mk.scroll"), marketScroll, 18);
+        c.PushClip(view);
+        float ry = y - shown;
+        MarketRows(c, t, {r.left, view.top, r.right, view.bottom}, ry, list);
+        c.PopClip();
+        if (most > 0) { // a slim thumb: there's more below
+            float lane = Height(view) - 8, thumb = lane * Height(view) / (Height(view) + most);
+            c.Fill(Rect(r.right + 2, view.top + 4 + (lane - thumb) * shown / most, 3, thumb), 1.5f, t.text.Alpha(0.18f));
+        }
+        y = view.bottom + 6;
+    } else if (key == "stock.watch") {
+        std::wstring all = feeds::Setting("stock.watch");
+        if (all.empty()) all = L"AAPL,MSFT,NVDA";
+        std::vector<std::pair<std::wstring, std::wstring>> list;
+        for (size_t a = 0; a < all.size() && list.size() < 3;) {
+            size_t e = (std::min)(all.find(L',', a), all.size());
+            if (std::wstring one = all.substr(a, e - a); !one.empty()) list.push_back({one, one});
+            a = e + 1;
+        }
+        MarketRows(c, t, r, y, list);
+    } else if (key.rfind("wx.", 0) == 0 || key == "clock.wx" || key == "clock.today") {
+        Forecast(c, t, r, y, h);
+    } else if (key.rfind("sport.", 0) == 0) {
+        Games(ui, t, r, y, h, key == "sport.scores");
     }
 
     const Setup* s = SetupFor(m.key);

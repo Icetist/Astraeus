@@ -10,7 +10,7 @@
 // A host places them, passes what it already knows in Host, and routes clicks and typing here. What they keep, they keep under the host's own settings.
 namespace faces {
 
-enum Cat { kClocks, kWeather, kWork, kSystem, kMedia, kMoney, kOnline, kFiles, kCats };
+enum Cat { kClocks, kWeather, kWork, kSystem, kMedia, kMoney, kOnline, kFiles, kSports, kCats };
 
 struct Meta {
     const char* key; // saved by name
@@ -54,6 +54,7 @@ struct Host { // what the host already reads; faces never start a source of thei
     double progress = 0;
     int bright = -1; // percent, -1 if this display has no control
     void (*setBright)(void* ctx, int percent) = nullptr;
+    void (*resync)(void* ctx) = nullptr; // what's fetched changed: the host asks for it again
     void* ctx = nullptr;
 };
 
@@ -63,6 +64,7 @@ enum class Act { kNone, kPanel, kPlay, kNext, kPrev, kTray };
 void Draw(Canvas& c, const Theme& t, int kind, int size, const D2D1_RECT_F& r, const Host& h);
 void Sampling(bool on); // while on, feeds draw made-up numbers: a preview of what a widget looks like before it's connected
 Act Click(int kind, bool right, const Host& h); // a click on its face
+bool Wheel(int kind, float notches); // the wheel over its face: true when it scrolled something of its own (the scores' games)
 int NextMs(const std::vector<int>& kinds, const Host& h); // how long before any of these has something new to draw, 0: nothing to wait for
 std::vector<std::string> Feeds(const std::vector<int>& kinds); // what they need fetched
 
@@ -74,6 +76,12 @@ bool WantsKeys(int kind); // it has a field or a list to type into
 bool Char(int kind, wchar_t ch); // true when typing went to it; esc with nothing being typed: false, the host closes it
 void ClosePanel(); // what's typed is kept
 
+struct Market {
+    const wchar_t* label;
+    const wchar_t* tick;
+};
+const std::vector<Market>& UsMarkets(); // the us markets widget's: its tile shows the first few, its panel all of them
+std::vector<std::wstring> UsMoreTickers(); // and the ones added in its panel
 std::wstring Hours(int seconds); // "2h 14m"
 int WxIcon(int code, bool day);
 const wchar_t* WxText(int code);

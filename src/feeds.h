@@ -17,7 +17,14 @@ struct Series { // one feed's latest
     std::vector<double> points; // oldest first
     std::wstring text; // words, when the answer has some
     std::vector<std::wstring> rows; // lines of a list
+    std::wstring name; // what it's called, when the answer says: a company's or an index's name
+    std::vector<double> more; // further numbers, the feed says which: a quote's are QuoteMore
 };
+
+enum QuoteMore { kPrevClose, kDayHigh, kDayLow, kYearHigh, kYearLow, kVolume, kOpensAt, kClosesAt, kPreAt, kPostAt, kQuoteMore }; // a quote's further numbers; the times are unix seconds
+enum Phase { kClosed, kPreMarket, kOpen, kAfterHours }; // where its market's day is
+Phase MarketPhase(const Series& quote); // from the sessions the quote came with, against the clock now
+const wchar_t* PhaseName(Phase p);
 
 void Start(HWND notify, UINT msg, const wchar_t* folder); // msg arrives when a feed has something new; folder: under %localappdata%, for the screen time log
 void Want(const std::vector<std::string>& ids); // what's in sight now; an empty list ends the thread

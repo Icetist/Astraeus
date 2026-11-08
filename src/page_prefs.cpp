@@ -67,7 +67,7 @@ void Power(PageCtx& p, const D2D1_RECT_F& r, bool live) { // battery pills: plug
 }
 
 const wchar_t* WidgetName(int w) {
-    static const wchar_t* const kNames[Model::kWidgets] = {L"Nothing", L"Weather", L"Battery", L"CPU", L"RAM", L"Network", L"Workspace", L"Language", L"Window", L"Disk", L"GPU"};
+    static const wchar_t* const kNames[Model::kWidgets] = {L"Nothing", L"Weather", L"Battery", L"CPU", L"RAM", L"Network", L"Workspace", L"Language", L"Window", L"Disk", L"GPU", L"Markets"};
     return kNames[(w >= 0 && w < Model::kWidgets) ? w : 0];
 }
 
@@ -101,17 +101,21 @@ void DeskCard(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the long pill on
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"Desktop pill");
-    if (SwitchRow(ui, t, "set.desk.on", Rect(in.left, in.top, Width(in), kRowH), L"Long pill on the desktop", m.deskPill != 0, live)) {
-        Flip(m, m.deskPill, L"DeskPill");
-        if (m.deskPill) m.deskEditAsk = true; // on for the first look: straight to arranging it
-    }
-    if (SwitchRow(ui, t, "set.desk.regular", Rect(in.left, in.top + kRowH, Width(in), kRowH), L"Regular pill when not on desktop", m.deskApps == 0, live && m.deskPill != 0, m.deskPill != 0)) // off: the long one over apps too
-        m.SetPref(m.deskApps, L"DeskApps", m.deskApps ? 0 : 1);
+    D2D1_RECT_F in = Box(c, t, r, L"Long pill");
+    constexpr float kSegW = 124, kSegH = 26; // narrow: the card's half the sheet, and the labels need their room
+    static const wchar_t* const kForms[] = {L"Regular", L"Long"};
+    bool desk = m.pillDesk != 0; // the long pill is the desktop pill's other form: with no pill on the desktop, that row has nothing to pick
+    auto row = [&](const char* id, float y, const wchar_t* label, int& field, const wchar_t* key, bool can) { // which pill a place wears
+        c.Text(label, Rect(in.left, y, Width(in) - kSegW - 8, kRowH), Weight::Regular, 12.5f, can ? t.text : t.textLow);
+        int v = Segmented(ui, t, id, Rect(in.right - kSegW, y + (kRowH - kSegH) / 2, kSegW, kSegH), kForms, 2, can && field ? 1 : 0, live && can);
+        if (v >= 0 && v != (field ? 1 : 0)) m.SetPref(field, key, v);
+    };
+    row("set.desk.form", in.top, L"On the desktop", m.deskPill, L"DeskPill", desk);
+    row("set.apps.form", in.top + kRowH + 2, L"Not on desktop", m.deskApps, L"DeskApps", true);
     constexpr float kBtnW = 120, kBtnH = 30, kBtnGap = 10, kWordsDrop = 7;
-    float by = in.top + 2 * kRowH + 4;
-    if (Act(ui, t, Ui::Id("set.desk.edit"), Rect(in.left, by, kBtnW, kBtnH), L"Customize", true, false, live && m.deskPill != 0)) m.deskEditAsk = true;
-    Note(c, t, Rect(in.left + kBtnW + kBtnGap, in.top, Width(in) - kBtnW - kBtnGap, Height(in)), by + kWordsDrop, L"Or right click the pill");
+    float by = in.top + 2 * kRowH + 8;
+    if (Act(ui, t, Ui::Id("set.desk.edit"), Rect(in.left, by, kBtnW, kBtnH), L"Customize", true, false, live)) m.deskEditAsk = true;
+    Note(c, t, Rect(in.left + kBtnW + kBtnGap, in.top, Width(in) - kBtnW - kBtnGap, Height(in)), by + kWordsDrop, desk ? L"Or right click the pill" : L"Desktop pill is off");
 }
 
 void PanelOpts(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how the panel behaves, in either layout: pinned open, floating clear of the edge

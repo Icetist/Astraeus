@@ -126,7 +126,7 @@ public:
     bool PollShared(); // once a second: do not disturb, halobar's pills and theme; true when the look changed
     bool PillsWanted() const { return !quiet && (notifyPills || haloPills); } // windows notifications drop as pills now
     bool Following() const { return look == kLookHalo; } // the look is halobar's
-    bool WatchesDesk() const { return pillDesk != 0 || deskPill != 0 || appsTheme != 0; } // something here depends on what's under the panel
+    bool WatchesDesk() const { return pillDesk != 0 || deskPill != 0 || deskApps != 0 || appsTheme != 0; } // something here depends on what's under the panel
     bool HaloRuns() const { return haloRuns; }
     int Look() const; // what's drawn: halobar's material while following it, else the pick
     int AccentMode() const; // these four: halobar's while following it and it has its own, else ours
@@ -417,13 +417,17 @@ public:
     void CommitCity(); // empty goes back to finding you by ip
     int pillAlways = 0; // the resting pill stays up with the clock
     int pillDesk = 0; // the pill stays up while the desktop is what's under it, always or not
-    enum Widget { kWNone, kWWeather, kWBattery, kWCpu, kWRam, kWNet, kWWork, kWLang, kWTitle, kWDisk, kWGpu, kWidgets }; // new ones go last: their numbers are saved
+    enum Widget { kWNone, kWWeather, kWBattery, kWCpu, kWRam, kWNet, kWWork, kWLang, kWTitle, kWDisk, kWGpu, kWMarket, kWidgets }; // new ones go last: their numbers are saved
+    static constexpr char kMarketQuote[] = "quote:^GSPC"; // the pills' market: the s&p 500
     int pillFull = 0; // it stays up over fullscreen apps, rather than going away for them
     int pillFullOpen = 1; // and a click on it there opens the panel; off: only ever the pill
     bool pillGpu = false, pillMeters = false; // a showing pill has a gpu reading on it; a cpu or ram one
     void SetPillMeters(bool gpu, bool meters); // what a showing pill wants kept fresh
     int pillLeft = kWWeather, pillRight = kWCpu; // its two status widgets
     int deskPill = 0; // the long pill on the desktop, in its own window
+    bool LongPill() const { return deskPill != 0 && pillDesk != 0; } // the desktop pill's long form: with no pill on the desktop, no long one either
+    bool AnyLong() const { return LongPill() || deskApps != 0; } // the long pill shows somewhere: on the desktop, over apps, or both
+    enum { kEditFromLong, kEditFromDesk, kEditFromApps }; // who opened the long pill's editor: itself or settings, or the regular pill on the desktop or over an app
     int deskFillApps = 0; // its body while an app is under it
     int deskLenApps = 560, deskGapApps = 10, deskFloatApps = 1; // not on desktop it can be its own length, stuck or floating
     int deskPreview = -1; // its editor is showing this one's theme: 0 desktop, 1 not on desktop; -1 not open
@@ -440,13 +444,19 @@ public:
     float faceAreaW = 0, faceAreaH = 0, tileAreaW = 0, tileAreaH = 0; // the room they have on their pages: their editors show them at just this size
     int deskEdge = 0, deskPos = 500, deskLen = 560, deskThick = 30, deskGap = 10, deskFloat = 1, deskFill = 0; // its edge, place along it in thousandths, size, gap, stuck or floating, body
     int deskApps = 0; // it also stands in for the small pill over maximized apps, on the same rules
-    enum DeskItem { kDClock = 20, kDDate, kDVolume, kDWifi, kDMusic, kDTimer, kDCover, kDBars }; // beyond the widgets above
+    bool longPillNotice = false; // the update turned the long pill on for someone on the regular desktop pill: a card says so, once
+    enum DeskItem { kDClock = 20, kDDate, kDVolume, kDWifi, kDMusic, kDTimer, kDCover, kDBars, kDScore }; // beyond the widgets above; new ones go last
+    int scoreAt = 0; // the long pill's score: which of the followed leagues' games it shows; the wheel over it steps on
+    void StepScore(int by) { scoreAt += by; }
     std::vector<int> deskItems; // what it shows, in order; the clock anchors the middle
     bool deskEditAsk = false; // settings asked for the editor: it opens after the frame
     static std::vector<int> DeskDefaults();
     static const wchar_t* DeskItemName(int kind);
     std::wstring DeskItemText(int kind, int& icon) const; // what an item shows now; empty and no icon: nothing right now
     void SetDeskItems(const std::vector<int>& items);
+    std::vector<int> deskItemsApps; // its own set when not on desktop, while deskSplit is on
+    int deskSplit = 0; // off: the same widgets everywhere
+    void SetDeskItemsApps(const std::vector<int>& items);
     void WantDeskAudio(); // the speakers read, for its volume
     std::wstring PillWidget(int which, int& icon) const; // what a widget shows now, empty when it has nothing
     int mediaCompact = 0, pillMusic = 1, showArt = 1, vizOn = 1; // media modules

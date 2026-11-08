@@ -562,7 +562,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
     local.mouse = {input.mouse.x - org.x, input.mouse.y - org.y}; // mouse into panel space
     local.pressPos = {input.pressPos.x - org.x, input.pressPos.y - org.y};
     ui.Begin(*canvas, local, dt, now);
-    bool touring = tourStep >= 0; // the tour's up: the panel shows, only its card takes a press
+    bool touring = tourStep >= 0 || noticeUp; // the tour or the update's card is up: the panel shows, only the card takes a press
     ui.Block(touring);
 
     if (!model.HasPage(page)) { // the page showing was just taken off the rail in settings: the first one stands in, no slide
@@ -666,7 +666,8 @@ void Drawer::DrawBody(float h, float dt, double now) {
     }
     if (touring) {
         ui.Block(false);
-        DrawTour(shellNow, panelW, panelH);
+        if (noticeUp) DrawNotice(shellNow, panelW, panelH);
+        else DrawTour(shellNow, panelW, panelH);
     }
     DrawRailTip(shellNow); // over the page and its sheets
     ui.DrawFocus(shellNow.accentHi, shellNow.onAccent.Alpha(1));

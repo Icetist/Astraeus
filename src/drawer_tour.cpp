@@ -77,6 +77,38 @@ void Drawer::TourEnd() {
     Redraw();
 }
 
+void Drawer::DrawNotice(const Theme& t, float panelW, float panelH) { // once, after the update: what changed, and the way back
+    constexpr wchar_t kTitle[] = L"The long pill is on";
+    constexpr wchar_t kBody[] = L"Your desktop now has the long pill, with your\nwidgets along the screen's edge. Switch back\nhere, or any time in Settings under Long pill\non the desktop.";
+    constexpr float kBackW2 = 112;
+    Canvas& c = *canvas;
+    float show = ui.SmoothFrom(Ui::Id("notice.show"), 1, 0, 10);
+    D2D1_RECT_F full = {0, 0, panelW, panelH};
+    c.Fill(full, 0, Color{0, 0, 0, kDim * show});
+    float cw = (std::min)(kCardW + 40, panelW - 2 * kCardEdge), ch = 2 * kCardPad + kTitleH + Lines(kBody) * kLineH + kCardGap + kBtnH;
+    D2D1_RECT_F card = Rect((panelW - cw) / 2, (panelH - ch) / 2 + (1 - show) * kRise, cw, ch);
+    c.Fill(Rect(card.left, card.top + 4, cw, ch), kCardRad, Color{0, 0, 0, 0.25f * show});
+    Color fill = t.bg;
+    fill.a = 0.98f;
+    c.Fill(card, kCardRad, fill.Alpha(show));
+    c.StrokeV(card, kCardRad, t.hairTop.Alpha(show), t.hairBot.Alpha(show), 1);
+    float x = card.left + kCardPad, y = card.top + kCardPad, w = cw - 2 * kCardPad;
+    c.Text(kTitle, Rect(x, y, w, kTitleH), Weight::Semi, 15, t.text.Alpha(show));
+    y += kTitleH;
+    c.Text(kBody, Rect(x, y, w, Lines(kBody) * kLineH), Weight::Regular, 12, t.textDim.Alpha(show));
+    y += Lines(kBody) * kLineH + kCardGap;
+    bool live = show > 0.5f;
+    bool done = sheet::Act(ui, t, Ui::Id("notice.ok"), Rect(card.right - kCardPad - kNextW, y, kNextW, kBtnH), L"Got it", true, false, live);
+    bool back = sheet::Act(ui, t, Ui::Id("notice.back"), Rect(card.right - kCardPad - kNextW - kBtnGap - kBackW2, y, kBackW2, kBtnH), L"Switch back", false, false, live);
+    ui.Button(Ui::Id("notice.veil"), full); // last: nothing under it can be pressed
+    ui.NoStop();
+    if (!done && !back) return;
+    if (back) model.SetPref(model.deskPill, L"DeskPill", 0); // the regular desktop pill again
+    model.longPillNotice = false, noticeUp = false;
+    sys::SaveNum(L"LongPillNotice", 0); // told once: never again
+    Redraw();
+}
+
 void Drawer::DrawTour(const Theme& t, float panelW, float panelH) {
     if (tourStep < 0) return;
     Canvas& c = *canvas;

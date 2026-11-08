@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "faces.h"
 #include "glyphs.h"
 
 namespace {
@@ -24,9 +25,10 @@ constexpr float kBackRate = 9, kFollow = 22, kTurn = 13;
 constexpr float kShakeRate = 7, kShakeReach = 7;
 constexpr float kBackFrom = 1.05f; // the wallpaper settles from a little closer
 
-constexpr int kAll[] = {Model::kDClock, Model::kDDate, Model::kWWeather, Model::kDMusic, Model::kDCover, Model::kDBars, Model::kDTimer, Model::kDVolume, Model::kDWifi, Model::kWCpu, Model::kWGpu, Model::kWRam, Model::kWNet, Model::kWDisk, Model::kWBattery, Model::kWWork, Model::kWLang, Model::kWTitle};
+constexpr int kAll[] = {Model::kDClock, Model::kDDate, Model::kWWeather, Model::kDMusic, Model::kDCover, Model::kDBars, Model::kDTimer, Model::kDVolume, Model::kDWifi, Model::kWCpu, Model::kWGpu, Model::kWRam, Model::kWNet, Model::kWDisk, Model::kWBattery, Model::kWWork, Model::kWLang, Model::kWTitle, Model::kWMarket, Model::kDScore};
 
 constexpr float kDefLen = 560, kDefThick = 30, kDefGap = 10;
+constexpr float kSetMark = -1; // in an undo snapshot: between the desktop's set and the other one; no item is negative
 
 float Pull(float v, float to, float reach) { return std::fabs(v - to) < reach ? to : v; }
 
@@ -34,27 +36,37 @@ float Pull(float v, float to, float reach) { return std::fabs(v - to) < reach ? 
 
 std::vector<int> DeskPill::Offered() const {
     std::vector<int> out;
+    bool sport = std::any_of(model.faceOn.begin(), model.faceOn.end(), [](int f) { // the score only with a sports widget on the board: its leagues are picked there
+        std::string key = faces::Info(f).key;
+        return key == "sport.scores" || key == "sport.fixtures";
+    });
     for (int k : kAll)
-        if ((k != Model::kWBattery || model.portable) && (k != Model::kWWork || model.tiler != sys::Tiler::kNone) && (k != Model::kWTitle || spec.apps)) out.push_back(k);
+        if ((k != Model::kWBattery || model.portable) && (k != Model::kWWork || model.tiler != sys::Tiler::kNone) && (k != Model::kWTitle || spec.apps) && (k != Model::kDScore || sport)) out.push_back(k);
     return out;
 }
 
-void DeskPill::Edit(HMONITOR on) {
+void DeskPill::Edit(HMONITOR on, int from) {
     if (Editing() || !hwnd) return;
     Measure(on); // the saved values, one last time
     model.WantDeskAudio(); // the volume and the visualizer are live in here too
     ++editRun;
+    // the tab it opens on: where the pill that asked was, unless only the other place wears the long pill
+    bool deskLong = spec.desk && model.pillDesk, wantApps = from == Model::kEditFromApps || (from == Model::kEditFromLong && onApp && spec.apps);
+    if (wantApps && !spec.apps && deskLong) wantApps = false;
+    if (!wantApps && !deskLong && spec.apps) wantApps = true;
+    askLong = from != Model::kEditFromLong && !(wantApps ? spec.apps : deskLong); // the long pill nowhere: ask before anything changes
     editing = true; // from here the working copy rules
     wantUp = false;
     drag = Drag::None;
+    previewApps = wantApps;
+    model.deskPreview = wantApps ? 1 : 0; // it wears that tab's theme whatever is behind it now
+    SyncItems();
     FitWindow();
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     RegisterHotKey(hwnd, kEscKey, 0, VK_ESCAPE); // taken by another app: Done and a click away still finish
     pose = Goal();
     intro = 0;
     inkDue = 0;
-    previewApps = false;
-    model.deskPreview = 0; // it opens on the desktop's, and wears the desktop's theme whatever is behind it now
     if (onLook) onLook();
     inkAfterIntro = FillNow() == kFillClear;
     wallFor = 0;
@@ -66,6 +78,7 @@ void DeskPill::Edit(HMONITOR on) {
 void DeskPill::SetPreview(bool apps) {
     previewApps = apps;
     model.deskPreview = apps ? 1 : 0;
+    SyncItems(); // the tab's own set, when it has one
     if (onLook) onLook();
     if (FillNow() == kFillClear) inkDue = lastFrame + 0.05;
     Poke();
@@ -110,23 +123,30 @@ void DeskPill::DrawStudio(const Theme& t) {
 }
 
 History::Snap DeskPill::SpecSnap() const { // its place and size, both shapes, its bodies, then its items
-    History::Snap s{(float)spec.edge, spec.pos, spec.thick, spec.apps ? 1.0f : 0, (float)spec.fill, (float)spec.fillApps};
+    History::Snap s{(float)spec.edge, spec.pos, spec.thick, spec.apps ? 1.0f : 0, (float)spec.fill, (float)spec.fillApps, spec.desk ? 1.0f : 0, model.pillDesk ? 1.0f : 0}; // picking long here can turn the desktop's pill on: undone with it
     for (const Spec::Shape& sh : spec.shape) s.push_back(sh.len), s.push_back(sh.gap), s.push_back(sh.floats ? 1.0f : 0);
-    for (int k : spec.items) s.push_back((float)k);
+    for (int k : DeskSet()) s.push_back((float)k);
+    s.push_back(kSetMark), s.push_back(spec.split ? 1.0f : 0); // then whether it splits, and the set for when not on desktop
+    for (int k : AppsSet()) s.push_back((float)k);
     return s;
 }
 
 void DeskPill::SpecLoad(const History::Snap& s) {
-    constexpr size_t kHead = 6, kPerShape = 3, kItems = kHead + 2 * kPerShape;
+    constexpr size_t kHead = 8, kPerShape = 3, kItems = kHead + 2 * kPerShape;
     if (s.size() < kItems) return;
-    spec.edge = (int)s[0], spec.pos = s[1], spec.thick = s[2], spec.apps = s[3] > 0.5f, spec.fill = (int)s[4], spec.fillApps = (int)s[5];
+    spec.edge = (int)s[0], spec.pos = s[1], spec.thick = s[2], spec.apps = s[3] > 0.5f, spec.fill = (int)s[4], spec.fillApps = (int)s[5], spec.desk = s[6] > 0.5f;
+    if (int pill = s[7] > 0.5f ? 1 : 0; pill != model.pillDesk) model.SetPref(model.pillDesk, L"PillDesktop", pill);
     for (int i = 0; i < 2; ++i) {
         const float* f = &s[kHead + i * kPerShape];
         spec.shape[i] = {f[0], f[1], f[2] > 0.5f};
     }
-    spec.items.clear();
-    for (size_t i = kItems; i < s.size(); ++i) spec.items.push_back((int)s[i]);
-    if (!spec.apps) SetPreview(false); // the tab it was on may be gone
+    std::vector<int> desk, apps;
+    size_t i = kItems;
+    for (; i < s.size() && s[i] != kSetMark; ++i) desk.push_back((int)s[i]);
+    spec.split = i + 1 < s.size() && s[i + 1] > 0.5f;
+    for (i += 2; i < s.size(); ++i) apps.push_back((int)s[i]);
+    spec.items = itemsCtx == 0 ? desk : apps, spec.itemsOther = itemsCtx == 0 ? apps : desk; // into the context showing
+    SyncItems();
     drag = Drag::None;
     Commit();
 }
@@ -143,9 +163,12 @@ void DeskPill::Commit() {
     num(model.deskFloat, L"DeskFloat", spec.shape[0].floats ? 1 : 0);
     num(model.deskFloatApps, L"DeskFloatApps", spec.shape[1].floats ? 1 : 0);
     num(model.deskApps, L"DeskApps", spec.apps ? 1 : 0);
+    num(model.deskPill, L"DeskPill", spec.desk ? 1 : 0);
     num(model.deskFill, L"DeskFill", spec.fill);
     num(model.deskFillApps, L"DeskFillApps", spec.fillApps);
-    if (model.deskItems != spec.items) model.SetDeskItems(spec.items);
+    if (model.deskItems != DeskSet()) model.SetDeskItems(DeskSet());
+    num(model.deskSplit, L"DeskSplit", spec.split ? 1 : 0);
+    if (spec.split && model.deskItemsApps != AppsSet()) model.SetDeskItemsApps(AppsSet());
 }
 
 void DeskPill::Finish() {
@@ -188,6 +211,13 @@ void DeskPill::Leave() {
         appear = anim::Spring{};
         wantUp = false;
         if (onStudioDone) onStudioDone();
+        return;
+    }
+    if (!TabLong() || askLong) { // it showed no long pill: none drops back in, the drawer decides
+        askLong = false;
+        appear = anim::Spring{};
+        wantUp = false;
+        if (onDone) onDone();
         return;
     }
     appear.value = appear.target = 100; // the pill the editor just showed: no drop-in for what's already there
@@ -306,7 +336,17 @@ void DeskPill::DrawBar(const Theme& t) {
     c.Fill(bar, 24, t.cardHi.Alpha(intro));
     c.StrokeV(bar, 24, t.hairTop.Alpha(intro), t.hairBot.Alpha(intro), 1);
 
-    float x = bar.left + kBarPad, y = bar.top + kBarPad, right = bar.right - kBarPad; // the items: tap to add or take off, or drag onto the pill
+    float right = bar.right - kBarPad;
+    DrawBarHead(t, bar);
+    float x = bar.left + kBarPad, y = bar.top + kBarPad + kChipH + kRowGap; // the items: tap to add or take off, or drag onto the pill
+    if (!TabLong()) { // the regular pill here: nothing of the long one's to arrange
+        D2D1_RECT_F say = {bar.left + kBarPad, y, right, bar.bottom - kBarPad};
+        bool none = !previewApps && !model.pillDesk; // pill on the desktop is off: nothing shows there at all
+        c.Text(none ? L"No pill on the desktop" : L"The regular pill shows here", Rect(say.left, say.top + 14, Width(say), 22), Weight::Medium, 14, t.text, Align::Center);
+        c.Text(none ? L"Pick Long above to put the long pill there" : L"Pick Long above to arrange a long pill for this place", Rect(say.left, say.top + 40, Width(say), 18), Weight::Regular, 11.5f, t.textDim, Align::Center);
+        if (!input.down && !input.released) moved = false;
+        return;
+    }
     for (int kind : Offered()) {
         const wchar_t* name = Model::DeskItemName(kind);
         float w = c.Measure(name, Weight::Medium, 11.5f) + 24;
@@ -349,27 +389,8 @@ void DeskPill::DrawBar(const Theme& t) {
         x += w + 6;
     }
 
-    float bodies = bar.bottom - kBarPad - kChipH, row = bodies - kChipH - kRowGap, fx = bar.left + kBarPad;
-    constexpr float kTabW = 230, kDeskWord = 70, kAppsWord = 84, kWhereW = 190, kHoldW = 150, kFillW = 270, kGapX = 12;
-    static const wchar_t* const kWhere[] = {L"Regular pill", L"Long pill"};
-    c.Text(L"Not on desktop", Rect(fx, row, kAppsWord, kChipH), Weight::Medium, 11, t.textDim);
-    int where = spec.apps ? 1 : 0;
-    if (Seg(t, "dk.where", Rect(fx + kAppsWord, row, kWhereW, kChipH), kWhere, 2, where)) { // long: it takes the regular pill's place over apps, on the same rules
-        spec.apps = where == 1;
-        if (!spec.apps) SetPreview(false);
-        DropAppItems();
-        Commit();
-    }
-    float ox = fx; // what's under this is for the one the tab has picked: its theme, length, hold and body
-    if (spec.apps) {
-        static const wchar_t* const kTabs[] = {L"On desktop", L"Not on desktop"};
-        int tab = previewApps ? 1 : 0;
-        if (Seg(t, "dk.tab", Rect(ox, bodies, kTabW, kChipH), kTabs, 2, tab)) SetPreview(tab == 1);
-        ox += kTabW + kGapX;
-    } else {
-        c.Text(L"On desktop", Rect(ox, bodies, kDeskWord, kChipH), Weight::Medium, 11, t.textDim);
-        ox += kDeskWord;
-    }
+    float bodies = bar.bottom - kBarPad - kChipH, ox = bar.left + kBarPad; // the one picked: how it holds to its edge, and its body
+    constexpr float kHoldW = 170, kFillW = 300, kGapX = 12;
     static const wchar_t* const kHolds[] = {L"Stuck", L"Floating"};
     Spec::Shape& shape = Sh();
     int hold = shape.floats ? 1 : 0;
@@ -385,25 +406,91 @@ void DeskPill::DrawBar(const Theme& t) {
         if (fill == kFillClear) inkDue = lastFrame + 0.05;
         Commit();
     }
-    auto button = [&](const char* key, const D2D1_RECT_F& r, const wchar_t* label, bool primary) {
-        Ui::Hit h = ui.Button(Ui::Id(key), r);
-        float hov = ui.Smooth(Ui::Id(key, 1), h.hover ? 1.0f : 0, 16);
-        c.Fill(r, kChipH / 2, primary ? t.accent.Mix(t.accentHi, 0.3f * hov) : t.track.Mix(t.text, 0.07f * hov));
-        c.Text(label, r, Weight::Medium, 11.5f, primary ? t.onAccent : t.text, Align::Center);
-        return h.clicked;
-    };
-    if (button("dk.reset", Rect(bar.right - kBarPad - 172, row, 76, kChipH), L"Reset", false)) {
-        spec.edge = 0, spec.pos = 500, spec.thick = kDefThick, spec.apps = false, spec.fill = spec.fillApps = kFillTheme;
+    if (!input.down && !input.released) moved = false;
+}
+
+bool DeskPill::BarButton(const Theme& t, const char* key, const D2D1_RECT_F& r, const wchar_t* label, bool primary) {
+    Canvas& c = *canvas;
+    Ui::Hit h = ui.Button(Ui::Id(key), r);
+    float hov = ui.Smooth(Ui::Id(key, 1), h.hover ? 1.0f : 0, 16);
+    c.Fill(r, kChipH / 2, primary ? t.accent.Mix(t.accentHi, 0.3f * hov) : t.track.Mix(t.text, 0.07f * hov));
+    c.Text(label, r, Weight::Medium, 11.5f, primary ? t.onAccent : t.text, Align::Center);
+    return h.clicked;
+}
+
+void DeskPill::DrawBarHead(const Theme& t, const D2D1_RECT_F& bar) { // which place, the pill it wears there, then undo, reset and done
+    constexpr float kTabW = 210, kFormW = 150, kSplitW = 118, kGapX = 12, kResetW = 76, kDoneW = 88;
+    float x = bar.left + kBarPad, y = bar.top + kBarPad, right = bar.right - kBarPad;
+    static const wchar_t* const kTabs[] = {L"On desktop", L"Not on desktop"};
+    int tab = previewApps ? 1 : 0;
+    if (Seg(t, "dk.tab", Rect(x, y, kTabW, kChipH), kTabs, 2, tab)) SetPreview(tab == 1);
+    x += kTabW + kGapX;
+    static const wchar_t* const kForms[] = {L"Regular", L"Long"};
+    int form = TabLong() ? 1 : 0;
+    if (Seg(t, "dk.form", Rect(x, y, kFormW, kChipH), kForms, 2, form)) { // this place's pill: the regular one, or this long one
+        if (previewApps) {
+            spec.apps = form == 1;
+            DropAppItems();
+        } else {
+            spec.desk = form == 1;
+            if (spec.desk && !model.pillDesk) model.SetPref(model.pillDesk, L"PillDesktop", 1); // asked for a pill on the desktop: it shows there
+        }
+        SyncItems();
+        Commit();
+    }
+    x += kFormW + kGapX;
+    if (previewApps && spec.apps && BarButton(t, "dk.split", Rect(x, y, kSplitW, kChipH), L"Own widgets", spec.split)) { // off by default: the same widgets everywhere
+        spec.split = !spec.split;
+        if (spec.split) spec.itemsOther = spec.items; // it starts as a copy of the set showing
+        SyncItems();
+        Commit();
+    }
+    if (BarButton(t, "dk.done", Rect(right - kDoneW, y, kDoneW, kChipH), L"Done", true)) Finish();
+    if (BarButton(t, "dk.reset", Rect(right - kDoneW - 8 - kResetW, y, kResetW, kChipH), L"Reset", false)) {
+        spec.edge = 0, spec.pos = 500, spec.thick = kDefThick, spec.apps = false, spec.desk = true, spec.fill = spec.fillApps = kFillTheme;
         for (Spec::Shape& s : spec.shape) s = {kDefLen, kDefGap, true};
-        spec.items = Model::DeskDefaults();
+        spec.items = spec.itemsOther = Model::DeskDefaults();
+        spec.split = false;
         SetPreview(false);
         Commit();
     }
-    int go = history::Buttons(ui, t, "dk.hist", bar.right - kBarPad - 172 - 8 - history::kW, row + kChipH / 2, hist, true);
+    int go = history::Buttons(ui, t, "dk.hist", right - kDoneW - 8 - kResetW - 8 - history::kW, y + kChipH / 2, hist, true);
     if (go < 0) SpecLoad(hist.Undo());
     else if (go > 0) SpecLoad(hist.Redo());
-    if (button("dk.done", Rect(bar.right - kBarPad - 88, row, 88, kChipH), L"Done", true)) Finish();
-    if (!input.down && !input.released) moved = false;
+}
+
+void DeskPill::DrawAsk(const Theme& t) { // the regular pill was right clicked and the long one is nowhere: switch first, or leave
+    constexpr float kAskW = 440, kAskH = 156, kBtnW = 150, kLaterW = 96;
+    Canvas& c = *canvas;
+    float rise = (1 - anim::EaseOut(intro)) * 30;
+    D2D1_RECT_F r = Rect((MW - kAskW) / 2, MH / 2 - kAskH / 2 + rise, kAskW, kAskH);
+    c.Fill(Rect(r.left, r.top + 4, kAskW, kAskH), 24, Color{0, 0, 0, 0.25f * intro});
+    c.Fill(r, 24, t.cardHi.Alpha(intro));
+    c.StrokeV(r, 24, t.hairTop.Alpha(intro), t.hairBot.Alpha(intro), 1);
+    D2D1_RECT_F in = Inset(r, 22, 20);
+    c.Text(L"Customizing needs the long pill", Rect(in.left, in.top, Width(in), 24), Weight::Semi, 15, t.text);
+    c.Text(previewApps ? L"Use the long pill when not on desktop?" : L"Use the long pill on the desktop?", Rect(in.left, in.top + 30, Width(in), 18), Weight::Regular, 12.5f, t.textDim);
+    c.Text(L"You can switch back here or in Settings.", Rect(in.left, in.top + 50, Width(in), 18), Weight::Regular, 12.5f, t.textDim);
+    float by = in.bottom - kChipH;
+    bool yes = BarButton(t, "dk.ask.yes", Rect(in.right - kBtnW, by, kBtnW, kChipH), L"Use the long pill", true);
+    bool no = BarButton(t, "dk.ask.no", Rect(in.right - kBtnW - 8 - kLaterW, by, kLaterW, kChipH), L"Not now", false);
+    if (input.released && !Inside(r, input.pressPos)) no = true; // a click away: as not now
+    if (no) {
+        Finish();
+        return;
+    }
+    if (!yes) return;
+    if (previewApps) {
+        spec.apps = true;
+    } else {
+        spec.desk = true;
+        if (!model.pillDesk) model.SetPref(model.pillDesk, L"PillDesktop", 1);
+    }
+    askLong = false;
+    SyncItems();
+    Commit();
+    pose = Goal();
+    Poke();
 }
 
 void DeskPill::PressPill() {

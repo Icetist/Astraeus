@@ -20,6 +20,10 @@ struct Link {
     std::wstring url, name; // name: which service it came from, for the list of connected calendars
 };
 
+bool AddMine(const Event& e); // your own, kept on this pc: a game added from the scores; shows beside the linked calendars' events
+bool HasMine(int64_t start, const std::wstring& title); // matched by start and title, the same way add skips a repeat
+bool RemoveMine(int64_t start, const std::wstring& title);
+
 class Calendars {
 public:
     Calendars();

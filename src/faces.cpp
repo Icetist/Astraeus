@@ -6,10 +6,12 @@
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
+#include <cwctype>
 
 #include "faces_state.h"
 #include "feeds.h"
 #include "glyphs.h"
+#include "sports.h"
 
 namespace faces {
 namespace {
@@ -101,6 +103,11 @@ const Meta kAll[] = {
     {"stock.chart", L"Stock Chart", L"One ticker with its intraday line", kMoney, glyph::Up, 6, 1, 176, 256, nullptr, false},
     {"stock.watch", L"Stock Watchlist", L"Three tickers at a glance", kMoney, glyph::Up, 6, 2, 196, 300, nullptr, false},
     {"money.metric", L"Metric", L"A live number, such as BTC-USD", kMoney, kMoneyG, 7, 1, 136, 196, "metric", false},
+    {"stock.us", L"US Markets", L"The S&P 500, Dow, Nasdaq, Russell 2000 and VIX, each with its day, and whether New York is open", kMoney, glyph::Up, 6, 2, 196, 280, nullptr, false},
+    {"stock.amex", L"NYSE American", L"The NYSE American Composite and its day", kMoney, glyph::Up, 7, 1, 176, 256, nullptr, false},
+    // sports
+    {"sport.scores", L"Scores", L"Live scores from up to three leagues, else their latest results", kSports, glyph::Dashboard, 6, 1, 196, 280, nullptr, false},
+    {"sport.fixtures", L"Fixtures", L"Upcoming games by day, in your time", kSports, glyph::Calendar, 6, 2, 196, 280, nullptr, false},
     // online
     {"web.plausible", L"Plausible", L"Visitors this week, with the trend", kOnline, kWebG, 7, 1, 148, 224, "plausible", false},
     {"web.dub", L"Dub", L"Clicks on your links this week", kOnline, kWebG, 7, 1, 148, 224, "dub", false},
@@ -187,6 +194,15 @@ feeds::Series Sample(const std::string& id) {
         s.points.clear();
         for (int i = 0; i < 200; ++i) s.points.push_back((i * 7) % 5 == 0 ? 0 : (i * 13) % 9);
     }
+    if (id.rfind("sport:", 0) == 0) { // made-up games: one on, one done, one next
+        s.rows = {sports::Encode({sports::kLive, L"Arsenal", L"2", L"Chelsea", L"1", L"67'", 0, false}),
+                  sports::Encode({sports::kFinal, L"Lakers", L"112", L"Celtics", L"108", L"Final", 0, false}),
+                  sports::Encode({sports::kPre, L"Barcelona", L"", L"Real Madrid", L"", L"Sat 20:00", 0, false})};
+        s.value = 1;
+    }
+    if (id.rfind("next:", 0) == 0) // made-up fixtures, two days of them
+        s.rows = {sports::Encode({sports::kPre, L"Arsenal", L"", L"Chelsea", L"", L"Sat 15:00", 1, false}), sports::Encode({sports::kPre, L"Liverpool", L"", L"Spurs", L"", L"Sat 17:30", 2, false}),
+                  sports::Encode({sports::kPre, L"Lakers", L"", L"Celtics", L"", L"Sun 01:30", 3, false})};
     return s;
 }
 
@@ -454,6 +470,106 @@ std::string QuoteId(const std::wstring& ticker) {
     std::string id = "quote:";
     for (wchar_t ch : ticker) id += (char)ch;
     return id;
+}
+
+constexpr wchar_t kAmex[] = L"^XAX"; // the nyse american composite
+const Market kUsIndex[] = {{L"S&P 500", L"^GSPC"}, {L"Dow Jones", L"^DJI"}, {L"Nasdaq", L"^IXIC"}, {L"Russell 2000", L"^RUT"}, {L"VIX", L"^VIX"}, {L"NYSE Composite", L"^NYA"},
+                           {L"NYSE American", L"^XAX"}, {L"10-year Treasury", L"^TNX"}, {L"Gold", L"GC=F"}, {L"Crude oil", L"CL=F"}}; // the first says whether new york is open
+constexpr size_t kUsCompact = 3, kUsLarge = 5; // a medium tile: the big three; a large one adds small companies and the fear gauge
+constexpr size_t kUsMoreMax = 20; // tickers added in its panel
+
+int scoresFrom = 0, scoresCount = 0, scoresRows = 0; // the scores tile scrolled this many games down; how many it had and showed last drawn
+
+void DrawSports(Canvas& c, const Theme& t, const Meta& m, const D2D1_RECT_F& r) { // live games first, then the latest results, then what's next
+    constexpr float kRowH = 24, kLiveW = 44;
+    float x = r.left + kPad, room = Width(r) - 2 * kPad;
+    std::vector<std::string> leagues = sports::Followed();
+    std::vector<sports::Game> games;
+    feeds::Series first;
+    for (const std::string& l : leagues) {
+        feeds::Series s = Feed(sports::FeedId(l));
+        if (first.rows.empty() && first.error.empty()) first = s;
+        for (const std::wstring& row : s.rows) games.push_back(sports::Decode(row));
+    }
+    games = sports::Order(std::move(games));
+    bool live = !games.empty() && games.front().state == sports::kLive;
+    const sports::League* one = leagues.size() == 1 ? sports::Find(leagues[0]) : nullptr;
+    Head(c, t, r, m.glyph, one ? one->name : leagues.empty() ? m.name : L"Scores", live ? Bad(t) : t.accentHi, live ? kLiveW : 0);
+    if (live) { // a small red mark: something's on now
+        D2D1_RECT_F tag = Rect(r.right - kPad - kLiveW + 6, r.top + kPad, kLiveW - 6, kHeadH);
+        c.Fill(tag, kHeadH / 2, Bad(t).Alpha(0.16f));
+        c.Text(L"LIVE", tag, Weight::Semi, 10, Bad(t), Align::Center);
+    }
+    float y = r.top + kPad + kHeadH + 6;
+    if (leagues.empty()) return (void)c.Text(L"Click to pick leagues", Rect(x, y, room, kRowH), Weight::Regular, 12, t.textDim);
+    if (games.empty()) return (void)c.Text(first.ok ? std::wstring(L"Nothing played lately") : NotYet(first), Rect(x, y, room, kRowH), Weight::Regular, 12, t.textDim);
+    int fits = (std::max)(1, (int)((r.bottom - kPad + 2 - y) / kRowH));
+    if (!gSampling) scoresCount = (int)games.size(), scoresRows = fits; // the gallery's preview isn't the tile
+    scoresFrom = gSampling ? 0 : (std::clamp)(scoresFrom, 0, (std::max)(0, scoresCount - fits)); // the wheel scrolled it this far down
+    for (size_t i = (size_t)(gSampling ? 0 : scoresFrom); i < games.size(); ++i) {
+        const sports::Game& g = games[i];
+        if (y + kRowH > r.bottom - kPad + 2) break;
+        float detailW = (std::min)(room * 0.3f, c.Measure(g.detail, Weight::Regular, 11) + 6);
+        Color score = g.state == sports::kLive ? t.accentHi : t.text;
+        c.Text(g.detail, Rect(x, y, room, kRowH), Weight::Regular, 11, g.state == sports::kLive ? Bad(t) : t.textDim, Align::Right);
+        float body = room - detailW - 6;
+        if (g.solo) {
+            c.Text(g.b.empty() ? g.a : g.a + L"  ·  " + g.b, Rect(x, y, body, kRowH), Weight::Medium, 12, t.text);
+        } else {
+            std::wstring mid = g.state == sports::kPre ? L"v" : g.as + L" – " + g.bs;
+            float midW = c.Measure(mid, Weight::Semi, 12.5f) + 12, side = (body - midW) / 2;
+            c.Text(g.a, Rect(x, y, side, kRowH), Weight::Medium, 12, t.text, Align::Right);
+            c.Text(mid, Rect(x + side, y, midW, kRowH), Weight::Semi, 12.5f, g.state == sports::kPre ? t.textLow : score, Align::Center);
+            c.Text(g.b, Rect(x + side + midW, y, side, kRowH), Weight::Medium, 12, t.text);
+        }
+        y += kRowH;
+    }
+}
+
+void DrawFixtures(Canvas& c, const Theme& t, const Meta& m, const D2D1_RECT_F& r) { // the coming games under their days, as a calendar's agenda
+    constexpr float kRowH = 22, kDayH = 20;
+    float x = r.left + kPad, room = Width(r) - 2 * kPad;
+    constexpr size_t kRecent = 2; // a couple of results before what's on and what's next
+    std::vector<sports::Game> games, live, done;
+    feeds::Series first;
+    auto seen = [](const std::vector<sports::Game>& in, const sports::Game& g) { return std::any_of(in.begin(), in.end(), [&](const sports::Game& o) { return o.a == g.a && o.b == g.b && o.when == g.when; }); };
+    for (const std::string& l : sports::Followed())
+        for (const std::string& id : {sports::FeedId(l), sports::NextId(l)}) {
+            feeds::Series s = Feed(id);
+            if (first.rows.empty() && first.error.empty()) first = s;
+            for (const std::wstring& row : s.rows) {
+                sports::Game g = sports::Decode(row);
+                std::vector<sports::Game>& to = g.state == sports::kLive ? live : g.state == sports::kFinal ? done : games;
+                if (!seen(to, g)) to.push_back(std::move(g));
+            }
+        }
+    games = sports::Order(std::move(games)), live = sports::Order(std::move(live)), done = sports::Order(std::move(done));
+    if (done.size() > kRecent) done.resize(kRecent);
+    for (sports::Game& g : live) g.detail = L"Live  " + g.detail; // under their own headings: the day part says which
+    for (sports::Game& g : done) g.detail = L"Results  " + g.detail;
+    std::vector<sports::Game> all = live; // what's on, a couple of results, then the coming days
+    all.insert(all.end(), done.begin(), done.end());
+    all.insert(all.end(), games.begin(), games.end());
+    games = std::move(all);
+    Head(c, t, r, m.glyph, m.name, t.accentHi);
+    float y = r.top + kPad + kHeadH + 4;
+    if (games.empty()) return (void)c.Text(first.ok || gSampling ? std::wstring(L"Nothing lately, nothing this week") : NotYet(first), Rect(x, y + 2, room, kRowH), Weight::Regular, 12, t.textDim);
+    std::wstring lastDay;
+    for (const sports::Game& g : games) {
+        size_t cut = g.detail.find(L' '); // "Sat 15:00": its day, then its time; "Live  67'" and "Results  FT" the same way
+        std::wstring day = cut == std::wstring::npos ? g.detail : g.detail.substr(0, cut), time = cut == std::wstring::npos ? L"" : g.detail.substr(cut + 1);
+        while (!time.empty() && time[0] == L' ') time.erase(0, 1);
+        if (g.state != sports::kPre && !g.solo) time = g.as + L"–" + g.bs + L"  " + time; // a score where a time would be
+        if (day != lastDay) {
+            if (y + kDayH + kRowH > r.bottom - kPad + 2) break;
+            c.Text(day, Rect(x, y + 2, room, kDayH - 2), Weight::Semi, 11, t.accentHi);
+            y += kDayH, lastDay = day;
+        }
+        if (y + kRowH > r.bottom - kPad + 2) break;
+        c.Text(time, Rect(x, y, room, kRowH), Weight::Medium, 11.5f, t.textDim, Align::Right);
+        c.Text(g.solo ? g.a : g.a + L" v " + g.b, Rect(x, y, room - c.Measure(time, Weight::Medium, 11.5f) - 10, kRowH), Weight::Regular, 12, t.text);
+        y += kRowH;
+    }
 }
 
 std::vector<std::wstring> Watch() {
@@ -822,6 +938,51 @@ void DrawOnline(Canvas& c, const Theme& t, int kind, const std::string& key, con
         o.ink = o.subInk = Trend(t, q.change);
         if (key == "stock.chart") o.pts = &q.points;
         Stat(c, t, r, q.change >= 0 ? glyph::Up : glyph::Down, tick, b, Pct(q.change), o);
+    } else if (key == "stock.amex") {
+        feeds::Series q = Feed(QuoteId(kAmex));
+        wchar_t b[32];
+        swprintf_s(b, L"%.2f", q.value);
+        if (!q.ok) return Stat(c, t, r, m.glyph, m.name, L"--", NotYet(q));
+        StatOpts o;
+        o.ink = o.subInk = Trend(t, q.change), o.pts = &q.points;
+        Stat(c, t, r, q.change >= 0 ? glyph::Up : glyph::Down, m.name, b, Pct(q.change), o);
+    } else if (key == "stock.us") { // the three that say how america's market is doing, and whether it's trading
+        feeds::Series lead = Feed(QuoteId(kUsIndex[0].tick));
+        feeds::Phase phase = gSampling ? feeds::kOpen : feeds::MarketPhase(lead);
+        const wchar_t* says = feeds::PhaseName(phase);
+        float chip = c.Measure(says, Weight::Medium, 11) + 18;
+        Head(c, t, r, m.glyph, m.name, t.accentHi, chip + 8);
+        Color dot = phase == feeds::kOpen ? Good(t) : phase == feeds::kClosed ? t.textLow : t.accentHi;
+        D2D1_RECT_F pill = Rect(r.right - kPad - chip, r.top + kPad - 1, chip, kHeadH + 2);
+        c.Fill(pill, Height(pill) / 2, dot.Alpha(0.14f));
+        c.Dot({pill.left + 8, (pill.top + pill.bottom) / 2}, 3, dot);
+        c.Text(says, Rect(pill.left + 14, pill.top, chip - 16, Height(pill)), Weight::Medium, 11, t.text);
+        size_t shown = big ? kUsLarge : kUsCompact;
+        float y = r.top + kPad + kHeadH + 8, row = (r.bottom - kPad - y) / (float)shown, size = big ? 14.5f : 12.5f;
+        bool roomy = room >= kWatchRoomy, lines = big || IsWide(Width(r), Height(r)); // room for each index's own day
+        for (size_t i = 0; i < shown; ++i) {
+            const Market& idx = kUsIndex[i];
+            feeds::Series q = Feed(QuoteId(idx.tick));
+            float mid = y + row / 2;
+            c.Text(idx.label, Rect(x, y, room * 0.34f, row), Weight::Semi, size, t.text);
+            if (q.ok) {
+                wchar_t b[32];
+                swprintf_s(b, q.value >= 10000 ? L"%.0f" : L"%.2f", q.value);
+                Color ink = Trend(t, q.change);
+                std::wstring pct = Pct(q.change);
+                float pctW = c.Measure(pct, Weight::Semi, size - 1.5f) + 14;
+                D2D1_RECT_F tag = Rect(r.right - kPad - pctW, mid - 10, pctW, 20); // the change on a soft chip of its colour
+                c.Fill(tag, 10, ink.Alpha(0.14f));
+                c.Text(pct, tag, Weight::Semi, size - 1.5f, ink, Align::Center);
+                float valueW = roomy ? c.Measure(b, Weight::Medium, size) + 10 : 0;
+                if (roomy) c.Text(b, Rect(tag.left - valueW - 4, y, valueW, row), Weight::Medium, size, t.text, Align::Right);
+                if (lines) Spark(c, {x + room * 0.35f, mid - row * 0.32f, tag.left - valueW - 14, mid + row * 0.32f}, q.points, ink);
+            } else {
+                c.Text(q.error.empty() ? L"…" : L"--", Rect(x, y, room, row), Weight::Regular, size, t.textLow, Align::Right);
+            }
+            if (i + 1 < shown) c.Line({x, y + row}, {r.right - kPad, y + row}, t.text.Alpha(0.05f), 1);
+            y += row;
+        }
     } else if (key == "stock.watch") {
         auto list = Watch();
         float row = (rh - 2 * kPad) / (float)(std::max)((size_t)1, list.size()), y = r.top + kPad, size = big ? 16.0f : 12.5f;
@@ -880,6 +1041,33 @@ void DrawOnline(Canvas& c, const Theme& t, int kind, const std::string& key, con
 
 void Sampling(bool on) { gSampling = on; }
 
+bool Wheel(int kind, float notches) {
+    if (kind < 0 || kind >= kKinds || strcmp(kAll[kind].key, "sport.scores") != 0) return false;
+    int most = (std::max)(0, scoresCount - scoresRows);
+    if (most == 0) return false; // all of it shows: the board scrolls instead
+    scoresFrom = (std::clamp)(scoresFrom - (int)std::lround(notches), 0, most); // zero notches only asks; over it, the wheel is its own even at an end
+    return true;
+}
+
+const std::vector<Market>& UsMarkets() {
+    static const std::vector<Market> all(std::begin(kUsIndex), std::end(kUsIndex));
+    return all;
+}
+
+std::vector<std::wstring> UsMoreTickers() {
+    std::wstring all = feeds::Setting("us.more");
+    std::vector<std::wstring> out;
+    for (size_t a = 0; a < all.size() && out.size() < kUsMoreMax;) {
+        size_t e = (std::min)(all.find(L',', a), all.size());
+        std::wstring one;
+        for (wchar_t ch : all.substr(a, e - a))
+            if (ch != L' ') one += (wchar_t)towupper(ch); // tickers are upper case, whatever was typed
+        if (!one.empty() && std::find(out.begin(), out.end(), one) == out.end()) out.push_back(one);
+        a = e + 1;
+    }
+    return out;
+}
+
 int Count() { return kKinds; }
 const Meta& Info(int kind) { return kAll[(std::clamp)(kind, 0, kKinds - 1)]; }
 
@@ -890,7 +1078,7 @@ int Find(const char* key) {
 }
 
 const wchar_t* CatName(int cat) {
-    static const wchar_t* const kNames[kCats] = {L"Clocks", L"Weather", L"Productivity", L"System", L"Media", L"Money", L"Online", L"Apps & Files"};
+    static const wchar_t* const kNames[kCats] = {L"Clocks", L"Weather", L"Productivity", L"System", L"Media", L"Money", L"Online", L"Apps & Files", L"Sports"};
     return kNames[(std::clamp)(cat, 0, kCats - 1)];
 }
 
@@ -937,6 +1125,8 @@ void Draw(Canvas& c, const Theme& t, int kind, int, const D2D1_RECT_F& r, const 
     if (key.rfind("media.", 0) == 0) return DrawMediaFace(c, t, key, r, h);
     if (key.rfind("money.", 0) == 0 && key != "money.metric") return MoneyFace(c, t, kind, r);
     if (key == "money.metric" || key.rfind("stock.", 0) == 0 || key.rfind("web.", 0) == 0 || key.rfind("social.", 0) == 0) return DrawOnline(c, t, kind, key, m, r);
+    if (key == "sport.scores") return DrawSports(c, t, m, r);
+    if (key == "sport.fixtures") return DrawFixtures(c, t, m, r);
     if (key == "files.websearch") {
         float mid = (r.top + r.bottom) / 2, fh = IsBig(Height(r)) ? 52.0f : 38.0f;
         D2D1_RECT_F f = {r.left + kPad, mid - fh / 2, r.right - kPad, mid + fh / 2};
@@ -969,6 +1159,21 @@ std::vector<std::string> Feeds(const std::vector<int>& kinds) {
         if (key == "stock.one" || key == "stock.chart") add(QuoteId(Ticker("stock.id", L"AAPL")));
         if (key == "stock.watch")
             for (const auto& one : Watch()) add(QuoteId(one));
+        if (key == "stock.us") { // its panel lists every one, and what's been added
+            for (const auto& idx : kUsIndex) add(QuoteId(idx.tick));
+            for (const std::wstring& one : UsMoreTickers()) add(QuoteId(one));
+        }
+        if (key == "stock.amex") add(QuoteId(kAmex));
+        if (key == "sport.scores")
+            for (const std::string& l : sports::Followed()) {
+                add(sports::FeedId(l));
+                if (l != "chess") add(sports::NextId(l)); // its panel shows the week either side too
+            }
+        if (key == "sport.fixtures")
+            for (const std::string& l : sports::Followed()) {
+                add(sports::FeedId(l)); // what's on now
+                if (l != "chess") add(sports::NextId(l));
+            }
     }
     return out;
 }

@@ -18,6 +18,7 @@
 #include <mutex>
 #include <thread>
 
+#include "sports.h"
 #include "sys.h"
 
 #pragma comment(lib, "crypt32.lib")
@@ -27,6 +28,7 @@
 namespace feeds {
 namespace {
 
+std::atomic<bool> gQuit{false}; // the worker is being stopped: a fetch of many requests gives up between them
 constexpr size_t kMaxBody = 4u << 20; // an answer larger than this is not the answer
 constexpr int kTimeoutMs = 8000;
 constexpr int kMaxPages = 10; // a store with more than this many pages of a month's sales: the sum stops here
@@ -35,6 +37,7 @@ constexpr int64_t kDaySec = 86400;
 constexpr int kWindowDays = 30;
 constexpr int kChartDays = 14;
 constexpr ULONGLONG kEveryQuote = 5 * 60000, kEveryMetric = 2 * 60000, kEveryRates = 6 * 3600000ULL, kEverySky = 30 * 60000, kEveryAccount = 15 * 60000, kEveryThermal = 15000;
+constexpr ULONGLONG kEverySport = 60000; // scores: a live game moves by the minute
 constexpr ULONGLONG kRetry = 3 * 60000; // a failure is asked again sooner than a success, never in a spin
 constexpr DWORD kScreenTickMs = 15000; // how often the foreground app is noted
 constexpr DWORD kIdleMs = 5 * 60000; // nothing touched this long: away, not counted
@@ -603,6 +606,20 @@ Series FetchQuote(const std::string& ticker) { // the day's line and change, fro
     double prev = Num(At(*res, "meta.chartPreviousClose"), Num(At(*res, "meta.previousClose")));
     out.change = prev > 0 ? (out.value - prev) / prev : 0;
     if (const J* currency = At(*res, "meta.currency")) out.text = Wide(currency->s);
+    const J* named = At(*res, "meta.shortName");
+    if (!named || named->s.empty()) named = At(*res, "meta.longName");
+    if (named) out.name = Wide(named->s);
+    out.more.assign(kQuoteMore, 0);
+    out.more[kPrevClose] = prev;
+    out.more[kDayHigh] = Num(At(*res, "meta.regularMarketDayHigh"));
+    out.more[kDayLow] = Num(At(*res, "meta.regularMarketDayLow"));
+    out.more[kYearHigh] = Num(At(*res, "meta.fiftyTwoWeekHigh"));
+    out.more[kYearLow] = Num(At(*res, "meta.fiftyTwoWeekLow"));
+    out.more[kVolume] = Num(At(*res, "meta.regularMarketVolume"));
+    out.more[kOpensAt] = Num(At(*res, "meta.currentTradingPeriod.regular.start"));
+    out.more[kClosesAt] = Num(At(*res, "meta.currentTradingPeriod.regular.end"));
+    out.more[kPreAt] = Num(At(*res, "meta.currentTradingPeriod.pre.start"));
+    out.more[kPostAt] = Num(At(*res, "meta.currentTradingPeriod.post.end"));
     if (const J* closes = At(*res, "indicators.quote.0.close"); closes && closes->type == J::kArr)
         for (const J& c : closes->a)
             if (c.type == J::kNum) out.points.push_back(c.n);
@@ -659,6 +676,206 @@ Series FetchSky(const std::wstring& place) { // sunrise, sunset, wind and rain, 
         return atoi(j->s.c_str() + 11) * 60.0 + atoi(j->s.c_str() + 14);
     };
     out.points = {clock("daily.sunrise.0"), clock("daily.sunset.0")};
+    out.ok = true;
+    return out;
+}
+
+// ---- sports: espn's public scoreboards, lichess's broadcasts ----
+double IsoUnix(const J* j) { // "2026-11-08T15:00Z", seconds optional: unix seconds, utc
+    if (!j || j->type != J::kStr || j->s.size() < 16) return 0;
+    SYSTEMTIME st{};
+    int y = 0, mo = 0, d = 0, h = 0, mi = 0;
+    if (sscanf_s(j->s.c_str(), "%d-%d-%dT%d:%d", &y, &mo, &d, &h, &mi) != 5) return 0;
+    st.wYear = (WORD)y, st.wMonth = (WORD)mo, st.wDay = (WORD)d, st.wHour = (WORD)h, st.wMinute = (WORD)mi;
+    FILETIME ft;
+    if (!SystemTimeToFileTime(&st, &ft)) return 0;
+    return (double)((((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime) / 10000000ULL - 11644473600ULL);
+}
+
+std::wstring LocalStart(double unix) { // "Sat 15:00", in this pc's time
+    ULONGLONG u = ((ULONGLONG)unix + 11644473600ULL) * 10000000ULL;
+    FILETIME f = {(DWORD)u, (DWORD)(u >> 32)};
+    SYSTEMTIME utc, st;
+    if (!FileTimeToSystemTime(&f, &utc) || !SystemTimeToTzSpecificLocalTime(nullptr, &utc, &st)) return {};
+    wchar_t day[16] = {}, time[16] = {};
+    GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &st, L"ddd", day, 16, nullptr);
+    GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &st, nullptr, time, 16);
+    return std::wstring(day) + L" " + time;
+}
+
+std::wstring Str(const J* j) { // trimmed: some names come with a space on the end
+    if (!j || j->type != J::kStr) return {};
+    std::wstring s = Wide(j->s);
+    size_t a = s.find_first_not_of(L' '), b = s.find_last_not_of(L' ');
+    return a == std::wstring::npos ? std::wstring() : s.substr(a, b - a + 1);
+}
+
+std::wstring Ymd(int64_t unix) { // espn's dates: yyyymmdd
+    std::wstring d = IsoDay(unix);
+    return d.substr(0, 4) + d.substr(5, 2) + d.substr(8, 2);
+}
+
+std::wstring SideName(const J& c) { // a team's short name, else the athlete's, else a doubles pair's
+    for (const char* p : {"team.shortDisplayName", "team.displayName", "athlete.shortName", "athlete.displayName", "roster.shortDisplayName", "roster.displayName"})
+        if (std::wstring n = Str(At(c, p)); !n.empty()) return n;
+    if (const J* athletes = At(c, "roster.athletes"); athletes && athletes->type == J::kArr) { // a pair, by their names
+        std::wstring pair;
+        for (const J& a : athletes->a)
+            if (std::wstring n = Str(At(a, "shortName")); !n.empty()) pair += (pair.empty() ? L"" : L" / ") + n;
+        if (!pair.empty()) return pair;
+    }
+    return {};
+}
+
+std::wstring SideScore(const J& c) { // the score, else a tennis player's sets
+    if (std::wstring s = Str(At(c, "score")); !s.empty()) return s;
+    std::wstring sets;
+    if (const J* ls = At(c, "linescores"); ls && ls->type == J::kArr)
+        for (const J& l : ls->a) sets += (sets.empty() ? L"" : L" ") + std::to_wstring((int)Num(At(l, "value")));
+    return sets;
+}
+
+int StateOf(const J* status) {
+    std::string s = status && At(*status, "type.state") ? At(*status, "type.state")->s : "";
+    return s == "in" ? sports::kLive : s == "post" ? sports::kFinal : sports::kPre;
+}
+
+void ReadEvents(const J& doc, std::vector<sports::Game>& out, size_t most = 24) { // most: a busy college saturday fills the panel, not the whole slate
+    const J* events = At(doc, "events");
+    if (!events || events->type != J::kArr) return;
+    for (const J& ev : events->a) {
+        if (out.size() >= most) break;
+        std::vector<const J*> comps; // a tennis draw's matches, a race weekend's sessions, a fight card's bouts, or the one game
+        if (const J* gs = At(ev, "groupings"); gs && gs->type == J::kArr)
+            for (const J& g : gs->a)
+                if (const J* cs = At(g, "competitions"); cs && cs->type == J::kArr)
+                    for (const J& c : cs->a) comps.push_back(&c);
+        if (const J* cs = At(ev, "competitions"); comps.empty() && cs && cs->type == J::kArr)
+            for (const J& c : cs->a) comps.push_back(&c);
+        if (comps.empty()) continue;
+        const J* pick = nullptr;
+        for (const J* c : comps)
+            if (StateOf(At(*c, "status")) == sports::kLive) pick = c;
+        if (!pick)
+            for (const J* c : comps)
+                if (StateOf(At(*c, "status")) == sports::kFinal) pick = c; // the latest one done
+        if (!pick) pick = comps.front();
+        const J* status = At(*pick, "status") ? At(*pick, "status") : At(ev, "status");
+        sports::Game g;
+        g.state = StateOf(status);
+        g.when = IsoUnix(At(*pick, "date")) > 0 ? IsoUnix(At(*pick, "date")) : IsoUnix(At(ev, "date"));
+        g.detail = g.state == sports::kPre ? LocalStart(g.when) : Str(status ? At(*status, "type.shortDetail") : nullptr);
+        const J* sides = At(*pick, "competitors");
+        size_t n = sides && sides->type == J::kArr ? sides->a.size() : 0;
+        if (n == 2) { // two sides: home first, as the scorelines read
+            const J* first = &sides->a[0];
+            const J* second = &sides->a[1];
+            if (Str(At(*second, "homeAway")) == L"home") std::swap(first, second);
+            g.a = SideName(*first), g.as = SideScore(*first), g.b = SideName(*second), g.bs = SideScore(*second);
+            auto periods = [](const J& side) { // quarters, periods, innings or sets
+                std::wstring s;
+                if (const J* ls = At(side, "linescores"); ls && ls->type == J::kArr)
+                    for (const J& l : ls->a) s += (s.empty() ? L"" : L" ") + std::to_wstring((int)Num(At(l, "value")));
+                return s;
+            };
+            g.aLines = periods(*first), g.bLines = periods(*second);
+            g.aCode = Str(At(*first, "team.abbreviation")), g.bCode = Str(At(*second, "team.abbreviation")); // "BAR", "RMA": players keep their short names
+            g.venue = Str(At(*pick, "venue.fullName"));
+            if (g.a.empty() || g.b.empty()) continue; // nobody named yet: a draw's empty slot, nothing to show
+        } else { // a field: the event, and who leads it
+            g.solo = true;
+            g.a = Str(At(ev, "shortName"));
+            if (g.a.empty()) g.a = Str(At(ev, "name"));
+            if (comps.size() > 1)
+                if (std::wstring kind = Str(At(*pick, "type.abbreviation")); !kind.empty()) g.a += L"  ·  " + kind;
+            const J* lead = nullptr;
+            for (size_t i = 0; i < n && !lead; ++i)
+                if (Num(At(sides->a[i], "order")) == 1) lead = &sides->a[i];
+            if (!lead && n > 0) lead = &sides->a[0];
+            if (lead && g.state != sports::kPre) g.b = (g.state == sports::kFinal ? L"Won by " : L"Leading: ") + SideName(*lead);
+        }
+        out.push_back(std::move(g));
+    }
+}
+
+Series FetchSport(const std::string& path) {
+    Series out;
+    const sports::League* league = sports::Find(path);
+    if (!league) return Fail(L"Unknown league");
+    out.text = league->name;
+    std::vector<sports::Game> games;
+    std::wstring base = L"https://site.api.espn.com/apis/site/v2/sports/" + Wide(path) + L"/scoreboard";
+    Resp r = Http(base);
+    J doc;
+    if (r.status != 200 || !ParseBody(r.body, doc)) return Fail(r.status == 200 ? std::wstring(kUnreadable) : Why(r.status));
+    ReadEvents(doc, games);
+    bool played = std::any_of(games.begin(), games.end(), [](const sports::Game& g) { return g.state != sports::kPre; });
+    constexpr int kLookBack = 14; // nothing on today and nothing done: the latest results, a day at a time back to the last that had some
+    for (int day = 1; !played && day <= kLookBack && !gQuit.load(); ++day) {
+        Resp back = Http(base + L"?dates=" + Ymd(UnixNow() - day * kDaySec));
+        J past;
+        if (back.status != 200 || !ParseBody(back.body, past)) continue;
+        std::vector<sports::Game> before;
+        ReadEvents(past, before);
+        for (sports::Game& g : before)
+            if (g.state == sports::kFinal) games.push_back(std::move(g)), played = true;
+    }
+    for (const sports::Game& g : sports::Order(std::move(games))) out.rows.push_back(sports::Encode(g));
+    out.value = (double)std::count_if(out.rows.begin(), out.rows.end(), [](const std::wstring& row) { return sports::Decode(row).state == sports::kLive; }); // how many are live
+    out.ok = true;
+    return out;
+}
+
+Series FetchFixtures(const std::string& path) { // a league around today: the past week's results and its coming days
+    Series out;
+    const sports::League* league = sports::Find(path);
+    if (!league || path == "chess") return Fail(L"Unknown league");
+    out.text = league->name;
+    constexpr int kBackDays = 2, kAheadDays = 7; // espn takes one day at a time: ranges are refused
+    constexpr size_t kEnoughAhead = 16, kPerDay = 40;
+    std::wstring base = L"https://site.api.espn.com/apis/site/v2/sports/" + Wide(path) + L"/scoreboard?dates=";
+    std::vector<sports::Game> games;
+    int answered = 0, lastStatus = 0;
+    for (int day = -kBackDays; day <= kAheadDays && !gQuit.load(); ++day) {
+        if (day == 0) continue; // today is the live feed's
+        size_t ahead = (size_t)std::count_if(games.begin(), games.end(), [](const sports::Game& g) { return g.state == sports::kPre; });
+        if (day > 0 && ahead >= kEnoughAhead) break; // plenty coming: no need to ask further out
+        Resp r = Http(base + Ymd(UnixNow() + day * kDaySec));
+        lastStatus = r.status;
+        J doc;
+        if (r.status != 200 || !ParseBody(r.body, doc)) continue;
+        ++answered;
+        ReadEvents(doc, games, games.size() + kPerDay);
+    }
+    if (!answered) return Fail(Why(lastStatus));
+    games.erase(std::remove_if(games.begin(), games.end(), [](const sports::Game& g) { return g.state == sports::kLive; }), games.end()); // what's on is the live feed's
+    for (const sports::Game& g : sports::Order(std::move(games))) out.rows.push_back(sports::Encode(g));
+    out.ok = true;
+    return out;
+}
+
+Series FetchChess() { // the official broadcasts on lichess: what's being played now, the women's events among them by name
+    Series out;
+    out.text = L"Chess broadcasts";
+    Resp r = Http(L"https://lichess.org/api/broadcast/top?page=1");
+    J doc;
+    if (r.status != 200 || !ParseBody(r.body, doc)) return Fail(r.status == 200 ? std::wstring(kUnreadable) : Why(r.status));
+    constexpr size_t kMost = 12;
+    std::vector<sports::Game> games;
+    if (const J* active = At(doc, "active"); active && active->type == J::kArr)
+        for (const J& b : active->a) {
+            if (games.size() >= kMost) break;
+            sports::Game g;
+            g.solo = true;
+            g.a = Str(At(b, "tour.name"));
+            g.b = Str(At(b, "round.name"));
+            bool on = At(b, "round.ongoing") && At(b, "round.ongoing")->b;
+            g.state = on ? sports::kLive : sports::kPre;
+            g.when = Num(At(b, "round.startsAt")) / 1000;
+            g.detail = on ? L"Live" : g.when > 0 ? LocalStart(g.when) : L"";
+            if (!g.a.empty()) games.push_back(std::move(g));
+        }
+    for (const sports::Game& g : sports::Order(std::move(games))) out.rows.push_back(sports::Encode(g));
     out.ok = true;
     return out;
 }
@@ -787,6 +1004,8 @@ State& S() {
 
 ULONGLONG Pace(const std::string& id) {
     if (id.rfind("quote:", 0) == 0) return kEveryQuote;
+    if (id == "sport:chess" || id.rfind("next:", 0) == 0) return kEverySky; // fixtures, results and broadcasts don't move by the minute
+    if (id.rfind("sport:", 0) == 0) return kEverySport;
     if (id.rfind("metric", 0) == 0) return kEveryMetric;
     if (id.rfind("rates", 0) == 0) return kEveryRates;
     if (id.rfind("sky", 0) == 0) return kEverySky;
@@ -796,6 +1015,9 @@ ULONGLONG Pace(const std::string& id) {
 
 Series Fetch(const std::string& id) {
     if (id.rfind("quote:", 0) == 0) return FetchQuote(id.substr(6));
+    if (id == "sport:chess") return FetchChess();
+    if (id.rfind("next:", 0) == 0) return FetchFixtures(id.substr(5));
+    if (id.rfind("sport:", 0) == 0) return FetchSport(id.substr(6));
     if (id == "metric") {
         std::wstring p = Setting("metric.id");
         return FetchMetric(p.empty() ? L"BTC-USD" : p);
@@ -906,6 +1128,24 @@ void Loop() {
 
 }
 
+Phase MarketPhase(const Series& q) {
+    if (q.more.size() < kQuoteMore || q.more[kOpensAt] <= 0) return kClosed;
+    double now = (double)UnixNow();
+    if (now >= q.more[kOpensAt] && now < q.more[kClosesAt]) return kOpen;
+    if (q.more[kPreAt] > 0 && now >= q.more[kPreAt] && now < q.more[kOpensAt]) return kPreMarket;
+    if (q.more[kPostAt] > 0 && now >= q.more[kClosesAt] && now < q.more[kPostAt]) return kAfterHours;
+    return kClosed; // overnight, the weekend, a holiday: its last day's sessions are behind it
+}
+
+const wchar_t* PhaseName(Phase p) {
+    switch (p) {
+    case kOpen: return L"Open";
+    case kPreMarket: return L"Pre-market";
+    case kAfterHours: return L"After hours";
+    default: return L"Closed";
+    }
+}
+
 std::wstring Setting(const char* key) { return sys::ReadText(SettingName(key).c_str()); }
 void SetSetting(const char* key, const std::wstring& value) { sys::SaveText(SettingName(key).c_str(), value); }
 
@@ -953,12 +1193,10 @@ void Want(const std::vector<std::string>& ids) {
     }
     if (any && !s.th.joinable()) {
         if (!s.wake) s.wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-        s.stop.store(false);
+        s.stop.store(false), gQuit.store(false);
         s.th = std::thread(Loop);
-    } else if (!any && s.th.joinable()) {
-        Stop();
     } else if (s.wake) {
-        SetEvent(s.wake);
+        SetEvent(s.wake); // nothing wanted: it idles, never joined here, so a fetch under way can't hold the ui; Stop at exit ends it
     }
 }
 
@@ -974,7 +1212,7 @@ void Refresh(const std::string& id) {
 void Stop() {
     State& s = S();
     if (!s.th.joinable()) return;
-    s.stop.store(true);
+    s.stop.store(true), gQuit.store(true);
     SetEvent(s.wake);
     s.th.join();
 }

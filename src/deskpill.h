@@ -28,7 +28,7 @@ public:
     bool Create();
     void Want(bool up, HMONITOR on); // the drawer's verdict: the desktop is what's under it, or not
     bool Up() const { return wantUp; } // it's there or on its way: the island steps aside
-    void Edit(HMONITOR on);
+    void Edit(HMONITOR on, int from = Model::kEditFromLong); // from: which pill was right clicked, for the tab it opens on
     void Studio(HMONITOR on); // the same stage, the wallpaper filling the screen, for arranging the widgets
     bool Editing() const { return editing || leaving; }
     bool MouseOn() const; // the cursor's on its window
@@ -61,10 +61,17 @@ private:
         } shape[2]; // on the desktop, not on the desktop
         int edge = 0;
         float pos = 500, thick = 30;
-        bool apps = false;
+        bool desk = true; // the long pill on the desktop; false: the regular one there
+        bool apps = false; // the long pill when not on desktop; false: the regular one there
         int fill = 0, fillApps = 0; // its body on the desktop, and over an app
-        std::vector<int> items;
+        std::vector<int> items; // the set showing now
+        std::vector<int> itemsOther; // the other context's set, while split
+        bool split = false; // its own widgets when not on desktop
     };
+    int itemsCtx = 0; // which context spec.items holds now: 0 the desktop's, 1 over apps
+    void SyncItems(); // the set for the context showing: swapped in as it changes
+    const std::vector<int>& DeskSet() const { return itemsCtx == 0 ? spec.items : spec.itemsOther; }
+    const std::vector<int>& AppsSet() const { return itemsCtx == 0 ? spec.itemsOther : spec.items; }
     struct Pose { // where it's drawn: its edge side's middle, turned to its edge
         float ax = 0, ay = 0, angle = 0, len = 0, thick = 0, flat = 0;
     };
@@ -135,6 +142,11 @@ private:
     D2D1_RECT_F BarRect() const;
     std::vector<int> Offered() const;
     void DrawFloater(const Theme& t);
+    bool TabLong() const { return previewApps ? spec.apps : spec.desk && model.pillDesk; } // the tab picked wears the long pill: there's something to arrange
+    bool askLong = false; // opened from the regular pill with the long one nowhere: it asks before anything shows
+    void DrawAsk(const Theme& t);
+    void DrawBarHead(const Theme& t, const D2D1_RECT_F& bar); // the panel's top row: place, form, own widgets, undo, reset, done
+    bool BarButton(const Theme& t, const char* key, const D2D1_RECT_F& r, const wchar_t* label, bool primary);
     void DrawStudio(const Theme& t);
 
     static constexpr int kEscKey = 0x52B1; // while editing: the pill never takes the keyboard, a hotkey reaches it anyway

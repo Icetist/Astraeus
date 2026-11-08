@@ -148,7 +148,7 @@ bool Drawer::Create(HINSTANCE instance) {
 }
 
 void Drawer::ShowIsland() {
-    if (desk && model.deskPill && model.deskApps && !hidden && !opened && !peeking) { // the long pill takes this call: the small one never drops
+    if (desk && model.deskApps && !(deskView && !model.LongPill()) && !hidden && !opened && !peeking) { // over apps the long pill takes this call: the small one never drops. the desktop keeps its own form
         longHeld = true;
         SyncDesk();
         SetTimer(hwnd, kLongTimer, model.IslandLingerMs((UINT)cfg.closeMs), nullptr);
@@ -316,7 +316,8 @@ void Drawer::Open() {
         model.OnOpen();
         model.SetLive(true, page == Model::kPgSystem, page == Model::kPgNetwork); // fast polling only while visible, the process list only on the system page, latency only on the network page
     }
-    if (!tourSeen && model.tourNext && tourStep < 0) TourStart(); // the first time the panel opens this launch, while its switch is on
+    if (model.longPillNotice && tourStep < 0) noticeUp = true; // the update's card comes before any tour
+    else if (!tourSeen && model.tourNext && tourStep < 0) TourStart(); // the first time the panel opens this launch, while its switch is on
     Resize(Depth() + overshoot, true); // grow first so bounce isn't clipped
     spring.target = Depth();
     spring.damp = model.reduceMotion ? 1.0f : 0.62f; // underdamped, drips open with a bounce; calm: it just arrives
@@ -480,7 +481,7 @@ void Drawer::OnSecond() {
     RetryHud();
     if (deskOn != model.WatchesDesk()) WatchDesk(); // the switch in settings was flipped
     if (deskOn && (model.appsTheme != 0) != lookAppsOn) lookAppsOn = model.appsTheme != 0, OnDeskTimer(); // the over-apps theme: on now, not at the next window event
-    if (deskOn && (model.appsTheme || model.deskPill) && !Unseen() && ++deskRecheck >= kDeskRecheckSecs) deskRecheck = 0, OnDeskTimer();
+    if (deskOn && (model.appsTheme || model.AnyLong()) && !Unseen() && ++deskRecheck >= kDeskRecheckSecs) deskRecheck = 0, OnDeskTimer();
     SyncThemeNow();
     SyncDesk();
     if (desk && !Unseen()) desk->Second(); // locked or dark: no screen reads and no refreshes for nobody
@@ -794,7 +795,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             else if (islandNext) ShowIsland(); // an app below: the pill first, a tap opens the panel
             else Open();
         } else if (wp == kCloseTimer) {
-            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && Stays()) && !(opened && Pinned()) && tourStep < 0) Close(); // the tour keeps it open until it's done or skipped
+            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && Stays()) && !(opened && Pinned()) && tourStep < 0 && !noticeUp) Close(); // the tour and the update's card keep it open until they're done
         } else if (wp == kTrimTimer) {
             if (island && !opened && !peeking && !dragging && !(devWide && RenewDev())) gfx::GiveBack(); // a resting pill, only its bars move: idle pages go back; after the panel, a fresh device too. d2d's caches stay: cleared under live brushes, the media page's glows came back flat
         } else if (wp == kReleaseTimer) {
@@ -1016,7 +1017,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case kDeskEditMsg:
         if (wp) model.studioKind = (int)wp, WidgetStudio();
-        else DeskEdit();
+        else DeskEdit((int)lp);
         return 0;
     case kShelfMsg:
         if (wp == 1) ShelfPaste();
@@ -1228,6 +1229,8 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             input.mouse = ToDip(lp);
             input.rclick = true;
             Redraw();
+        } else if (island && !peeking && !dragging && desk && !stage) { // the regular pill: into the long pill's editor, which asks first if neither place wears it
+            PostMessageW(hwnd, kDeskEditMsg, 0, deskView ? Model::kEditFromDesk : Model::kEditFromApps);
         }
         return 0;
     case WM_APP_RADIOS:

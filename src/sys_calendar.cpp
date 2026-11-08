@@ -9,6 +9,8 @@
 #include <atomic>
 #include <ctime>
 #include <mutex>
+
+#include <shlobj.h>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -563,6 +565,103 @@ void Calendars::Sync(HWND notify, UINT msg, int maxAge) {
     }).detach();
 }
 
+namespace {
+std::mutex mineLock; // your own events: read once from their file, written as one is added
+std::vector<Event> mine;
+bool mineRead = false;
+
+std::wstring MinePath() {
+    PWSTR base = nullptr;
+    std::wstring path;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &base))) path = std::wstring(base) + L"\\Astraeus\\my-events.txt";
+    CoTaskMemFree(base);
+    return path;
+}
+
+std::string Utf8(const std::wstring& s) {
+    int n = WideCharToMultiByte(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0, nullptr, nullptr);
+    std::string out(n, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, s.c_str(), (int)s.size(), out.data(), n, nullptr, nullptr);
+    return out;
+}
+
+std::wstring Wide16(const std::string& s) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
+    std::wstring out(n, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), out.data(), n);
+    return out;
+}
+
+void ReadMine() { // the caller holds mineLock; "start\tend\ttitle\twhere" a line
+    if (mineRead) return;
+    mineRead = true;
+    HANDLE f = CreateFileW(MinePath().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    std::string buf(1 << 20, '\0');
+    DWORD got = 0;
+    ReadFile(f, buf.data(), (DWORD)buf.size(), &got, nullptr);
+    CloseHandle(f);
+    buf.resize(got);
+    for (size_t a = 0; a < buf.size();) {
+        size_t e = (std::min)(buf.find('\n', a), buf.size());
+        std::string line = buf.substr(a, e - a);
+        size_t t1 = line.find('\t'), t2 = t1 == std::string::npos ? t1 : line.find('\t', t1 + 1), t3 = t2 == std::string::npos ? t2 : line.find('\t', t2 + 1);
+        if (t3 != std::string::npos) {
+            Event ev;
+            ev.start = _atoi64(line.c_str()), ev.end = _atoi64(line.c_str() + t1 + 1);
+            ev.title = Wide16(line.substr(t2 + 1, t3 - t2 - 1)), ev.where = Wide16(line.substr(t3 + 1));
+            if (ev.start > 0) mine.push_back(std::move(ev));
+        }
+        a = e + 1;
+    }
+}
+
+std::vector<Event> MineIn(int64_t s, int64_t e) {
+    std::lock_guard g(mineLock);
+    ReadMine();
+    std::vector<Event> out;
+    for (const Event& ev : mine)
+        if (ev.start < e && ev.end > s) out.push_back(ev);
+    return out;
+}
+
+bool SaveMine() { // the caller holds mineLock; written aside and swapped in, so a crash never leaves half a file
+    std::string out;
+    for (const Event& o : mine) out += std::to_string(o.start) + "\t" + std::to_string(o.end) + "\t" + Utf8(o.title) + "\t" + Utf8(o.where) + "\n";
+    std::wstring path = MinePath(), tmp = path + L".new";
+    HANDLE f = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    DWORD wrote = 0;
+    bool ok = WriteFile(f, out.data(), (DWORD)out.size(), &wrote, nullptr) && wrote == out.size();
+    CloseHandle(f);
+    return ok && MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+}
+}
+
+bool AddMine(const Event& ev) {
+    std::lock_guard g(mineLock);
+    ReadMine();
+    for (const Event& o : mine)
+        if (o.start == ev.start && o.title == ev.title) return true; // already in
+    mine.push_back(ev);
+    return SaveMine();
+}
+
+bool HasMine(int64_t start, const std::wstring& title) {
+    std::lock_guard g(mineLock);
+    ReadMine();
+    return std::any_of(mine.begin(), mine.end(), [&](const Event& o) { return o.start == start && o.title == title; });
+}
+
+bool RemoveMine(int64_t start, const std::wstring& title) {
+    std::lock_guard g(mineLock);
+    ReadMine();
+    auto gone = std::remove_if(mine.begin(), mine.end(), [&](const Event& o) { return o.start == start && o.title == title; });
+    if (gone == mine.end()) return true; // not there: nothing to write
+    mine.erase(gone, mine.end());
+    return SaveMine();
+}
+
 std::vector<Event> Calendars::Day(int y, int m, int d) const {
     Zones z;
     int ny, nm, nd;
@@ -576,13 +675,20 @@ std::vector<Event> Calendars::Day(int y, int m, int d) const {
             if (ev.end > s || (ev.end == ev.start && ev.start >= s)) out.push_back(ev);
         }
     }
-    std::stable_sort(out.begin(), out.end(), [](const Event& a, const Event& b) { return a.allDay > b.allDay; });
+    for (Event& ev : MineIn(s, e)) out.push_back(std::move(ev)); // your own, beside them
+    std::stable_sort(out.begin(), out.end(), [](const Event& a, const Event& b) { return a.allDay != b.allDay ? a.allDay > b.allDay : a.start < b.start; });
     return out;
 }
 
 bool Calendars::HasEvents(int y, int m, int d) const {
-    std::lock_guard g(impl->lock);
-    return impl->days.count(DaysFromCivil(y, m, d)) != 0;
+    {
+        std::lock_guard g(impl->lock);
+        if (impl->days.count(DaysFromCivil(y, m, d)) != 0) return true;
+    }
+    Zones z;
+    int ny, nm, nd;
+    CivilFromDays(DaysFromCivil(y, m, d) + 1, ny, nm, nd);
+    return !MineIn(z.ToUnix(L"", y, m, d, 0, 0, 0), z.ToUnix(L"", ny, nm, nd, 0, 0, 0)).empty(); // a game added for that day
 }
 
 bool Calendars::LooksLikeCalendar(const std::wstring& text, std::wstring* url) {

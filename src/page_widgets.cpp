@@ -34,6 +34,10 @@ double lastSwap = 0;
 int visit = 0; // the page visit all that belongs to
 float boardScroll = 0, studioScroll = 0, galScroll = 0;
 int galCat = -1; // -1: every category
+int shownKind = -1, fromKind = -1; // the widget open in full, kept while it folds away; the one whose tile it grew out of
+D2D1_RECT_F openFrom{}; // that tile, where it was on the board
+int scoresKind = -1; // the scores tile, where it was last drawn: the wheel over it scrolls its games
+D2D1_RECT_F scoresAt{};
 History hist; // the editor's undo: the board's widgets in order, then each one's size
 
 History::Snap Snap(const Model& m) {
@@ -143,6 +147,7 @@ faces::Host MakeHost(Model& m) {
     h.bright = m.brightPct;
     h.ctx = &m;
     h.setBright = [](void* self, int percent) { static_cast<Model*>(self)->SetBright(percent / 100.0f); };
+    h.resync = [](void* self) { static_cast<Model*>(self)->SyncFaces(); }; // new leagues followed: fetched from now
     return h;
 }
 
@@ -287,6 +292,10 @@ void Board(PageCtx& p, const D2D1_RECT_F& view, const faces::Host& host, bool ed
     int rows = 0;
     std::vector<Cell> laid = Pack(order, m, cols, rows);
     float content = rows * (kCellH + kGap) - kGap;
+    if (!editing && scoresKind >= 0 && Inside(scoresAt, in.mouse) && Inside(view, in.mouse) && faces::Wheel(scoresKind, 0)) { // over the scores: the wheel goes through its games, not the board
+        if (float n = ui.Wheel(scoresAt); n != 0) faces::Wheel(scoresKind, n), ui.Wake();
+    }
+    scoresKind = -1; // found again as the tiles draw
     float scroll = Scroll(ui, editing ? "wg.studio.scroll" : "wg.scroll", editing ? studioScroll : boardScroll, view, content);
     auto home = [&](const Cell& g) { return Rect(g.x * (cw + kGap), g.y * (kCellH + kGap), g.w * cw + (g.w - 1) * kGap, g.h * kCellH + (g.h - 1) * kGap); }; // from the board's corner, before scrolling
     c.PushClip(view);
@@ -308,8 +317,9 @@ void Board(PageCtx& p, const D2D1_RECT_F& view, const faces::Host& host, bool ed
             Ui::Hit h = ui.Button(Ui::Id("wg.card", kind), r);
             ui.Name(f.name);
             if (h.hover) c.Stroke(r, kRadius, t.accent.Alpha(0.5f), 1.2f);
-            if (h.clicked) picked = kind;
-            if (ui.RClick(r)) picked = kind, right = true;
+            if (h.clicked) picked = kind, openFrom = r;
+            if (!strcmp(f.key, "sport.scores")) scoresKind = kind, scoresAt = r; // the wheel over it scrolls its games, next frame
+            if (ui.RClick(r)) picked = kind, right = true, openFrom = r;
             continue;
         }
         bool over = held < 0 && Inside(r, in.mouse) && Inside(view, in.mouse); // the tile stays itself: its controls come with the mouse
@@ -384,6 +394,7 @@ void Board(PageCtx& p, const D2D1_RECT_F& view, const faces::Host& host, bool ed
             next.insert(next.begin() + moveTo, moved);
             m.PlaceFaces(next);
         } else if (picked >= 0) {
+            fromKind = picked; // its details grow out of this tile, and go back into it
             DoAct(m, faces::Click(picked, right, host), picked);
         }
     }
@@ -407,30 +418,73 @@ void DrawWidgetsPage(PageCtx& p) {
     faces::Host host = MakeHost(m);
     faces::state::TimerCheck();
 
-    if (m.facePanel >= 0) { // one widget, in full
-        w::Card(ui, t, a);
-        D2D1_RECT_F in = Inset(a, 22, 18);
-        if (w::IconBtn(ui, t, Ui::Id("wg.back"), {a.right - 28, a.top + 26}, 30, glyph::Close, 18)) {
-            m.CloseFace();
+    constexpr float kOpenRate = 11, kSink = 0.035f, kFaceGone = 0.4f, kContentFrom = 0.45f, kContentRise = 14, kOpenRadius = 22; // a widget opening in full: its tile grows over the board
+    float open = ui.Smooth(Ui::Id("wg.open"), m.facePanel >= 0 ? 1.0f : 0, kOpenRate);
+    if (m.facePanel >= 0) shownKind = m.facePanel;
+    else if (open < 0.002f) shownKind = -1;
+    ID2D1RenderTarget* rt = c.Target();
+    bool blocked = ui.Blocked(); // a sheet or the tour over the page: nothing here takes input either way
+    auto board = [&] {
+        if (m.faceOn.empty()) {
+            w::Card(ui, t, a);
+            float mid = (a.top + a.bottom) / 2;
+            c.Icon(glyph::Dashboard, {(a.left + a.right) / 2, mid - 40}, 34, t.textDim);
+            c.Text(L"No widgets yet", Rect(a.left, mid - 14, Width(a), 24), Weight::Medium, 16, t.text, Align::Center);
+            c.Text(L"Clocks, money, stocks, screen time and more", Rect(a.left, mid + 12, Width(a), 18), Weight::Light, 12, t.textDim, Align::Center);
+            p.spotAdd = Rect((a.left + a.right) / 2 - 70, mid + 44, 140, 32);
+            if (Act(ui, t, Ui::Id("wg.pick"), p.spotAdd, L"Add widgets", true, false, true)) m.studioAsk = Model::kStudioWidgets;
             return;
         }
-        faces::Panel(ui, t, m.facePanel, {in.left, in.top, in.right - 36, in.bottom}, host);
-        if (ui.RClick(a)) m.CloseFace();
-        return;
+        p.spotAdd = Rect(a.right - kBarBtnW, a.top + 2, kBarBtnW, kBarBtnH);
+        if (Act(ui, t, Ui::Id("wg.add"), p.spotAdd, L"Add widgets", true, false, true)) m.studioAsk = Model::kStudioWidgets;
+        Board(p, view, host, false);
+    };
+    if (open < 0.999f) { // the board, settling back as a widget opens over it
+        bool behind = open > 0.001f;
+        D2D1_MATRIX_3X2_F was;
+        rt->GetTransform(&was);
+        if (behind) {
+            float k = 1 - kSink * open;
+            D2D1_POINT_2F mid = {(a.left + a.right) / 2, (a.top + a.bottom) / 2};
+            rt->SetTransform(D2D1::Matrix3x2F::Scale(k, k, mid) * *D2D1::Matrix3x2F::ReinterpretBaseType(&was));
+            rt->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), 1 - open), nullptr);
+            ui.Block(true); // it can't be touched while the open one moves over it
+        }
+        board();
+        if (behind) {
+            ui.Block(blocked);
+            rt->PopLayer();
+            rt->SetTransform(was);
+        }
     }
-    if (m.faceOn.empty()) {
-        w::Card(ui, t, a);
-        float mid = (a.top + a.bottom) / 2;
-        c.Icon(glyph::Dashboard, {(a.left + a.right) / 2, mid - 40}, 34, t.textDim);
-        c.Text(L"No widgets yet", Rect(a.left, mid - 14, Width(a), 24), Weight::Medium, 16, t.text, Align::Center);
-        c.Text(L"Clocks, money, stocks, screen time and more", Rect(a.left, mid + 12, Width(a), 18), Weight::Light, 12, t.textDim, Align::Center);
-        p.spotAdd = Rect((a.left + a.right) / 2 - 70, mid + 44, 140, 32);
-        if (Act(ui, t, Ui::Id("wg.pick"), p.spotAdd, L"Add widgets", true, false, true)) m.studioAsk = Model::kStudioWidgets;
-        return;
+    if (shownKind < 0 || open <= 0.001f) return;
+    D2D1_RECT_F from = fromKind == shownKind && Width(openFrom) > 1 ? openFrom : Inset(a, Width(a) * 0.3f, Height(a) * 0.3f); // opened from elsewhere: out of the middle
+    D2D1_RECT_F r = {from.left + (a.left - from.left) * open, from.top + (a.top - from.top) * open, from.right + (a.right - from.right) * open, from.bottom + (a.bottom - from.bottom) * open};
+    c.Glow({(r.left + r.right) / 2, (r.top + r.bottom) / 2 + 10}, Width(r) * 0.6f, Height(r) * 0.6f, Color{0, 0, 0, 0.35f * open}); // it lifts off the board
+    w::Card(ui, t, r, kRadius + (kOpenRadius - kRadius) * open);
+    float face = 1 - anim::Clamp01(open / kFaceGone); // its tile's face, gone as it grows
+    if (face > 0.01f) {
+        rt->PushLayer(D2D1::LayerParameters(r, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), face), nullptr);
+        DrawFace(c, t, shownKind, r, host);
+        rt->PopLayer();
     }
-    p.spotAdd = Rect(a.right - kBarBtnW, a.top + 2, kBarBtnW, kBarBtnH);
-    if (Act(ui, t, Ui::Id("wg.add"), p.spotAdd, L"Add widgets", true, false, true)) m.studioAsk = Model::kStudioWidgets;
-    Board(p, view, host, false);
+    float show = anim::Clamp01((open - kContentFrom) / (1 - kContentFrom)); // the details, once it's mostly open: they drift up into place
+    if (m.facePanel < 0 || show <= 0.01f) return; // folding away: only the card goes back into its tile
+    c.PushClip(r);
+    D2D1_MATRIX_3X2_F was;
+    rt->GetTransform(&was);
+    rt->SetTransform(D2D1::Matrix3x2F::Translation(0, (1 - show) * kContentRise) * *D2D1::Matrix3x2F::ReinterpretBaseType(&was));
+    rt->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), show), nullptr);
+    bool live = show > 0.9f && !blocked;
+    ui.Block(!live);
+    D2D1_RECT_F in = Inset(a, 22, 18);
+    bool shut = w::IconBtn(ui, t, Ui::Id("wg.back"), {a.right - 28, a.top + 26}, 30, glyph::Close, 18);
+    if (!shut) faces::Panel(ui, t, m.facePanel, {in.left, in.top, in.right - 36, in.bottom}, host);
+    ui.Block(blocked);
+    rt->PopLayer();
+    rt->SetTransform(was);
+    c.PopClip();
+    if (live && (shut || ui.RClick(a))) m.CloseFace(); // back into its tile
 }
 
 void DrawWidgetStudio(PageCtx& p) {
