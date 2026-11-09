@@ -184,6 +184,8 @@ float marketScroll = 0; // the markets list, scrolled
 int sportTab = 0, sportPick = 0; // the games or the leagues; the sport whose leagues are listed
 constexpr float kEndRoom = 28; // a scrolled list goes this far past its last item: it comes clear of the card's rounded foot
 float gameScroll = 0, leagueScroll = 0, leagueH = 0; // the games and the leagues, scrolled; how tall the leagues ran last frame
+sports::Game openGame; // the game opened, kept fresh from the lists while it's in them
+float matchScroll = 0, matchH = 0; // its detail, scrolled; how tall it ran last frame
 
 bool Pale(const Theme& t) { return (t.text.r + t.text.g + t.text.b) < 1.2f; } // dark ink: a light look
 Color TrendInk(const Theme& t, double change) { return change > 0.0005 ? Color::Rgb(Pale(t) ? kUpPale : kUp) : change < -0.0005 ? Color::Rgb(Pale(t) ? kDownPale : kDown) : t.textDim; }
@@ -342,13 +344,140 @@ void Forecast(Canvas& c, const Theme& t, const D2D1_RECT_F& r, float& y, const H
     y = top + kForecastH;
 }
 
+void CloseMatch(const Host& h) {
+    OpenMatch().clear();
+    if (h.resync) h.resync(h.ctx); // its feed is let go
+}
+
+void OpenGame(const sports::Game& g, const Host& h) {
+    std::string id = sports::MatchId(g);
+    if (id.empty()) return;
+    openGame = g;
+    OpenMatch() = id;
+    matchScroll = 0;
+    if (h.resync) h.resync(h.ctx); // its feed is wanted from now
+    feeds::Refresh(id);
+}
+
+void Match(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float y, float bottom, const Host& h) { // one game in full: its header, what's happened, its numbers, its lists
+    Canvas& c = ui.C();
+    constexpr float kBackW = 104, kTopH = 26, kHeadH = 58, kTitleH = 22, kEventH = 22, kWhenW = 46, kMarkW = 16, kStatH = 30, kBarH = 4, kRowH = 22, kPosW = 40, kGap = 12;
+    constexpr size_t kRankChars = 4; // "12", "FP1", "Qual": a short first column
+    const sports::Game& g = openGame;
+    feeds::Series s = feeds::Get(OpenMatch());
+    sports::Detail d = sports::DecodeDetail(s.rows);
+    bool live = g.state == sports::kLive;
+    Color red = Color::Rgb(kDown);
+    if (w::Chip(ui, t, Ui::Id("fc.sp.back"), Rect(r.left, y, kBackW, kTopH), L"‹  All games", false)) {
+        CloseMatch(h);
+        return;
+    }
+    std::wstring status = d.status.empty() ? g.detail : d.status;
+    c.Text(status, Rect(r.left + kBackW + 10, y, Width(r) - kBackW - 10, kTopH), Weight::Medium, 11.5f, live ? red : t.textDim, Align::Right);
+    y += kTopH + 8;
+    D2D1_RECT_F head = Rect(r.left, y, Width(r), kHeadH);
+    c.Fill(head, 14, live ? red.Alpha(0.07f) : t.text.Alpha(0.04f));
+    if (g.solo) {
+        c.Text(g.a, Rect(head.left + 14, head.top + 9, Width(head) - 28, 20), Weight::Semi, 14, t.text);
+        c.Text(g.b, Rect(head.left + 14, head.top + 31, Width(head) - 28, 18), Weight::Regular, 11.5f, t.textDim);
+    } else { // the two sides across the score, as a scoreline reads
+        std::wstring score = g.state == sports::kPre ? L"v" : g.as + L"  –  " + g.bs;
+        float sw = c.Measure(score, Weight::Semi, 22) + 24, mid = (head.left + head.right) / 2;
+        c.Text(score, Rect(mid - sw / 2, head.top, sw, kHeadH), Weight::Semi, 22, live ? red : t.text, Align::Center);
+        c.Text(g.a, Rect(head.left + 12, head.top, mid - sw / 2 - head.left - 16, kHeadH), Weight::Semi, 13, t.text, Align::Right);
+        c.Text(g.b, Rect(mid + sw / 2 + 4, head.top, head.right - 12 - mid - sw / 2 - 4, kHeadH), Weight::Semi, 13, t.text);
+    }
+    if (live) ui.KeepAlive();
+    y += kHeadH + kGap;
+    D2D1_RECT_F view = {r.left - 4, y, r.right + 4, bottom};
+    if (!s.ok || (d.events.empty() && d.stats.empty() && d.blocks.empty())) {
+        c.Text(!s.ok ? (s.error.empty() ? L"Fetching…" : s.error) : L"Nothing more to show for this game yet", Rect(r.left, y, Width(r), 20), Weight::Regular, 12, t.textDim);
+        return;
+    }
+    float most = (std::max)(0.0f, matchH + kEndRoom - Height(view));
+    if (float n = ui.Wheel(view); n != 0) matchScroll = (std::clamp)(matchScroll - n * 60, 0.0f, most);
+    matchScroll = (std::min)(matchScroll, most);
+    float shown = ui.Smooth(Ui::Id("fc.sp.mscroll"), matchScroll, 18), start = y;
+    c.PushClip(view);
+    float gy = y - shown;
+    auto title = [&](const std::wstring& text) {
+        c.Text(text, Rect(r.left, gy, Width(r), kTitleH - 4), Weight::Semi, 11, t.accentHi);
+        gy += kTitleH;
+    };
+    if (!d.events.empty()) { // home's moments down the left, away's down the right, each at its minute
+        title(L"Timeline");
+        for (const sports::Detail::Event& e : d.events) {
+            float cy = gy + kEventH / 2;
+            bool right = e.side == 1;
+            float markX = right ? r.right - kWhenW - kMarkW / 2 : r.left + kWhenW + kMarkW / 2;
+            if (e.kind == L"yellow" || e.kind == L"red") c.Fill(Rect(markX - 3.5f, cy - 5, 7, 10), 1.5f, Color::Rgb(e.kind == L"red" ? 0xEF4444 : 0xFACC15));
+            else c.Dot({markX, cy}, e.kind == L"goal" ? 4.0f : 3.0f, e.kind == L"goal" ? t.accentHi : t.textDim);
+            Weight w = e.kind == L"goal" || e.kind == L"score" ? Weight::Medium : Weight::Regular;
+            if (right) {
+                c.Text(e.when, Rect(r.right - kWhenW + 6, gy, kWhenW - 6, kEventH), Weight::Medium, 11, t.textDim);
+                c.Text(e.text, Rect(r.left, gy, markX - kMarkW / 2 - 4 - r.left, kEventH), w, 12, t.text, Align::Right);
+            } else {
+                c.Text(e.when, Rect(r.left, gy, kWhenW - 6, kEventH), Weight::Medium, 11, t.textDim, Align::Right);
+                c.Text(e.text, Rect(markX + kMarkW / 2 + 4, gy, r.right - markX - kMarkW / 2 - 4, kEventH), w, 12, t.text);
+            }
+            gy += kEventH;
+        }
+        gy += kGap;
+    }
+    if (!d.stats.empty()) { // each number side by side, a bar between them for who had more
+        title(L"Stats");
+        for (const sports::Detail::Stat& st : d.stats) {
+            c.Text(st.a, Rect(r.left, gy, Width(r) / 3, 18), Weight::Semi, 12, t.text);
+            c.Text(st.label, Rect(r.left + Width(r) / 3, gy, Width(r) / 3, 18), Weight::Regular, 11, t.textDim, Align::Center);
+            c.Text(st.b, Rect(r.right - Width(r) / 3, gy, Width(r) / 3, 18), Weight::Semi, 12, t.text, Align::Right);
+            double a = _wtof(st.a.c_str()), b = _wtof(st.b.c_str());
+            if (a + b > 0) {
+                float split = (float)(a / (a + b)) * Width(r), barY = gy + 20;
+                c.Fill(Rect(r.left, barY, (std::max)(split - 1, 0.0f), kBarH), kBarH / 2, t.accent);
+                c.Fill(Rect(r.left + split + 1, barY, (std::max)(Width(r) - split - 1, 0.0f), kBarH), kBarH / 2, t.text.Alpha(0.18f));
+            }
+            gy += kStatH;
+        }
+        gy += kGap;
+    }
+    for (const sports::Detail::Block& b : d.blocks) { // the running order, the boards, the matches, the leaders
+        if (b.rows.empty()) continue;
+        title(b.title);
+        bool ranked = std::all_of(b.rows.begin(), b.rows.end(), [&](const sports::Detail::Row& row) { return row.left.size() <= kRankChars; }); // the whole list one way
+        for (const sports::Detail::Row& row : b.rows) {
+            Color midInk = row.live ? red : t.text;
+            if (ranked) { // a position or a session: then who, then their number
+                c.Text(row.left, Rect(r.left, gy, kPosW, kRowH), Weight::Semi, 11.5f, t.textDim);
+                c.Text(row.mid, Rect(r.left + kPosW, gy, Width(r) * 0.6f, kRowH), Weight::Medium, 12, midInk);
+                c.Text(row.right, Rect(r.left + kPosW + Width(r) * 0.6f, gy, Width(r) * 0.4f - kPosW, kRowH), Weight::Regular, 11.5f, t.textDim, Align::Right);
+            } else { // two sides across what's between them
+                float side = Width(r) * 0.4f;
+                c.Text(row.left, Rect(r.left, gy, side, kRowH), Weight::Medium, 11.5f, t.text);
+                c.Text(row.mid, Rect(r.left + side, gy, Width(r) - 2 * side, kRowH), Weight::Semi, 11.5f, row.live ? red : t.textDim, Align::Center);
+                c.Text(row.right, Rect(r.right - side, gy, side, kRowH), Weight::Medium, 11.5f, t.text, Align::Right);
+            }
+            gy += kRowH;
+        }
+        gy += kGap;
+    }
+    matchH = gy + shown - start; // how tall it all is, for the next frame's scroll
+    c.PopClip();
+    if (most > 0) {
+        float lane = Height(view) - 8, thumb = lane * Height(view) / (Height(view) + most);
+        c.Fill(Rect(r.right + 2, view.top + 4 + (lane - thumb) * shown / most, 3, thumb), 1.5f, t.text.Alpha(0.18f));
+    }
+}
+
 void Games(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float& y, const Host& h, bool scores) { // scores: what's on and what's done, in full; fixtures: a few results, what's on, and what's coming, each to the calendar
     Canvas& c = ui.C();
     constexpr float kTabH = 28, kTabW = 96, kSecH = 20;
     constexpr size_t kResults = 4;
     float bottom = r.bottom - 4; // exactly the room the open card has: its lists scroll inside it, never past it
     if (w::Chip(ui, t, Ui::Id("fc.sp.games"), Rect(r.left, y, kTabW, kTabH), L"Games", sportTab == 0)) sportTab = 0;
-    if (w::Chip(ui, t, Ui::Id("fc.sp.leagues"), Rect(r.left + kTabW + 8, y, kTabW, kTabH), L"Leagues", sportTab == 1)) sportTab = 1;
+    if (w::Chip(ui, t, Ui::Id("fc.sp.leagues"), Rect(r.left + kTabW + 8, y, kTabW, kTabH), L"Leagues", sportTab == 1)) {
+        sportTab = 1;
+        if (!OpenMatch().empty()) CloseMatch(h);
+    }
     std::vector<std::string> followed = sports::Followed();
     std::wstring which;
     for (const std::string& l : followed)
@@ -415,6 +544,7 @@ void Games(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float& y, const Host& h
             followed.push_back(path);
         }
         sports::SetFollowed(followed);
+        OpenMatch().clear(); // its league may be gone
         if (h.resync) h.resync(h.ctx); // the new leagues are fetched
         for (const std::string& l : followed) feeds::Refresh(sports::FeedId(l)), feeds::Refresh(sports::NextId(l));
         return;
@@ -429,6 +559,7 @@ void Games(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float& y, const Host& h
         for (const std::string& id : {sports::FeedId(l), sports::NextId(l)})
             for (const std::wstring& row : feeds::Get(id).rows) {
                 sports::Game g = sports::Decode(row);
+                g.path = l;
                 std::vector<sports::Game>& to = g.state == sports::kLive ? live : g.state == sports::kFinal ? done : next;
                 if (seen(to, g)) continue;
                 leagueOf[g.a + L"|" + g.b] = lg ? lg->name : L"";
@@ -436,6 +567,14 @@ void Games(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float& y, const Host& h
             }
     }
     live = sports::Order(std::move(live)), done = sports::Order(std::move(done)), next = sports::Order(std::move(next));
+    if (!OpenMatch().empty()) { // a game opened: it alone, in full, its score kept fresh from the lists
+        for (const auto* list : {&live, &done, &next})
+            for (const sports::Game& g : *list)
+                if (sports::MatchId(g) == OpenMatch()) openGame = g;
+        Match(ui, t, r, y, bottom, h);
+        y = bottom;
+        return;
+    }
     if (scores) next.clear(); // the scores' panel is about the scores: the fixtures have their own
     else if (done.size() > kResults) done.resize(kResults);
     if (live.empty() && done.empty() && next.empty()) {
@@ -457,16 +596,25 @@ void Games(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float& y, const Host& h
     float shown = ui.Smooth(Ui::Id("fc.sp.scroll"), gameScroll, 18);
     c.PushClip(view);
     float gy = y - shown, pulse = 0.5f + 0.5f * std::sin((float)ui.Now() * 3.2f);
-    int added = -1;
+    int added = -1, cardN = 0;
+    const sports::Game* opened = nullptr;
     auto section = [&](const wchar_t* title, const std::vector<sports::Game>& games, bool isLive, bool calendar) {
         if (games.empty()) return;
         c.Text(title, Rect(r.left, gy, Width(r), kSecH - 4), Weight::Semi, 11, isLive ? Color::Rgb(kDown) : t.accentHi);
         gy += kSecH;
         for (size_t i = 0; i < games.size(); ++i, gy += kCardH + kCardGap) {
+            ++cardN;
             if (gy + kCardH < view.top || gy > view.bottom) continue; // out of the view: not drawn, not hit
             const sports::Game& g = games[i];
             D2D1_RECT_F card = Rect(r.left, gy, Width(r), kCardH);
-            c.Fill(card, 12, isLive ? Color::Rgb(kDown).Alpha(0.07f) : t.text.Alpha(0.04f));
+            float hov = 0;
+            if (g.state != sports::kPre && !sports::MatchId(g).empty()) { // on or done: it opens in full
+                Ui::Hit open = ui.Button(Ui::Id("fc.sp.open", cardN), card);
+                ui.Name(L"Open game");
+                hov = ui.Smooth(Ui::Id("fc.sp.openh", cardN), open.hover ? 1.0f : 0, 16);
+                if (open.clicked) opened = &g;
+            }
+            c.Fill(card, 12, isLive ? Color::Rgb(kDown).Alpha(0.07f + 0.05f * hov) : t.text.Alpha(0.04f + 0.04f * hov));
             float cy = gy + kCardH / 2, right = card.right - 12;
             if (calendar) {
                 D2D1_RECT_F pill = Rect(right - kCalPillW, cy - kPillH / 2, kCalPillW, kPillH);
@@ -532,6 +680,7 @@ void Games(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float& y, const Host& h
         if (sports::InCalendar(g)) sports::RemoveFromCalendar(g);
         else sports::AddToCalendar(g, leagueOf[g.a + L"|" + g.b]);
     }
+    if (opened) OpenGame(*opened, h);
     y = bottom;
 }
 

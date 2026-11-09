@@ -376,8 +376,6 @@ private:
     D2D1_POINT_2F railTipAt{};
     void DrawRailTip(const Theme& t);
     void DrawTour(const Theme& t, float panelW, float panelH); // drawer_tour.cpp: the light, the dim around it and the step's card
-    void DrawNotice(const Theme& t, float panelW, float panelH); // the update's one card: the long pill is on now, and how to go back
-    bool noticeUp = false;
     bool TourShows(int i) const; // that step has what it shows on this pc
     void TourGo(int from, int dir); // to the next step this pc has, that way
     void TourStart();

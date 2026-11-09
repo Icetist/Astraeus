@@ -643,6 +643,15 @@ void DeskPill::DrawPill(const Theme& t, const Pose& p, float alpha) {
     float k = TypeScale(p.thick), cy = p.thick / 2, size = 11.5f * k, box = kTextBox * k;
     bool holding = editing && drag != Drag::None;
     SyncItems(); // on the desktop or over an app: its set for there
+    if (!editing && input.wheel != 0) { // the wheel over the score: the next game, or the one before; before the layout, so this frame shows it
+        D2D1_POINT_2F m = ToLocal(p, input.mouse);
+        for (const Placed& it : placed)
+            if (it.kind == Model::kDScore && m.x >= it.x - 4 && m.x <= it.x + it.w + 4) {
+                model.StepScore(input.wheel > 0 ? -1 : 1);
+                input.wheel = 0;
+                break;
+            }
+    }
     placed = LayOut(spec.items, p.len, p.thick);
     float content = anim::Clamp01((alpha - 0.35f) / 0.65f);
     for (Placed& it : placed) {
@@ -671,15 +680,6 @@ void DeskPill::DrawPill(const Theme& t, const Pose& p, float alpha) {
             tx += is + 5 * k;
         }
         if (!it.text.empty()) c.Text(it.text, Rect(tx, cy - box / 2, x + it.w - tx + 2, box), Weight::Medium, size, (it.kind == Model::kDClock || it.kind == Model::kDScore ? ink : dim).Alpha(a));
-    }
-    if (!editing && input.wheel != 0) { // the wheel over the score: the next game, or the one before
-        D2D1_POINT_2F m = ToLocal(pose, input.mouse);
-        for (const Placed& it : placed)
-            if (it.kind == Model::kDScore && m.x >= it.x - 4 && m.x <= it.x + it.w + 4) {
-                model.StepScore(input.wheel > 0 ? -1 : 1);
-                input.wheel = 0;
-                Poke();
-            }
     }
     ctx->SetTransform(D2D1::Matrix3x2F::Translation(-view.x, -view.y));
 }

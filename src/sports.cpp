@@ -92,35 +92,95 @@ std::wstring Encode(const Game& g) {
     for (const std::wstring* f : {&g.a, &g.as, &g.b, &g.bs, &g.detail}) out += kSep, out += *f;
     out += kSep, out += std::to_wstring((long long)g.when);
     out += kSep, out += g.solo ? L"1" : L"0";
-    for (const std::wstring* f : {&g.aLines, &g.bLines, &g.venue, &g.aCode, &g.bCode}) out += kSep, out += *f;
+    for (const std::wstring* f : {&g.aLines, &g.bLines, &g.venue, &g.aCode, &g.bCode, &g.id}) out += kSep, out += *f;
     return out;
 }
 
-Game Decode(const std::wstring& row) {
+static std::vector<std::wstring> Fields(const std::wstring& row, size_t from = 0) {
     std::vector<std::wstring> f;
-    for (size_t a = 0;;) {
+    for (size_t a = from;;) {
         size_t e = row.find(kSep, a);
         f.push_back(row.substr(a, e == std::wstring::npos ? std::wstring::npos : e - a));
         if (e == std::wstring::npos) break;
         a = e + 1;
     }
+    return f;
+}
+
+Game Decode(const std::wstring& row) {
+    std::vector<std::wstring> f = Fields(row);
     Game g;
     if (f.size() < 8) return g;
     g.state = _wtoi(f[0].c_str()), g.a = f[1], g.as = f[2], g.b = f[3], g.bs = f[4], g.detail = f[5], g.when = _wtof(f[6].c_str()), g.solo = f[7] == L"1";
     if (f.size() >= 11) g.aLines = f[8], g.bLines = f[9], g.venue = f[10];
     if (f.size() >= 13) g.aCode = f[11], g.bCode = f[12];
+    if (f.size() >= 14) g.id = f[13];
     return g;
 }
 
-std::wstring Line(const Game& g) { // as few letters as a scoreline takes: the pill has little room
-    constexpr size_t kMost = 22;
+// a game's detail as rows, each led by its kind: H the status, E an event, S a stat, B a list's title, R one of its rows
+std::vector<std::wstring> EncodeDetail(const Detail& d) {
+    std::vector<std::wstring> out;
+    auto row = [&](wchar_t kind, std::initializer_list<const std::wstring*> fs) {
+        std::wstring r(1, kind);
+        for (const std::wstring* f : fs) r += kSep, r += *f;
+        out.push_back(std::move(r));
+    };
+    row(L'H', {&d.status});
+    for (const Detail::Event& e : d.events) {
+        std::wstring side = std::to_wstring(e.side);
+        row(L'E', {&side, &e.when, &e.kind, &e.text});
+    }
+    for (const Detail::Stat& s : d.stats) row(L'S', {&s.label, &s.a, &s.b});
+    for (const Detail::Block& b : d.blocks) {
+        row(L'B', {&b.title});
+        for (const Detail::Row& r : b.rows) {
+            std::wstring live = r.live ? L"1" : L"0";
+            row(L'R', {&r.left, &r.mid, &r.right, &live});
+        }
+    }
+    return out;
+}
+
+Detail DecodeDetail(const std::vector<std::wstring>& rows) {
+    Detail d;
+    for (const std::wstring& r : rows) {
+        if (r.size() < 2) continue;
+        std::vector<std::wstring> f = Fields(r, 2);
+        switch (r[0]) {
+        case L'H': d.status = f[0]; break;
+        case L'E': if (f.size() >= 4) d.events.push_back({_wtoi(f[0].c_str()), f[1], f[2], f[3]}); break;
+        case L'S': if (f.size() >= 3) d.stats.push_back({f[0], f[1], f[2]}); break;
+        case L'B': d.blocks.push_back({f[0], {}}); break;
+        case L'R': if (f.size() >= 4 && !d.blocks.empty()) d.blocks.back().rows.push_back({f[0], f[1], f[2], f[3] == L"1"}); break;
+        }
+    }
+    return d;
+}
+
+std::string MatchId(const Game& g) {
+    if (g.id.empty() || g.path.empty()) return {};
+    std::string id(g.id.begin(), g.id.end()); // ids and slugs are plain ascii
+    time_t t = (time_t)g.when;
+    tm u{};
+    char day[16] = "";
+    if (t > 0 && gmtime_s(&u, &t) == 0) strftime(day, sizeof(day), "%Y%m%d", &u);
+    return "match:" + g.path + "|" + id + "|" + day;
+}
+
+std::wstring Line(const Game& g) { // as few letters as a scoreline takes: the pill has little room; a live one says its clock when it fits
+    constexpr size_t kMost = 22, kWithClock = 30;
     auto surname = [](const std::wstring& n) { size_t dot = n.rfind(L". "); return dot == std::wstring::npos ? n : n.substr(dot + 2); }; // "C. Alcaraz": Alcaraz
     std::wstring out;
     if (g.solo) { // a race or a tournament: who leads it; a chess broadcast: its event, cut short, and its round
         constexpr size_t kEventMost = 14;
+        constexpr wchar_t kWonBy[] = L"Won by "; // as the feed words a finished field's winner
+        constexpr size_t kWonByLen = sizeof(kWonBy) / sizeof(wchar_t) - 1;
         size_t colon = g.b.find(L": ");
         if (colon != std::wstring::npos) {
             out = surname(g.b.substr(colon + 2));
+        } else if (g.b.rfind(kWonBy, 0) == 0) { // over: who won, not the event's long name
+            out = surname(g.b.substr(kWonByLen)) + L" won";
         } else {
             std::wstring event = g.a.substr(0, g.a.find_first_of(L"|(·")); // "European Youth Chess Championship 2026 | O18": its name alone
             while (!event.empty() && event.back() == L' ') event.pop_back();
@@ -140,7 +200,9 @@ std::wstring Line(const Game& g) { // as few letters as a scoreline takes: the p
             out = a + L" " + g.as + L"–" + g.bs + L" " + b;
         }
     }
-    return out.size() > kMost ? out.substr(0, kMost - 1) + L"…" : out;
+    if (out.size() > kMost) out = out.substr(0, kMost - 1) + L"…";
+    if (g.state == kLive && !g.detail.empty() && out.size() + 1 + g.detail.size() <= kWithClock) out += L" " + g.detail; // "67'", "Q3 5:12", "Lap 34/57"
+    return out;
 }
 
 std::vector<Game> Order(std::vector<Game> games) {

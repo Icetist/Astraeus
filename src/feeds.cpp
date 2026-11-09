@@ -740,28 +740,38 @@ int StateOf(const J* status) {
     return s == "in" ? sports::kLive : s == "post" ? sports::kFinal : sports::kPre;
 }
 
+std::vector<const J*> Comps(const J& ev) { // a tennis draw's matches, a race weekend's sessions, a fight card's bouts, or the one game
+    std::vector<const J*> comps;
+    if (const J* gs = At(ev, "groupings"); gs && gs->type == J::kArr)
+        for (const J& g : gs->a)
+            if (const J* cs = At(g, "competitions"); cs && cs->type == J::kArr)
+                for (const J& c : cs->a) comps.push_back(&c);
+    if (const J* cs = At(ev, "competitions"); comps.empty() && cs && cs->type == J::kArr)
+        for (const J& c : cs->a) comps.push_back(&c);
+    return comps;
+}
+
+const J* PickComp(const std::vector<const J*>& comps) { // the one on now, else the latest one done, else the first
+    const J* pick = nullptr;
+    for (const J* c : comps)
+        if (StateOf(At(*c, "status")) == sports::kLive) pick = c;
+    if (!pick)
+        for (const J* c : comps)
+            if (StateOf(At(*c, "status")) == sports::kFinal) pick = c;
+    return pick ? pick : comps.front();
+}
+
 void ReadEvents(const J& doc, std::vector<sports::Game>& out, size_t most = 24) { // most: a busy college saturday fills the panel, not the whole slate
     const J* events = At(doc, "events");
     if (!events || events->type != J::kArr) return;
     for (const J& ev : events->a) {
         if (out.size() >= most) break;
-        std::vector<const J*> comps; // a tennis draw's matches, a race weekend's sessions, a fight card's bouts, or the one game
-        if (const J* gs = At(ev, "groupings"); gs && gs->type == J::kArr)
-            for (const J& g : gs->a)
-                if (const J* cs = At(g, "competitions"); cs && cs->type == J::kArr)
-                    for (const J& c : cs->a) comps.push_back(&c);
-        if (const J* cs = At(ev, "competitions"); comps.empty() && cs && cs->type == J::kArr)
-            for (const J& c : cs->a) comps.push_back(&c);
+        std::vector<const J*> comps = Comps(ev);
         if (comps.empty()) continue;
-        const J* pick = nullptr;
-        for (const J* c : comps)
-            if (StateOf(At(*c, "status")) == sports::kLive) pick = c;
-        if (!pick)
-            for (const J* c : comps)
-                if (StateOf(At(*c, "status")) == sports::kFinal) pick = c; // the latest one done
-        if (!pick) pick = comps.front();
+        const J* pick = PickComp(comps);
         const J* status = At(*pick, "status") ? At(*pick, "status") : At(ev, "status");
         sports::Game g;
+        g.id = Str(At(ev, "id"));
         g.state = StateOf(status);
         g.when = IsoUnix(At(*pick, "date")) > 0 ? IsoUnix(At(*pick, "date")) : IsoUnix(At(ev, "date"));
         g.detail = g.state == sports::kPre ? LocalStart(g.when) : Str(status ? At(*status, "type.shortDetail") : nullptr);
@@ -854,6 +864,210 @@ Series FetchFixtures(const std::string& path) { // a league around today: the pa
     return out;
 }
 
+// ---- one game opened in the panel: what's happened, its numbers, its lists ----
+constexpr size_t kDetailRows = 40, kDetailStats = 10, kDetailLeaders = 4;
+
+std::wstring SetLine(const J& a, const J& b) { // two sides' periods as one line: "6-4 3-6"
+    const J* la = At(a, "linescores");
+    const J* lb = At(b, "linescores");
+    std::wstring out;
+    if (!la || !lb || la->type != J::kArr || lb->type != J::kArr) return out;
+    for (size_t i = 0; i < la->a.size() && i < lb->a.size(); ++i)
+        out += (out.empty() ? L"" : L" ") + std::to_wstring((int)Num(At(la->a[i], "value"))) + L"-" + std::to_wstring((int)Num(At(lb->a[i], "value")));
+    return out;
+}
+
+bool FromSummary(const J& doc, const std::string& path, sports::Detail& d) { // a team game: its moments, its leaders, its numbers side by side
+    const J* comp = At(doc, "header.competitions.0");
+    if (!comp) return false;
+    d.status = Str(At(*comp, "status.type.detail"));
+    std::wstring home; // the first side, as the game's own row has it
+    if (const J* cs = At(*comp, "competitors"); cs && cs->type == J::kArr)
+        for (const J& c : cs->a)
+            if (Str(At(c, "homeAway")) == L"home") home = Str(At(c, "id"));
+    auto side = [&](const J* team) {
+        std::wstring id = team ? Str(At(*team, "id")) : L"";
+        return id.empty() ? -1 : id == home ? 0 : 1;
+    };
+    if (const J* ks = At(doc, "keyEvents"); ks && ks->type == J::kArr) // football: goals and cards, by the minute
+        for (const J& k : ks->a) {
+            std::wstring type = Str(At(k, "type.text"));
+            bool goal = At(k, "scoringPlay") && At(k, "scoringPlay")->b;
+            std::wstring kind = goal ? L"goal" : type.find(L"Red") != std::wstring::npos ? L"red" : type.find(L"Yellow") != std::wstring::npos ? L"yellow" : L"";
+            if (kind.empty()) continue;
+            std::wstring who = Str(At(k, "participants.0.athlete.displayName"));
+            if (goal) {
+                std::wstring by = Str(At(k, "participants.1.athlete.displayName"));
+                if (type.find(L"Own") != std::wstring::npos) who += L" (own goal)";
+                else if (type.find(L"Penalty") != std::wstring::npos) who += L" (pen)";
+                else if (!by.empty()) who += L", " + by;
+            }
+            d.events.push_back({side(At(k, "team")), Str(At(k, "clock.displayValue")), kind, who.empty() ? type : who});
+        }
+    if (const J* ps = At(doc, "scoringPlays"); d.events.empty() && ps && ps->type == J::kArr) { // the other games: every score, by its period
+        const wchar_t* per = path.rfind("hockey/", 0) == 0 ? L"P" : path.rfind("baseball/", 0) == 0 ? L"Inn " : L"Q";
+        for (const J& p : ps->a) {
+            std::wstring when = per + std::to_wstring((int)Num(At(p, "period.number")));
+            if (std::wstring clock = Str(At(p, "clock.displayValue")); !clock.empty()) when += L" " + clock;
+            d.events.push_back({side(At(p, "team")), when, L"score", Str(At(p, "text"))});
+        }
+    }
+    if (const J* ls = At(doc, "leaders"); ls && ls->type == J::kArr) { // each side's best in each category, the two set across from each other
+        sports::Detail::Block b{L"Leaders", {}};
+        for (const J& team : ls->a) {
+            int s = side(At(team, "team"));
+            const J* cats = At(team, "leaders");
+            if (s < 0 || !cats || cats->type != J::kArr) continue;
+            for (size_t i = 0; i < cats->a.size() && i < kDetailLeaders; ++i) {
+                const J& cat = cats->a[i];
+                std::wstring who = Str(At(cat, "leaders.0.athlete.shortName")), value = Str(At(cat, "leaders.0.displayValue"));
+                std::wstring line = who.empty() ? value : who + L"  " + value;
+                if (b.rows.size() <= i) b.rows.push_back({L"", Str(At(cat, "displayName")), L"", false});
+                (s == 0 ? b.rows[i].left : b.rows[i].right) = line;
+            }
+        }
+        if (!b.rows.empty()) d.blocks.push_back(std::move(b));
+    }
+    if (const J* ts = At(doc, "boxscore.teams"); ts && ts->type == J::kArr) { // the numbers, side by side, as the first side lists them
+        std::vector<std::pair<std::wstring, std::wstring>> mine[2];
+        for (const J& team : ts->a) {
+            int s = side(At(team, "team"));
+            const J* st = At(team, "statistics");
+            if (s < 0 || !st || st->type != J::kArr) continue;
+            for (const J& one : st->a)
+                if (std::wstring label = Str(At(one, "label")); !label.empty()) mine[s].push_back({label, Str(At(one, "displayValue"))});
+        }
+        for (const auto& [label, a] : mine[0]) {
+            if (d.stats.size() >= kDetailStats) break;
+            auto other = std::find_if(mine[1].begin(), mine[1].end(), [&](const auto& p) { return p.first == label; });
+            if (other != mine[1].end()) d.stats.push_back({label, a, other->second});
+        }
+    }
+    return true;
+}
+
+void FromBoard(const J& ev, sports::Detail& d) { // no summary to ask: the event's own matches, or its sessions and its order, off the scoreboard
+    std::vector<const J*> comps = Comps(ev);
+    if (comps.empty()) return;
+    auto sides = [](const J& c) -> const std::vector<J>* {
+        const J* s = At(c, "competitors");
+        return s && s->type == J::kArr ? &s->a : nullptr;
+    };
+    bool pairs = comps.size() > 1 && std::all_of(comps.begin(), comps.end(), [&](const J* c) { return sides(*c) && sides(*c)->size() == 2; });
+    if (pairs) { // a draw's matches or a card's bouts: what's on, then what's done, then what's coming
+        sports::Detail::Block b{L"Matches", {}};
+        int on = 0;
+        for (int want : {sports::kLive, sports::kFinal, sports::kPre})
+            for (const J* c : comps) {
+                int st = StateOf(At(*c, "status"));
+                if (st != want || b.rows.size() >= kDetailRows) continue;
+                const std::vector<J>& s = *sides(*c);
+                std::wstring mid = st == sports::kPre ? LocalStart(IsoUnix(At(*c, "date"))) : SetLine(s[0], s[1]);
+                if (mid.empty()) mid = Str(At(s[0], "score")) + L"-" + Str(At(s[1], "score"));
+                b.rows.push_back({SideName(s[0]), mid, SideName(s[1]), st == sports::kLive});
+                on += st == sports::kLive;
+            }
+        d.status = on ? std::to_wstring(on) + L" on now" : Str(At(ev, "status.type.detail"));
+        d.blocks.push_back(std::move(b));
+        return;
+    }
+    const J* pick = PickComp(comps); // a field: the weekend's sessions, then the order of the one on now or the latest done
+    std::wstring abbr = Str(At(*pick, "type.abbreviation")), detail = Str(At(*pick, "status.type.detail"));
+    d.status = abbr.empty() ? detail : abbr + L"  ·  " + detail;
+    auto winner = [&](const J& c) -> std::wstring {
+        if (const std::vector<J>* s = sides(c))
+            for (const J& one : *s)
+                if (Num(At(one, "order")) == 1) return SideName(one);
+        return {};
+    };
+    if (comps.size() > 1) {
+        sports::Detail::Block b{L"Sessions", {}};
+        for (const J* c : comps) {
+            int st = StateOf(At(*c, "status"));
+            std::wstring when = st == sports::kPre ? LocalStart(IsoUnix(At(*c, "date"))) : Str(At(*c, "status.type.shortDetail"));
+            b.rows.push_back({Str(At(*c, "type.abbreviation")), when, st == sports::kPre ? L"" : winner(*c), st == sports::kLive});
+        }
+        d.blocks.push_back(std::move(b));
+    }
+    if (const std::vector<J>* s = sides(*pick); s && !s->empty()) {
+        std::vector<const J*> order;
+        for (const J& one : *s) order.push_back(&one);
+        std::stable_sort(order.begin(), order.end(), [](const J* x, const J* y) { return Num(At(*x, "order"), 999) < Num(At(*y, "order"), 999); });
+        sports::Detail::Block b{abbr.empty() ? L"Standings" : abbr, {}};
+        bool live = StateOf(At(*pick, "status")) == sports::kLive;
+        for (const J* one : order) {
+            if (b.rows.size() >= kDetailRows) break;
+            std::wstring pos = Num(At(*one, "order")) > 0 ? std::to_wstring((int)Num(At(*one, "order"))) : L"";
+            std::wstring right = Str(At(*one, "score")); // golf: to par; a race: its gap, when the board has it
+            if (right.empty())
+                if (const J* st = At(*one, "statistics"); st && st->type == J::kArr && !st->a.empty()) right = Str(At(st->a[0], "displayValue"));
+            b.rows.push_back({pos, SideName(*one), right, live});
+        }
+        d.blocks.push_back(std::move(b));
+    }
+}
+
+Series FetchMatch(const std::string& spec) { // "soccer/eng.1|401878758|20261108": one game, opened in the panel
+    size_t a = spec.find('|'), b = a == std::string::npos ? std::string::npos : spec.find('|', a + 1);
+    if (b == std::string::npos) return Fail(L"Unknown game");
+    std::string path = spec.substr(0, a), id = spec.substr(a + 1, b - a - 1), day = spec.substr(b + 1);
+    sports::Detail d;
+    if (path == "chess") { // the round's boards: who has white, who has black, and how it went
+        Resp r = Http(L"https://lichess.org/api/broadcast/" + Wide(id));
+        J doc;
+        if (r.status != 200 || !ParseBody(r.body, doc)) return Fail(r.status == 200 ? std::wstring(kUnreadable) : Why(r.status));
+        bool on = At(doc, "round.ongoing") && At(doc, "round.ongoing")->b;
+        d.status = Str(At(doc, "round.name")) + (on ? L"  ·  live" : L"");
+        sports::Detail::Block boards{L"Boards", {}};
+        if (const J* gs = At(doc, "games"); gs && gs->type == J::kArr)
+            for (const J& g : gs->a) {
+                if (boards.rows.size() >= kDetailRows) break;
+                auto player = [&](const char* at) {
+                    const J* p = At(g, at);
+                    if (!p) return std::wstring();
+                    std::wstring title = Str(At(*p, "title")), name = Str(At(*p, "name"));
+                    int rating = (int)Num(At(*p, "rating"));
+                    return (title.empty() ? L"" : title + L" ") + name + (rating > 0 ? L" (" + std::to_wstring(rating) + L")" : L"");
+                };
+                std::wstring result = Str(At(g, "status"));
+                bool live = result == L"*";
+                boards.rows.push_back({player("players.0"), live ? L"live" : result, player("players.1"), live});
+            }
+        d.blocks.push_back(std::move(boards));
+    } else {
+        std::wstring base = L"https://site.api.espn.com/apis/site/v2/sports/" + Wide(path);
+        Resp r = Http(base + L"/summary?event=" + Wide(id));
+        J doc;
+        bool got = r.status == 200 && ParseBody(r.body, doc) && FromSummary(doc, path, d) && (!d.events.empty() || !d.stats.empty() || !d.blocks.empty());
+        if (!got) { // races, tennis, golf and fight cards have no summary: the scoreboard's own event, today's board first, then its day's
+            std::wstring said = d.status;
+            d = {};
+            bool found = false;
+            for (const std::wstring& q : {std::wstring(), L"?dates=" + Wide(day)}) {
+                if (found || gQuit.load()) break;
+                Resp s = Http(base + L"/scoreboard" + q);
+                J board;
+                if (s.status != 200 || !ParseBody(s.body, board)) continue;
+                if (const J* evs = At(board, "events"); evs && evs->type == J::kArr)
+                    for (const J& ev : evs->a)
+                        if (Str(At(ev, "id")) == Wide(id)) {
+                            FromBoard(ev, d);
+                            found = true;
+                            break;
+                        }
+            }
+            if (!found) {
+                if (said.empty()) return Fail(L"No details for this game yet");
+                d.status = said;
+            }
+        }
+    }
+    Series out;
+    out.rows = sports::EncodeDetail(d);
+    out.ok = true;
+    return out;
+}
+
 Series FetchChess() { // the official broadcasts on lichess: what's being played now, the women's events among them by name
     Series out;
     out.text = L"Chess broadcasts";
@@ -869,6 +1083,7 @@ Series FetchChess() { // the official broadcasts on lichess: what's being played
             g.solo = true;
             g.a = Str(At(b, "tour.name"));
             g.b = Str(At(b, "round.name"));
+            g.id = Str(At(b, "tour.slug")) + L"/" + Str(At(b, "round.slug")) + L"/" + Str(At(b, "round.id")); // the round's boards are fetched by it
             bool on = At(b, "round.ongoing") && At(b, "round.ongoing")->b;
             g.state = on ? sports::kLive : sports::kPre;
             g.when = Num(At(b, "round.startsAt")) / 1000;
@@ -1005,7 +1220,7 @@ State& S() {
 ULONGLONG Pace(const std::string& id) {
     if (id.rfind("quote:", 0) == 0) return kEveryQuote;
     if (id == "sport:chess" || id.rfind("next:", 0) == 0) return kEverySky; // fixtures, results and broadcasts don't move by the minute
-    if (id.rfind("sport:", 0) == 0) return kEverySport;
+    if (id.rfind("sport:", 0) == 0 || id.rfind("match:", 0) == 0) return kEverySport;
     if (id.rfind("metric", 0) == 0) return kEveryMetric;
     if (id.rfind("rates", 0) == 0) return kEveryRates;
     if (id.rfind("sky", 0) == 0) return kEverySky;
@@ -1017,6 +1232,7 @@ Series Fetch(const std::string& id) {
     if (id.rfind("quote:", 0) == 0) return FetchQuote(id.substr(6));
     if (id == "sport:chess") return FetchChess();
     if (id.rfind("next:", 0) == 0) return FetchFixtures(id.substr(5));
+    if (id.rfind("match:", 0) == 0) return FetchMatch(id.substr(6));
     if (id.rfind("sport:", 0) == 0) return FetchSport(id.substr(6));
     if (id == "metric") {
         std::wstring p = Setting("metric.id");

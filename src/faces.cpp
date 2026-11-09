@@ -1140,6 +1140,11 @@ void Draw(Canvas& c, const Theme& t, int kind, int, const D2D1_RECT_F& r, const 
     Launch(c, t, r, m.glyph, m.name, m.about);
 }
 
+std::string& OpenMatch() {
+    static std::string id;
+    return id;
+}
+
 std::vector<std::string> Feeds(const std::vector<int>& kinds) {
     std::vector<std::string> out;
     auto add = [&](const std::string& id) {
@@ -1174,6 +1179,7 @@ std::vector<std::string> Feeds(const std::vector<int>& kinds) {
                 add(sports::FeedId(l)); // what's on now
                 if (l != "chess") add(sports::NextId(l));
             }
+        if ((key == "sport.scores" || key == "sport.fixtures") && !OpenMatch().empty()) add(OpenMatch()); // a game opened in its panel
     }
     return out;
 }

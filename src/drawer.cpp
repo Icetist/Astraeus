@@ -316,7 +316,6 @@ void Drawer::Open() {
         model.OnOpen();
         model.SetLive(true, page == Model::kPgSystem, page == Model::kPgNetwork); // fast polling only while visible, the process list only on the system page, latency only on the network page
     }
-    if (model.longPillNotice && tourStep < 0) noticeUp = true; // the update's card comes before any tour
     else if (!tourSeen && model.tourNext && tourStep < 0) TourStart(); // the first time the panel opens this launch, while its switch is on
     Resize(Depth() + overshoot, true); // grow first so bounce isn't clipped
     spring.target = Depth();
@@ -795,7 +794,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             else if (islandNext) ShowIsland(); // an app below: the pill first, a tap opens the panel
             else Open();
         } else if (wp == kCloseTimer) {
-            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && Stays()) && !(opened && Pinned()) && tourStep < 0 && !noticeUp) Close(); // the tour and the update's card keep it open until they're done
+            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && Stays()) && !(opened && Pinned()) && tourStep < 0) Close(); // the tour keeps it open until it's done
         } else if (wp == kTrimTimer) {
             if (island && !opened && !peeking && !dragging && !(devWide && RenewDev())) gfx::GiveBack(); // a resting pill, only its bars move: idle pages go back; after the panel, a fresh device too. d2d's caches stay: cleared under live brushes, the media page's glows came back flat
         } else if (wp == kReleaseTimer) {

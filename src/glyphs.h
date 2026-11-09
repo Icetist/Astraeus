@@ -32,5 +32,7 @@ constexpr int Translate = 0xE8E2, Update = 0xE923, Box = 0xE835, BoxOn = 0xE834,
 constexpr int Chat = 0xE311, Movie = 0xE02C, Web = 0xE80B, Work = 0xE8F9, More = 0xE5CF, Less = 0xE5CE, Tune = 0xE429; // the mixer's groups
 inline constexpr int kGroupIcons[8] = {Pad, Chat, Music, Movie, Web, Bell, Work, Speaker}; // by DeskGroup::icon
 constexpr int Schedule = 0xE8B5, Calendar = 0xEBCC, Lyrics = 0xEC0B, Dashboard = 0xE871, Resize = 0xF707, Layout = 0xE8F1; // the display dashboard and the layouts
+constexpr int Trophy = 0xEA23; // a sport with no mark of its own
+inline constexpr int kSportIcons[15] = {0xEA2F, 0xEA26, 0xEA29, 0xEA2B, 0xEA51, 0xEA2D, 0xEA32, 0xEA2A, 0xEA2C, 0xEA27, 0xEA2E, 0xEA2E, 0xEA31, Trophy, 0xF3B6}; // by sports::Sport: ball, ball, ball, stick, ball, helmet, racket, tee, glove, bat, ball, ball, ball, trophy, pawn
 constexpr int Shelf = 0xE1A1, File = 0xE873, Note = 0xF1FC, Image = 0xE3F4, Folder = 0xE2C7, Drop = 0xF090; // the shelf
 }

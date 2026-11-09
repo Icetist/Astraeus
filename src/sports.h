@@ -27,7 +27,24 @@ struct Game {
     bool solo = false; // a race, a tournament, a broadcast: one line, not two sides
     std::wstring aLines, bLines, venue; // each side's periods, innings or sets, space apart; where it's played
     std::wstring aCode, bCode; // "BAR", "RMA": the short names a scoreline uses
+    std::wstring id; // espn's event id, or a broadcast round's "tour/round/id": its detail is fetched by it
+    std::string path; // its league, filled in as it's read: never in the row
+    int sport = kFootball; // its league's, the same way: the long pill shows its mark
 };
+
+struct Detail { // one game opened: what's happened in it, its numbers, and its lists
+    std::wstring status; // "67'", "Race · Lap 34 of 57", "Round 9 · live"
+    struct Event { int side = -1; std::wstring when, kind, text; }; // side 0 the first, 1 the second, -1 neither; kind: goal, yellow, red, score
+    struct Stat { std::wstring label, a, b; };
+    struct Row { std::wstring left, mid, right; bool live = false; };
+    struct Block { std::wstring title; std::vector<Row> rows; }; // leaders, the running order, the boards, the matches
+    std::vector<Event> events;
+    std::vector<Stat> stats;
+    std::vector<Block> blocks;
+};
+std::vector<std::wstring> EncodeDetail(const Detail& d); // a feed's rows
+Detail DecodeDetail(const std::vector<std::wstring>& rows);
+std::string MatchId(const Game& g); // "match:soccer/eng.1|401878758|20261108"; empty: nothing to open
 std::wstring Line(const Game& g); // "BAR 1 – 0 RMA  67'", "BAR – RMA  Sat 20:00": one game in a few words, for the pills
 
 std::wstring Encode(const Game& g); // one row of the feed

@@ -67,6 +67,7 @@ Act Click(int kind, bool right, const Host& h); // a click on its face
 bool Wheel(int kind, float notches); // the wheel over its face: true when it scrolled something of its own (the scores' games)
 int NextMs(const std::vector<int>& kinds, const Host& h); // how long before any of these has something new to draw, 0: nothing to wait for
 std::vector<std::string> Feeds(const std::vector<int>& kinds); // what they need fetched
+std::string& OpenMatch(); // the game opened in the sports panel, as its feed's id; empty: the list of games
 
 // the panel behind a face: more detail, and whatever it needs set up
 void OpenPanel(int kind); // reads what it lists, once

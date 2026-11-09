@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <ctime>
 
 namespace {
 
@@ -21,6 +22,22 @@ int ReadPower();
 
 unsigned long long Ticks(const FILETIME& f) { // filetime -> 100ns count
     return (unsigned long long)f.dwHighDateTime << 32 | f.dwLowDateTime;
+}
+
+constexpr double kHour = 3600;
+constexpr double kRecentFor = 2 * kHour; // a game over this long ago still counts as on, for the pill's score
+constexpr size_t kSeenCap = 2000;
+
+double GameLen(int sport) { // about how long one lasts, start to finish: for a game already over when it was first seen
+    switch (sport) {
+    case sports::kAmerican: return 3.5 * kHour;
+    case sports::kBasketball: case sports::kHockey: case sports::kLacrosse: return 2.5 * kHour;
+    case sports::kBaseball: case sports::kTennis: case sports::kAussie: return 3 * kHour;
+    case sports::kFighting: case sports::kCricket: return 4 * kHour;
+    case sports::kGolf: return 10 * kHour;
+    case sports::kChess: return 5 * kHour;
+    default: return 2 * kHour; // football, rugby, motorsport, volleyball
+    }
 }
 
 }
@@ -152,18 +169,12 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     pillDesk = flag(L"PillDesktop", 1); // on out of the box: the island stays in sight on an empty desktop
     pillLeft = (std::clamp)(sys::ReadNum(L"PillLeft", kWWeather), 0, kWidgets - 1);
     pillRight = (std::clamp)(sys::ReadNum(L"PillRight", kWCpu), 0, kWidgets - 1);
-    int pillWas = sys::ReadNum(L"DeskPill", -1); // -1: never chosen, the regular desktop pill
-    deskPill = pillWas < 0 ? 1 : pillWas != 0; // the long pill is the desktop's to start with
-    if (!sys::ReadNum(L"LongPillDefault", 0)) { // once, with the update that made it the default
-        sys::SaveNum(L"LongPillDefault", 1);
-        bool usedBefore = sys::ReadNum(L"LastPage", -1) >= 0; // a new install has nothing to be told
-        if (pillWas != 1) { // on the regular desktop pill: the long one now; already on the long one: nothing changes
-            deskPill = 1;
-            sys::SaveNum(L"DeskPill", 1);
-            if (usedBefore && pillDesk) sys::SaveNum(L"LongPillNotice", 1); // no pill on their desktop: nothing changed they'd see
-        }
+    int pillWas = sys::ReadNum(L"DeskPill", -1); // -1: never chosen
+    if (pillWas < 0) { // an update keeps the regular pill they had; a new install starts on the long one. saved, so it never flips later
+        pillWas = sys::ReadNum(L"LastPage", -1) >= 0 ? 0 : 1;
+        sys::SaveNum(L"DeskPill", pillWas);
     }
-    longPillNotice = sys::ReadNum(L"LongPillNotice", 0) != 0;
+    deskPill = pillWas != 0;
     deskFillApps = (std::clamp)(sys::ReadNum(L"DeskFillApps", sys::ReadNum(L"DeskFill", 0)), 0, 3);
     deskEdge = (std::clamp)(sys::ReadNum(L"DeskEdge", 0), 0, 2);
     deskPos = (std::clamp)(sys::ReadNum(L"DeskPos", 500), 0, 1000);
@@ -1326,6 +1337,8 @@ const wchar_t* Model::DeskItemName(int k) {
     }
 }
 
+static_assert(std::size(glyph::kSportIcons) == sports::kSports, "a mark for every sport");
+
 std::wstring Model::DeskItemText(int k, int& icon) const {
     icon = 0;
     SYSTEMTIME st;
@@ -1354,20 +1367,39 @@ std::wstring Model::DeskItemText(int k, int& icon) const {
     case kDBars: // drawn by the pill itself; the icon only says there's a song for them
         if (hasTrack && !track.title.empty()) icon = glyph::Music;
         return L"";
-    case kDScore: { // one game of the followed leagues: what's on first, then what's done, then what's next; the wheel steps through them
-        std::vector<sports::Game> live, done, next;
-        for (const std::string& l : sports::Followed())
-            for (const std::wstring& row : feeds::Get(sports::FeedId(l)).rows) {
-                sports::Game g = sports::Decode(row);
-                (g.state == sports::kLive ? live : g.state == sports::kFinal ? done : next).push_back(std::move(g));
+    case kDScore: { // games on now, or over within kRecentFor; none: the latest results. what's next never shows. the wheel steps through them
+        std::vector<sports::Game> on, past;
+        double now = (double)std::time(nullptr);
+        {
+            std::lock_guard<std::mutex> hold(scoreLock);
+            if (scoreSeen.size() > kSeenCap) scoreSeen.clear(); // a few leagues' games; only a long run gets here
+            for (const std::string& l : sports::Followed()) {
+                const sports::League* lg = sports::Find(l);
+                int sport = lg ? lg->sport : sports::kFootball;
+                double len = GameLen(sport);
+                for (const std::wstring& row : feeds::Get(sports::FeedId(l)).rows) {
+                    sports::Game g = sports::Decode(row);
+                    g.sport = sport;
+                    ScoreSeen& seen = scoreSeen[std::wstring(l.begin(), l.end()) + L"|" + g.a + L"|" + g.b + L"|" + std::to_wstring((long long)g.when)];
+                    if (g.state == sports::kLive) {
+                        seen.live = true;
+                        on.push_back(std::move(g));
+                        continue;
+                    }
+                    if (g.state != sports::kFinal) continue;
+                    if (seen.live && seen.end == 0) seen.end = now; // watched it finish
+                    double end = seen.end ? seen.end : g.when + len; // over before we looked: about its usual length after the start
+                    (now - end < kRecentFor ? on : past).push_back(std::move(g));
+                }
             }
-        std::vector<sports::Game> all = sports::Order(std::move(live));
-        for (auto* more : {&done, &next})
-            for (sports::Game& g : sports::Order(std::move(*more))) all.push_back(std::move(g));
+        }
+        std::vector<sports::Game> all = sports::Order(std::move(on)); // live first, then the newest finished; it opens on these
+        for (sports::Game& g : sports::Order(std::move(past))) all.push_back(std::move(g)); // older results after them, for the wheel
         if (all.empty()) return L"";
-        icon = glyph::Dashboard;
         int n = (int)all.size();
-        return sports::Line(all[(size_t)(((scoreAt % n) + n) % n)]);
+        const sports::Game& shown = all[(size_t)(((scoreAt % n) + n) % n)];
+        icon = shown.sport >= 0 && shown.sport < sports::kSports ? glyph::kSportIcons[shown.sport] : glyph::Trophy; // its own sport's mark
+        return sports::Line(shown);
     }
     case kDTimer:
         if (Activity() == kActNone) return L"";

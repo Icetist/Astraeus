@@ -444,9 +444,11 @@ public:
     float faceAreaW = 0, faceAreaH = 0, tileAreaW = 0, tileAreaH = 0; // the room they have on their pages: their editors show them at just this size
     int deskEdge = 0, deskPos = 500, deskLen = 560, deskThick = 30, deskGap = 10, deskFloat = 1, deskFill = 0; // its edge, place along it in thousandths, size, gap, stuck or floating, body
     int deskApps = 0; // it also stands in for the small pill over maximized apps, on the same rules
-    bool longPillNotice = false; // the update turned the long pill on for someone on the regular desktop pill: a card says so, once
     enum DeskItem { kDClock = 20, kDDate, kDVolume, kDWifi, kDMusic, kDTimer, kDCover, kDBars, kDScore }; // beyond the widgets above; new ones go last
     int scoreAt = 0; // the long pill's score: which of the followed leagues' games it shows; the wheel over it steps on
+    struct ScoreSeen { bool live = false; double end = 0; }; // a game seen on, and when it was seen to finish
+    mutable std::map<std::wstring, ScoreSeen> scoreSeen; // by league and game: a game just over stays on the pill a while
+    mutable std::mutex scoreLock; // the pills ask from more than one window
     void StepScore(int by) { scoreAt += by; }
     std::vector<int> deskItems; // what it shows, in order; the clock anchors the middle
     bool deskEditAsk = false; // settings asked for the editor: it opens after the frame
