@@ -22,7 +22,6 @@
 [Performance](#-performance) •
 [Installation](#-installation) •
 [Privacy](#-privacy) •
-[Code signing policy](#%EF%B8%8F-code-signing-policy) •
 [Configuration](#%EF%B8%8F-configuration) •
 [Building](#%EF%B8%8F-building-from-source) •
 [FAQ](#-faq)
@@ -281,17 +280,6 @@ What stays on your PC:
 - **Screen Time** notes the app in front every 15 seconds, only while that widget is on your Widgets page, in `%LOCALAPPDATA%\Astraeus\screentime.txt`.
 - **A problem report** is only ever copied to your clipboard. It holds your version, PC specs, a short list of plain settings and recent lines from `astraeus.log`, with your user name, PC name and home folder replaced. Read it before you share it.
 - **The mixer's groups and profiles, your to-dos and your server list** live in the registry under `HKCU\Software\Astraeus`.
-
-## ✍️ Code signing policy
-
-Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
-
-Every release is built from this repository's source by the [release workflow](./.github/workflows/release.yml) on GitHub Actions, and each signing request is approved by hand before the signed executable is published.
-
-- **Committers and reviewers:** [Icetist](https://github.com/Icetist)
-- **Approvers:** [Icetist](https://github.com/Icetist)
-
-**Privacy:** see [Privacy](#-privacy). Astraeus only connects to the services listed there, each for the feature named, and every one of them can be turned off.
 
 ## ⚙️ Configuration
 
