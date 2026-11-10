@@ -72,10 +72,10 @@ const lightUp = (items, onPick) => {
   const frames = [...document.querySelectorAll(".frames .frame")];
   const icons = [...document.querySelectorAll(".mini-rail li")];
   lightUp(steps, (s) => {
-    const k = s.dataset.k;
+    const k = s.dataset.k, r = s.dataset.r || k; // a panel behind home keeps home lit on the rail
     steps.forEach((x) => x.classList.toggle("on", x === s));
     frames.forEach((f) => f.classList.toggle("on", f.dataset.k === k));
-    icons.forEach((i) => i.classList.toggle("on", i.dataset.k === k));
+    icons.forEach((i) => i.classList.toggle("on", i.dataset.k === r));
   });
 })();
 
