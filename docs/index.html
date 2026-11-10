@@ -23,6 +23,7 @@
 <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
 <link rel="preload" href="assets/fonts/outfit-200.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="assets/fonts/outfit-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/shots/home.webp" as="image" type="image/webp">
 <link rel="stylesheet" href="assets/site.css">
 <script src="assets/site.js" defer></script>
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Astraeus","operatingSystem":"Windows 10, Windows 11","applicationCategory":"UtilitiesApplication","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://www.gnu.org/licenses/gpl-3.0.html","url":"https://icetist.github.io/Astraeus/","downloadUrl":"https://github.com/Icetist/Astraeus/releases/latest","codeRepository":"https://github.com/Icetist/Astraeus"}</script>
@@ -32,307 +33,288 @@
 
 <header class="top">
   <div class="wrap">
-    <a class="brand" href="#top" aria-label="Astraeus, back to the top"><img src="assets/img/logo.png" width="26" height="26" alt="">Astraeus</a>
-    <ul class="nav">
-      <li><a href="#music">Music</a></li>
-      <li><a href="#island">The island</a></li>
-      <li><a href="#pages">Pages</a></li>
-      <li><a href="#find">Where things are</a></li>
-      <li><a href="#looks">Looks</a></li>
-      <li><a href="#engineering">Engineering</a></li>
-    </ul>
-    <div class="acts-top">
-      <a class="btn gh" href="https://github.com/Icetist/Astraeus">GitHub</a>
-      <a class="btn" href="#download">Download</a>
-    </div>
+    <a class="brand" href="#top" aria-label="Astraeus, back to the top"><img src="assets/img/logo.png" width="24" height="24" alt="">Astraeus</a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#rail">The panel</a>
+      <a href="#lyrics">Lyrics</a>
+      <a href="#island">The island</a>
+      <a href="#looks">Looks</a>
+      <a href="#engineering">Engineering</a>
+    </nav>
+    <a class="btn small" href="#download">Download</a>
   </div>
 </header>
 
 <main id="main">
 
-<section class="intro" id="top" aria-labelledby="name">
-  <div class="dust" aria-hidden="true"></div>
+<!-- the panel drips down from the screen's top edge, as it does on the desktop -->
+<section class="hero" id="top" aria-labelledby="name">
+  <div class="sky" aria-hidden="true"><i class="tw" style="--d:6.3s;left:31.32%;top:24.83%;width:1px;height:1px;opacity:0.70"></i><i style="left:36.60%;top:30.19%;width:2px;height:2px;opacity:0.44"></i><i style="left:76.15%;top:58.26%;width:1px;height:1px;opacity:0.28"></i><i style="left:76.97%;top:28.32%;width:1px;height:1px;opacity:0.41"></i><i style="left:88.07%;top:21.99%;width:1px;height:1px;opacity:0.27"></i><i style="left:92.83%;top:27.15%;width:1px;height:1px;opacity:0.25"></i><i style="left:62.89%;top:81.15%;width:1px;height:1px;opacity:0.65"></i><i style="left:1.60%;top:19.81%;width:2px;height:2px;opacity:0.73"></i><i style="left:53.78%;top:72.71%;width:1px;height:1px;opacity:0.64"></i><i style="left:80.91%;top:89.14%;width:1px;height:1px;opacity:0.71"></i><i style="left:97.29%;top:80.18%;width:1px;height:1px;opacity:0.43"></i><i class="tw" style="--d:3.9s;left:59.90%;top:42.66%;width:2px;height:2px;opacity:0.38"></i><i style="left:66.80%;top:70.50%;width:1px;height:1px;opacity:0.35"></i><i style="left:53.06%;top:48.60%;width:1px;height:1px;opacity:0.32"></i><i style="left:79.70%;top:97.99%;width:1px;height:1px;opacity:0.59"></i><i style="left:62.45%;top:80.23%;width:2px;height:2px;opacity:0.36"></i><i style="left:99.94%;top:0.45%;width:1px;height:1px;opacity:0.34"></i><i style="left:47.50%;top:62.97%;width:1px;height:1px;opacity:0.68"></i><i style="left:43.96%;top:26.12%;width:2px;height:2px;opacity:0.47"></i><i style="left:26.12%;top:8.35%;width:1px;height:1px;opacity:0.72"></i><i style="left:84.84%;top:50.12%;width:1px;height:1px;opacity:0.27"></i><i style="left:24.21%;top:89.76%;width:2px;height:2px;opacity:0.50"></i><i class="tw" style="--d:3.2s;left:8.21%;top:25.29%;width:1px;height:1px;opacity:0.28"></i><i style="left:35.41%;top:53.67%;width:1px;height:1px;opacity:0.49"></i><i style="left:78.97%;top:30.44%;width:1px;height:1px;opacity:0.59"></i><i style="left:18.54%;top:81.01%;width:1px;height:1px;opacity:0.73"></i><i style="left:77.77%;top:59.66%;width:1px;height:1px;opacity:0.68"></i><i style="left:82.47%;top:64.50%;width:1px;height:1px;opacity:0.27"></i><i style="left:23.52%;top:27.98%;width:1px;height:1px;opacity:0.47"></i><i style="left:74.34%;top:78.58%;width:1px;height:1px;opacity:0.33"></i><i style="left:14.62%;top:62.55%;width:1px;height:1px;opacity:0.29"></i><i style="left:7.15%;top:25.22%;width:1px;height:1px;opacity:0.25"></i><i style="left:56.26%;top:80.96%;width:1px;height:1px;opacity:0.46"></i><i class="tw" style="--d:3.2s;left:7.25%;top:85.55%;width:2px;height:2px;opacity:0.28"></i><i style="left:77.48%;top:29.42%;width:1px;height:1px;opacity:0.67"></i><i style="left:71.76%;top:53.35%;width:1px;height:1px;opacity:0.41"></i><i style="left:84.34%;top:48.48%;width:2px;height:2px;opacity:0.63"></i><i style="left:11.65%;top:77.23%;width:1px;height:1px;opacity:0.27"></i><i style="left:74.08%;top:22.30%;width:1px;height:1px;opacity:0.79"></i><i style="left:36.59%;top:84.72%;width:1px;height:1px;opacity:0.40"></i><i style="left:78.28%;top:75.18%;width:1px;height:1px;opacity:0.40"></i><i style="left:5.90%;top:45.36%;width:2px;height:2px;opacity:0.30"></i><i style="left:99.98%;top:51.15%;width:2px;height:2px;opacity:0.27"></i><i style="left:62.49%;top:12.85%;width:1px;height:1px;opacity:0.39"></i><i class="tw" style="--d:3.8s;left:38.02%;top:71.89%;width:1px;height:1px;opacity:0.36"></i><i style="left:39.64%;top:43.65%;width:1px;height:1px;opacity:0.45"></i></div>
+  <div class="edge-glow" aria-hidden="true"></div>
   <div class="wrap">
-    <div class="lockup">
-      <img src="assets/img/logo.png" width="256" height="256" alt="">
-      <h1 id="name">Astraeus</h1>
+    <div class="drop">
+      <figure class="shot"><button type="button" data-title="Home" data-cap="The song, the weather and the time, Wi-Fi, Bluetooth, battery and mic, three sliders, and live CPU, memory and download, in a custom red look." aria-label="View larger: Home"><img src="assets/shots/home.webp" width="1365" height="375" alt="The Astraeus Home panel with a media card playing Lumière, the weather and clock, quick toggles, volume, mic and brightness sliders, and CPU, memory and download graphs" fetchpriority="high"></button><figcaption><b>Home</b> The song, the weather and the time, Wi-Fi, Bluetooth, battery and mic, three sliders, and live CPU, memory and download, in a custom red look.</figcaption></figure>
     </div>
-    <p class="lede">A dynamic island for Windows that drips open from the edge of your screen.</p>
-    <p class="sub">Rest the mouse on the middle of the top edge, or press <kbd>Win</kbd> <kbd>Alt</kbd> <kbd>A</kbd>, and a panel springs out with your music, quick toggles, system stats and everyday tools. Move away and it tucks itself back in, hands the GPU back and goes back to using almost nothing.</p>
-    <div class="acts">
-      <a class="btn solid" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.6 7.4 11l1.4-1.4 2.2 2.2V4h2v7.8l2.2-2.2 1.4 1.4zM5 20v-2h14v2z"/></svg>Download Astraeus.exe</a>
-      <a class="btn" href="https://github.com/Icetist/Astraeus">Source on GitHub</a>
-    </div>
-    <ul class="facts">
-      <li>Windows 10 and 11</li>
-      <li>One file, no installer</li>
-      <li>Free and open source</li>
-      <li>No account, no telemetry</li>
-    </ul>
-    <div class="hero-shot">
-<figure class="shot"><button type="button" data-title="Home" data-cap="The song, the weather and the time, Wi-Fi, Bluetooth, battery and mic, three sliders, and live CPU, memory and download. Shown here in a custom look: a red accent on a pale background." aria-label="View larger: Home"><img src="assets/shots/home.webp" width="1365" height="375" alt="The Astraeus Home panel with a media card playing Lumière, the weather and clock, quick toggles, volume, mic and brightness sliders, and CPU, memory and download graphs" fetchpriority="high"></button><figcaption><b>Home</b> The song, the weather and the time, Wi-Fi, Bluetooth, battery and mic, three sliders, and live CPU, memory and download. Shown here in a custom look: a red accent on a pale background.</figcaption></figure>
-    </div>
-  </div>
-</section>
-
-<section class="sec" id="music" aria-labelledby="music-h">
-  <div class="wrap">
-    <div class="head">
-      <h2 id="music-h">Music, and the words to it</h2>
-      <div>
-        <p>It works with Spotify, browsers, Media Player and anything else that talks to Windows' media controls. Album art, a wavy seek bar, and soft light that swells up from below with the music, bass to treble.</p>
-        <p>Loop and restart work even for players that don't offer them.</p>
-      </div>
-    </div>
-<figure class="shot"><button type="button" data-title="Media" data-cap="The cover turns over like a card when the song changes. A compact layout, the album art and the visualizer can each be switched off in Settings." aria-label="View larger: Media"><img src="assets/shots/media.webp" width="1365" height="391" alt="The Media page: a large album cover beside the song title, artist and album, a wavy seek bar and shuffle, previous, pause, next and repeat controls" loading="lazy" decoding="async"></button><figcaption><b>Media</b> The cover turns over like a card when the song changes. A compact layout, the album art and the visualizer can each be switched off in Settings.</figcaption></figure>
-    <div class="pair">
-<figure class="shot"><button type="button" data-title="Fullscreen lyrics" data-cap="The cover on one side, the lyrics on the other, the sung line in full focus and the rest drifting soft." aria-label="View larger: Fullscreen lyrics"><img src="assets/shots/lyrics.webp" width="1365" height="767" alt="The fullscreen player: the album cover with the song beneath it, and synced lyrics beside it with the current line in focus over a blurred red background" loading="lazy" decoding="async"></button><figcaption><b>Fullscreen lyrics</b> The cover on one side, the lyrics on the other, the sung line in full focus and the rest drifting soft.</figcaption></figure>
-      <div class="notes">
-        <h3>Fullscreen, with synced lyrics</h3>
-        <p>Click the album cover and the song fills the screen. For music apps and sites like Spotify, Apple Music, YouTube Music, Tidal, Deezer and SoundCloud, the lyrics light up word by word, even for songs Spotify has no lyrics for. Click any line to jump there.</p>
-        <dl>
-          <dt><kbd>Esc</kbd></dt><dd>Back to the Media page</dd>
-          <dt><kbd>S</kbd></dt><dd>With two monitors: the cover on one, the lyrics on the other</dd>
-          <dt><kbd>W</kbd></dt><dd>Swap them</dd>
-          <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Nudge the lyrics earlier or later</dd>
-          <dt>Pencil</dt><dd>Top right: move and resize the cover, the song and the lyrics where they are</dd>
-        </dl>
+    <h1 id="name" class="mark">Astraeus</h1>
+    <div class="hero-foot">
+      <p class="lede">A dynamic island for Windows that drips open from the edge of your screen.</p>
+      <div class="hero-acts">
+        <a class="btn solid" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.6 7.4 11l1.4-1.4 2.2 2.2V4h2v7.8l2.2-2.2 1.4 1.4zM5 20v-2h14v2z"/></svg>Download for Windows</a>
+        <a class="btn" href="https://github.com/Icetist/Astraeus">Source on GitHub</a>
+        <p class="fine">Windows 10 and 11 · one file, no installer · free and open source</p>
       </div>
     </div>
   </div>
 </section>
 
-<section class="sec" id="island" aria-labelledby="island-h">
+<section class="open" aria-labelledby="open-h">
   <div class="wrap">
-    <div class="head">
-      <h2 id="island-h">The island</h2>
-      <p>Over a maximized window, Astraeus doesn't drop the whole panel over your work. A small pill shows what's playing instead, and a click on it opens the panel.</p>
-    </div>
-    <div class="island-row">
-<figure class="shot"><button type="button" data-title="The island pill" data-cap="What&#x27;s playing, over your apps. It can stay a moment, minutes, or always while music plays." aria-label="View larger: The island pill"><img src="assets/shots/pill.webp" width="373" height="68" alt="The small island pill: a tiny album cover, the song Lumière by Lorien Testard, and four red visualizer bars" loading="lazy" decoding="async"></button><figcaption><b>The island pill</b> What&#x27;s playing, over your apps. It can stay a moment, minutes, or always while music plays.</figcaption></figure>
-      <div>
-        <p>With <b>Pill on the desktop</b>, on by default, it also stays up whenever no window is under it, after <kbd>Win</kbd> <kbd>D</kbd> or once the last window closes.</p>
-        <p>Windows notifications can arrive as pills too, and on a laptop one drops when you plug in, unplug, or run low.</p>
-      </div>
-    </div>
-    <div class="long">
-<figure class="shot"><button type="button" data-title="The long pill, singing along" data-cap="While a line is sung, the lyrics take the middle&#x27;s place; between lines, the middle comes back." aria-label="View larger: The long pill, singing along"><img src="assets/shots/long-pill.webp" width="1365" height="72" alt="The long pill across the top of the screen: the song and visualizer on the left, a sung lyric line in the middle, CPU and network speeds on the right" loading="lazy" decoding="async"></button><figcaption><b>The long pill, singing along</b> While a line is sung, the lyrics take the middle&#x27;s place; between lines, the middle comes back.</figcaption></figure>
-    </div>
-    <div class="pair flip">
-      <div class="notes">
-        <h3>Arranged by you</h3>
-        <p>Right-click either pill to arrange the long one. Pick from the clock, date, weather, music, cover, visualizer, lyrics, timer, volume, Wi-Fi, CPU, GPU, RAM, network, disk, the markets, a live score and more, each tile showing what it would say right now.</p>
-        <p>Put it on any edge, stuck to it or floating, in the theme, the accent, glass or clear. The desktop and your apps each get their own size and their own set of items.</p>
-      </div>
-<figure class="shot"><button type="button" data-title="Arranging the long pill" data-cap="The long pill at the top, its editor below: a tile for every item, with Undo, Redo and Reset." aria-label="View larger: Arranging the long pill"><img src="assets/shots/long-pill-edit.webp" width="1365" height="767" alt="The long pill editor: the pill at the top of the screen, and below it a grid of widget tiles with the chosen ones lit red, tabs for on the desktop and not on the desktop, and options for stuck or floating and the pill&#x27;s body" loading="lazy" decoding="async"></button><figcaption><b>Arranging the long pill</b> The long pill at the top, its editor below: a tile for every item, with Undo, Redo and Reset.</figcaption></figure>
-    </div>
+    <h2 id="open-h" class="sr">How it opens</h2>
+    <ol class="three">
+      <li><span class="n">Rest</span><p>Rest the mouse on the middle of the top edge, and the panel springs out.</p></li>
+      <li><span class="n"><kbd>Win</kbd><kbd>Alt</kbd><kbd>A</kbd></span><p>Or press the shortcut. It opens on the screen your mouse is on.</p></li>
+      <li><span class="n">Leave</span><p>Move away and it tucks itself back in, hands the GPU back and goes quiet.</p></li>
+    </ol>
   </div>
 </section>
 
-<section class="sec" id="pages" aria-labelledby="pages-h">
+<!-- the rail: scroll and the screen changes page, the way the real rail does -->
+<section class="rail-story" id="rail" aria-labelledby="rail-h">
   <div class="wrap">
-    <div class="head">
-      <h2 id="pages-h">The rest of the rail</h2>
-      <p>Every page sits on the rail down the panel's left side. Hover an icon for its name, scroll over the rail to move a page at a time, and right-click it to reorder the pages or take some off.</p>
-    </div>
-    <div class="duo">
-      <div class="piece">
-<figure class="shot"><button type="button" data-title="System" data-cap="CPU, GPU and memory, and the processes using the most." aria-label="View larger: System"><img src="assets/shots/system.webp" width="1365" height="401" alt="The System page: rings for CPU, GPU and memory use, and a list of top processes with their CPU share and memory" loading="lazy" decoding="async"></button><figcaption><b>System</b> CPU, GPU and memory, and the processes using the most.</figcaption></figure>
-        <h3>System</h3>
-        <p>CPU, GPU and memory at a glance, and the processes using the most. The gauges and the list only run while the page is showing.</p>
-        <p class="how">Click the CPU or Memory card on Home to get here.</p>
+    <header class="intro-h">
+      <h2 id="rail-h">Everything,<br>one rail away.</h2>
+      <p>Every page sits on the rail down the panel's side. Most of what Astraeus does is a click or a right-click away from something already on screen. Here's where it all is.</p>
+    </header>
+    <div class="story">
+      <div class="stage">
+        <div class="screen">
+          
+          <button class="frames" type="button" aria-label="View this page larger">
+            <img class="frame" data-k="home" src="assets/shots/home.webp" width="1365" height="375" alt="" decoding="async"><img class="frame" data-k="media" src="assets/shots/media.webp" width="1365" height="391" alt="" loading="lazy" decoding="async"><img class="frame" data-k="system" src="assets/shots/system.webp" width="1365" height="401" alt="" loading="lazy" decoding="async"><img class="frame" data-k="network" src="assets/shots/network.webp" width="1365" height="389" alt="" loading="lazy" decoding="async"><img class="frame" data-k="widgets" src="assets/shots/widgets.webp" width="1365" height="389" alt="" loading="lazy" decoding="async"><img class="frame" data-k="tools" src="assets/shots/tools.webp" width="1365" height="394" alt="" loading="lazy" decoding="async"><img class="frame" data-k="settings" src="assets/shots/settings.webp" width="1365" height="431" alt="" loading="lazy" decoding="async">
+          </button>
+          <ul class="mini-rail" aria-hidden="true">
+            <li data-k="home"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M200 536Q175 536 157.5 518.5Q140 501 140 476V296Q140 271 157.5 253.5Q175 236 200 236H380Q405 236 422.5 253.5Q440 271 440 296V476Q440 501 422.5 518.5Q405 536 380 536ZM200 916Q175 916 157.5 898.5Q140 881 140 856V676Q140 651 157.5 633.5Q175 616 200 616H380Q405 616 422.5 633.5Q440 651 440 676V856Q440 881 422.5 898.5Q405 916 380 916ZM580 536Q555 536 537.5 518.5Q520 501 520 476V296Q520 271 537.5 253.5Q555 236 580 236H760Q785 236 802.5 253.5Q820 271 820 296V476Q820 501 802.5 518.5Q785 536 760 536ZM580 916Q555 916 537.5 898.5Q520 881 520 856V676Q520 651 537.5 633.5Q555 616 580 616H760Q785 616 802.5 633.5Q820 651 820 676V856Q820 881 802.5 898.5Q785 916 760 916ZM200 476H380V296H200ZM580 476H760V296H580ZM580 856H760V676H580ZM200 856H380V676H200ZM580 476ZM580 676ZM380 676ZM380 476Z"/></svg></li><li data-k="media"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M401 632Q424 632 444.0 639.0Q464 646 481 660V276Q481 261 491.5 250.5Q502 240 517 240H663Q678 240 688.5 250.5Q699 261 699 276V334Q699 350 688.5 360.5Q678 371 663 371H541V772Q541 830 500.0 871.0Q459 912 401.0 912.0Q343 912 302.0 871.0Q261 830 261.0 772.0Q261 714 302.0 673.0Q343 632 401 632Z"/></svg></li><li data-k="system"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M130 896V860Q130 847 138.5 838.5Q147 830 160.0 830.0Q173 830 181.5 838.5Q190 847 190 860V896Q190 909 181.5 917.5Q173 926 160.0 926.0Q147 926 138.5 917.5Q130 909 130 896ZM290 896V680Q290 667 298.5 658.5Q307 650 320.0 650.0Q333 650 341.5 658.5Q350 667 350 680V896Q350 909 341.5 917.5Q333 926 320.0 926.0Q307 926 298.5 917.5Q290 909 290 896ZM450 896V760Q450 747 458.5 738.5Q467 730 480.0 730.0Q493 730 501.5 738.5Q510 747 510 760V896Q510 909 501.5 917.5Q493 926 480.0 926.0Q467 926 458.5 917.5Q450 909 450 896ZM610 896V700Q610 687 618.5 678.5Q627 670 640.0 670.0Q653 670 661.5 678.5Q670 687 670 700V896Q670 909 661.5 917.5Q653 926 640.0 926.0Q627 926 618.5 917.5Q610 909 610 896ZM770 896V540Q770 527 778.5 518.5Q787 510 800.0 510.0Q813 510 821.5 518.5Q830 527 830 540V896Q830 909 821.5 917.5Q813 926 800.0 926.0Q787 926 778.5 917.5Q770 909 770 896ZM560 564Q546 564 533.0 558.5Q520 553 509 544L409 444Q405 440 400.0 440.0Q395 440 391 444L181 654Q172 663 159.5 662.5Q147 662 138 653Q130 644 130.5 632.0Q131 620 139 611L349 401Q360 391 373.0 386.0Q386 381 400.0 381.0Q414 381 427.5 386.0Q441 391 451 401L551 501Q555 505 560.0 505.0Q565 505 569 501L779 291Q788 282 800.5 282.5Q813 283 822 292Q830 301 829.5 313.0Q829 325 821 334L611 544Q601 553 587.5 558.5Q574 564 560 564Z"/></svg></li><li data-k="network"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M480.0 924.0Q446 924 422.5 901.0Q399 878 399.0 844.0Q399 810 422.5 786.5Q446 763 480.0 763.0Q514 763 537.5 786.5Q561 810 561.0 844.0Q561 878 537.5 901.0Q514 924 480.0 924.0ZM735 617Q750 629 750.5 647.0Q751 665 737 679Q724 692 705.5 692.0Q687 692 672 681Q633 651 583.5 633.5Q534 616 480 616Q426 616 376.5 633.5Q327 651 288 681Q273 692 254.5 691.5Q236 691 223 678Q210 665 210.0 646.5Q210 628 225 617Q278 574 342.5 550.5Q407 527 480.0 527.0Q553 527 617.5 551.0Q682 575 735 617ZM904 445Q919 458 920.0 476.5Q921 495 907 509Q894 522 875.0 521.5Q856 521 841 508Q768 446 675.5 411.0Q583 376 480.0 376.0Q377 376 284.5 411.0Q192 446 119 508Q104 521 85.0 521.5Q66 522 53 509Q39 495 40.0 476.5Q41 458 56 445Q141 370 249.0 328.5Q357 287 480.0 287.0Q603 287 711.0 328.5Q819 370 904 445Z"/></svg></li><li data-k="widgets"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M530 420V272Q530 257 540.5 246.5Q551 236 566 236H784Q799 236 809.5 246.5Q820 257 820 272V420Q820 435 809.5 445.5Q799 456 784 456H566Q551 456 540.5 445.5Q530 435 530 420ZM140 560V272Q140 257 150.5 246.5Q161 236 176 236H394Q409 236 419.5 246.5Q430 257 430 272V560Q430 575 419.5 585.5Q409 596 394 596H176Q161 596 150.5 585.5Q140 575 140 560ZM530 880V592Q530 577 540.5 566.5Q551 556 566 556H784Q799 556 809.5 566.5Q820 577 820 592V880Q820 895 809.5 905.5Q799 916 784 916H566Q551 916 540.5 905.5Q530 895 530 880ZM140 880V732Q140 717 150.5 706.5Q161 696 176 696H394Q409 696 419.5 706.5Q430 717 430 732V880Q430 895 419.5 905.5Q409 916 394 916H176Q161 916 150.5 905.5Q140 895 140 880ZM200 536H370V296H200ZM590 856H760V616H590ZM590 396H760V296H590ZM200 856H370V756H200ZM370 536ZM590 396ZM590 616ZM370 756Z"/></svg></li><li data-k="tools"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M721 945 519 743Q514 738 511.5 731.5Q509 725 509.0 718.0Q509 711 511.5 704.5Q514 698 519 693L595 617Q601 611 607.0 609.0Q613 607 620.5 607.0Q628 607 634.0 609.0Q640 611 646 617L847 819Q853 824 855.5 830.5Q858 837 858.0 844.0Q858 851 855.5 857.5Q853 864 847 869L772 945Q766 950 760.0 952.5Q754 955 746.5 955.0Q739 955 733.0 952.5Q727 950 721 945ZM746 887 789 844 621 676 579 719ZM187 945 112 870Q106 864 103.5 857.5Q101 851 101.0 844.0Q101 837 103.5 830.5Q106 824 112 818L321 609H405L437 577L270 410H213L102 299L201 200L312 311V368L479 535L598 417L539 358L590 308H488L466 286L594 158L615 180V282L666 231L817 381Q832 397 840.0 416.5Q848 436 848 458Q848 478 841.5 495.5Q835 513 822 528L739 445L682 501L640 459L447 652V737L238 945Q232 950 226.0 953.0Q220 956 212.5 956.0Q205 956 198.5 953.0Q192 950 187 945ZM213 886 396 703V660H354L170 844ZM213 886 170 844 192 865 213 886ZM746 887 789 844Z"/></svg></li><li data-k="settings"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M436 956Q415 956 400.0 942.5Q385 929 382 909L372 834Q356 829 339.5 819.0Q323 809 309 798L240 828Q221 836 202.0 829.5Q183 823 173 805L127 727Q117 709 121.5 689.5Q126 670 142 657L202 612Q200 603 199.5 594.0Q199 585 199 576Q199 568 199.5 559.0Q200 550 202 540L142 495Q126 482 121.5 462.0Q117 442 128 425L173 348Q183 330 202.0 323.5Q221 317 240 325L309 354Q323 343 339.5 333.5Q356 324 372 318L382 243Q385 223 400.0 209.5Q415 196 436 196H524Q545 196 560.0 209.5Q575 223 578 243L588 318Q606 325 620.5 333.5Q635 342 650 354L720 325Q739 317 758.0 323.5Q777 330 788 348L833 425Q843 443 838.5 462.5Q834 482 818 495L757 541Q759 551 759.0 559.0Q759 567 759 576Q759 584 758.5 592.5Q758 601 756 612L816 657Q832 670 837.0 689.5Q842 709 831 727L786 805Q775 822 756.0 829.0Q737 836 718 827L650 798Q635 810 619.5 819.0Q604 828 588 834L578 909Q575 929 560.0 942.5Q545 956 524 956ZM440 896H519L533 789Q564 781 589.0 766.0Q614 751 638 728L737 770L777 702L690 637Q695 621 696.5 606.0Q698 591 698 576Q698 560 696.5 545.5Q695 531 690 516L777 450L738 382L637 424Q617 403 589.0 386.5Q561 370 533 363L520 256H441L427 363Q397 370 371.0 385.0Q345 400 321 423L222 382L183 450L269 514Q264 529 262.0 544.0Q260 559 260 576Q260 592 262.0 607.0Q264 622 269 637L183 702L222 770L321 728Q344 751 370.0 766.0Q396 781 427 789ZM480 696Q530 696 565.0 661.0Q600 626 600.0 576.0Q600 526 565.0 491.0Q530 456 480 456Q430 456 395.0 491.0Q360 526 360.0 576.0Q360 626 395.0 661.0Q430 696 480 696ZM480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Z"/></svg></li>
+          </ul>
+        </div>
       </div>
-      <div class="piece">
-<figure class="shot"><button type="button" data-title="Network" data-cap="Throughput and latency over the last minute, your local and public IP, and the adapter." aria-label="View larger: Network"><img src="assets/shots/network.webp" width="1365" height="389" alt="The Network page: the connected Wi-Fi network and signal strength, local and public IP, the adapter, and a throughput and latency graph" loading="lazy" decoding="async"></button><figcaption><b>Network</b> Throughput and latency over the last minute, your local and public IP, and the adapter.</figcaption></figure>
-        <h3>Network</h3>
-        <p>Upload and download speed, latency and jitter on a one-minute graph, with your local and public IP a click from the clipboard.</p>
-        <p class="how"><strong>Networks</strong> opens the Wi-Fi map: nearby networks ride the arcs of a big Wi-Fi symbol, closer the stronger they are.</p>
-      </div>
-    </div>
-    <div class="solo">
-      <div class="piece">
-        <h3>Widgets</h3>
-        <p>More than 80 to pick from a searchable gallery: clocks, weather, timers, notes, system rings, stocks, US markets, and sports scores and fixtures from nearly 50 leagues. Each can be small, wide or large; drag them into place, and click one for its details.</p>
-        <p class="how"><strong>Add widgets</strong> at the top of the page. The page joins the rail with your first widget.</p>
-      </div>
-<figure class="shot"><button type="button" data-title="Widgets" data-cap="Live scores and fixtures, the weather, a flip clock and the date, each one opening into more when clicked." aria-label="View larger: Widgets"><img src="assets/shots/widgets.webp" width="1365" height="389" alt="The Widgets page: a live chess scores list, fixtures, a weather tile, a flip clock reading 10 40, and a date tile for Tuesday the 10th of November" loading="lazy" decoding="async"></button><figcaption><b>Widgets</b> Live scores and fixtures, the weather, a flip clock and the date, each one opening into more when clicked.</figcaption></figure>
-    </div>
-    <div class="duo">
-      <div class="piece">
-<figure class="shot"><button type="button" data-title="Tools" data-cap="Power actions, a timer, stopwatch, focus sessions and to-do list, and quick tiles you choose yourself." aria-label="View larger: Tools"><img src="assets/shots/tools.webp" width="1365" height="394" alt="The Tools page: lock, sleep, sign out, restart and shut down buttons, a timer with preset lengths, and quick tiles for keep-awake, the color picker, the recycle bin, do not disturb and settings" loading="lazy" decoding="async"></button><figcaption><b>Tools</b> Power actions, a timer, stopwatch, focus sessions and to-do list, and quick tiles you choose yourself.</figcaption></figure>
-        <h3>Tools</h3>
-        <p>Lock, sleep, sign out, restart and shut down, the last ones press-and-hold. A timer, a stopwatch with laps and focus sessions, a color picker that copies the hex code, keep-awake and Do Not Disturb.</p>
-        <p class="how">Right-click the tiles to choose which show and in what order.</p>
-      </div>
-      <div class="piece">
-<figure class="shot"><button type="button" data-title="Settings" data-cap="The look and its colors, where the panel lives, and which screens it&#x27;s on." aria-label="View larger: Settings"><img src="assets/shots/settings.webp" width="1365" height="431" alt="The Settings page: a color wheel with the accent and background colors, a switch for a different theme when not on the desktop, material choices of dark, light, glass, custom and starfall, an opacity slider, the panel&#x27;s position and the screens it shows on" loading="lazy" decoding="async"></button><figcaption><b>Settings</b> The look and its colors, where the panel lives, and which screens it&#x27;s on.</figcaption></figure>
-        <h3>Settings</h3>
-        <p>The look, the accent and the background, the edge it lives on and which screens, all picked from small pictures of the real thing. <b>Advanced</b> holds power, the weather city, backups and the display size.</p>
-        <p class="how">The <strong>Settings</strong> tile on Tools, or Settings in the tray menu.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="sec" id="find" aria-labelledby="find-h">
-  <div class="wrap">
-    <div class="head">
-      <h2 id="find-h">Where things are</h2>
-      <p>Most of Astraeus is a click or a right-click away from something already on screen. The rail, top to bottom, and what's hiding on each page:</p>
-    </div>
-    <div class="map">
-      <ol class="rail">
-        <li>
+      <ol class="steps-r">
+        <li class="step" data-k="home">
           <span class="ico"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M200 536Q175 536 157.5 518.5Q140 501 140 476V296Q140 271 157.5 253.5Q175 236 200 236H380Q405 236 422.5 253.5Q440 271 440 296V476Q440 501 422.5 518.5Q405 536 380 536ZM200 916Q175 916 157.5 898.5Q140 881 140 856V676Q140 651 157.5 633.5Q175 616 200 616H380Q405 616 422.5 633.5Q440 651 440 676V856Q440 881 422.5 898.5Q405 916 380 916ZM580 536Q555 536 537.5 518.5Q520 501 520 476V296Q520 271 537.5 253.5Q555 236 580 236H760Q785 236 802.5 253.5Q820 271 820 296V476Q820 501 802.5 518.5Q785 536 760 536ZM580 916Q555 916 537.5 898.5Q520 881 520 856V676Q520 651 537.5 633.5Q555 616 580 616H760Q785 616 802.5 633.5Q820 651 820 676V856Q820 881 802.5 898.5Q785 916 760 916ZM200 476H380V296H200ZM580 476H760V296H580ZM580 856H760V676H580ZM200 856H380V676H200ZM580 476ZM580 676ZM380 676ZM380 476Z"/></svg></span>
           <h3>Home</h3>
-          <p>The song, weather, quick toggles, sliders and live stats.</p>
+          <p>The song, the weather and the time, Wi-Fi, Bluetooth, battery and mic, three sliders and live stats, all at once.</p>
           <ul>
-            <li>Right-click <b>Bluetooth</b>: your devices orbit your PC, and the <b>Shared audio</b> tab plays one sound on several outputs at once.</li>
-            <li>Right-click <b>Wi-Fi</b> for nearby networks; join one right there.</li>
+            <li>Right-click <b>Bluetooth</b>: your devices orbit your PC. Its <b>Shared audio</b> tab plays one sound on several outputs at once.</li>
+            <li>Right-click <b>Wi-Fi</b> for nearby networks, and join one right there.</li>
             <li>Click the speaker on the volume slider for the volume mixer.</li>
             <li>Click the <b>weather</b> for a month calendar, then the weather there for the next hours and days.</li>
-            <li>The media, CPU, memory and download cards open their pages.</li>
           </ul>
+          <div class="inline"><figure class="shot"><button type="button" data-title="Home" data-cap="The song, the weather and the time, quick toggles, sliders and live stats." aria-label="View larger: Home"><img src="assets/shots/home.webp" width="1365" height="375" alt="The Home page" loading="lazy" decoding="async"></button><figcaption><b>Home</b> The song, the weather and the time, quick toggles, sliders and live stats.</figcaption></figure></div>
         </li>
-        <li>
+        <li class="step" data-k="media">
           <span class="ico"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M401 632Q424 632 444.0 639.0Q464 646 481 660V276Q481 261 491.5 250.5Q502 240 517 240H663Q678 240 688.5 250.5Q699 261 699 276V334Q699 350 688.5 360.5Q678 371 663 371H541V772Q541 830 500.0 871.0Q459 912 401.0 912.0Q343 912 302.0 871.0Q261 830 261.0 772.0Q261 714 302.0 673.0Q343 632 401 632Z"/></svg></span>
           <h3>Media</h3>
-          <p>The player.</p>
+          <p>Spotify, browsers, Media Player, anything that talks to Windows' media controls. Soft light swells up from below with the music, bass to treble, and the cover turns over like a card when the song changes.</p>
           <ul>
             <li>Click the cover for the fullscreen player and its lyrics.</li>
-            <li>In fullscreen, the pencil in the top right edits the layout.</li>
+            <li>Loop and restart work even for players that don't offer them.</li>
           </ul>
+          <div class="inline"><figure class="shot"><button type="button" data-title="Media" data-cap="The cover turns over like a card when the song changes." aria-label="View larger: Media"><img src="assets/shots/media.webp" width="1365" height="391" alt="The Media page: a large album cover, the song, a wavy seek bar and playback controls" loading="lazy" decoding="async"></button><figcaption><b>Media</b> The cover turns over like a card when the song changes.</figcaption></figure></div>
         </li>
-        <li>
+        <li class="step" data-k="system">
           <span class="ico"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M130 896V860Q130 847 138.5 838.5Q147 830 160.0 830.0Q173 830 181.5 838.5Q190 847 190 860V896Q190 909 181.5 917.5Q173 926 160.0 926.0Q147 926 138.5 917.5Q130 909 130 896ZM290 896V680Q290 667 298.5 658.5Q307 650 320.0 650.0Q333 650 341.5 658.5Q350 667 350 680V896Q350 909 341.5 917.5Q333 926 320.0 926.0Q307 926 298.5 917.5Q290 909 290 896ZM450 896V760Q450 747 458.5 738.5Q467 730 480.0 730.0Q493 730 501.5 738.5Q510 747 510 760V896Q510 909 501.5 917.5Q493 926 480.0 926.0Q467 926 458.5 917.5Q450 909 450 896ZM610 896V700Q610 687 618.5 678.5Q627 670 640.0 670.0Q653 670 661.5 678.5Q670 687 670 700V896Q670 909 661.5 917.5Q653 926 640.0 926.0Q627 926 618.5 917.5Q610 909 610 896ZM770 896V540Q770 527 778.5 518.5Q787 510 800.0 510.0Q813 510 821.5 518.5Q830 527 830 540V896Q830 909 821.5 917.5Q813 926 800.0 926.0Q787 926 778.5 917.5Q770 909 770 896ZM560 564Q546 564 533.0 558.5Q520 553 509 544L409 444Q405 440 400.0 440.0Q395 440 391 444L181 654Q172 663 159.5 662.5Q147 662 138 653Q130 644 130.5 632.0Q131 620 139 611L349 401Q360 391 373.0 386.0Q386 381 400.0 381.0Q414 381 427.5 386.0Q441 391 451 401L551 501Q555 505 560.0 505.0Q565 505 569 501L779 291Q788 282 800.5 282.5Q813 283 822 292Q830 301 829.5 313.0Q829 325 821 334L611 544Q601 553 587.5 558.5Q574 564 560 564Z"/></svg></span>
           <h3>System</h3>
-          <p>CPU, GPU, memory and the top processes.</p>
+          <p>CPU, GPU and memory, and the processes using the most. The gauges only run while the page is showing.</p>
+          <ul>
+            <li>The CPU and Memory cards on Home bring you here.</li>
+          </ul>
+          <div class="inline"><figure class="shot"><button type="button" data-title="System" data-cap="CPU, GPU and memory, and the processes using the most." aria-label="View larger: System"><img src="assets/shots/system.webp" width="1365" height="401" alt="The System page: rings for CPU, GPU and memory use, and a list of top processes" loading="lazy" decoding="async"></button><figcaption><b>System</b> CPU, GPU and memory, and the processes using the most.</figcaption></figure></div>
         </li>
-        <li>
+        <li class="step" data-k="network">
           <span class="ico"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M480.0 924.0Q446 924 422.5 901.0Q399 878 399.0 844.0Q399 810 422.5 786.5Q446 763 480.0 763.0Q514 763 537.5 786.5Q561 810 561.0 844.0Q561 878 537.5 901.0Q514 924 480.0 924.0ZM735 617Q750 629 750.5 647.0Q751 665 737 679Q724 692 705.5 692.0Q687 692 672 681Q633 651 583.5 633.5Q534 616 480 616Q426 616 376.5 633.5Q327 651 288 681Q273 692 254.5 691.5Q236 691 223 678Q210 665 210.0 646.5Q210 628 225 617Q278 574 342.5 550.5Q407 527 480.0 527.0Q553 527 617.5 551.0Q682 575 735 617ZM904 445Q919 458 920.0 476.5Q921 495 907 509Q894 522 875.0 521.5Q856 521 841 508Q768 446 675.5 411.0Q583 376 480.0 376.0Q377 376 284.5 411.0Q192 446 119 508Q104 521 85.0 521.5Q66 522 53 509Q39 495 40.0 476.5Q41 458 56 445Q141 370 249.0 328.5Q357 287 480.0 287.0Q603 287 711.0 328.5Q819 370 904 445Z"/></svg></span>
           <h3>Network</h3>
-          <p>Speeds, latency and your IP addresses.</p>
+          <p>Upload and download speed, latency and jitter over the last minute, your local and public IP, and the adapter.</p>
           <ul>
-            <li><b>Networks</b> opens the Wi-Fi map. Hold a saved network to forget it.</li>
+            <li><b>Networks</b> opens the Wi-Fi map: nearby networks ride the arcs of a big Wi-Fi symbol, closer the stronger they are.</li>
           </ul>
+          <div class="inline"><figure class="shot"><button type="button" data-title="Network" data-cap="Throughput and latency over the last minute, your IP addresses and the adapter." aria-label="View larger: Network"><img src="assets/shots/network.webp" width="1365" height="389" alt="The Network page: the Wi-Fi network and signal, IP addresses, and a throughput and latency graph" loading="lazy" decoding="async"></button><figcaption><b>Network</b> Throughput and latency over the last minute, your IP addresses and the adapter.</figcaption></figure></div>
         </li>
-        <li>
-          <span class="ico"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M212 956Q182 956 161.0 935.0Q140 914 140 884V436Q122 427 111.0 410.0Q100 393 100 371V268Q100 238 121.0 217.0Q142 196 172 196H788Q818 196 839.0 217.0Q860 238 860 268V371Q860 393 849.0 410.0Q838 427 820 436V884Q820 914 799.0 935.0Q778 956 748 956ZM200 444V882Q200 888 204.5 892.0Q209 896 215 896H748Q753 896 756.5 892.5Q760 889 760 884V444ZM172 384H788Q793 384 796.5 380.5Q800 377 800 371V268Q800 263 796.5 259.5Q793 256 788 256H172Q167 256 163.5 259.5Q160 263 160 268V371Q160 377 163.5 380.5Q167 384 172 384ZM397 633H564Q576 633 584.0 625.0Q592 617 592.0 604.5Q592 592 584.0 584.0Q576 576 564 576H396Q384 576 376.0 584.0Q368 592 368.0 604.5Q368 617 376.0 625.0Q384 633 397 633ZM480 670Q480 670 480.0 670.0Q480 670 480 670Q480 670 480.0 670.0Q480 670 480 670Z"/></svg></span>
-          <h3>Shelf</h3>
-          <p>Drag files or text onto the top of the screen and the panel opens here to keep them.</p>
-          <ul>
-            <li>Drag a card back out to drop it anywhere, or tap it to copy it.</li>
-          </ul>
-        </li>
-        <li>
+        <li class="step" data-k="widgets">
           <span class="ico"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M530 420V272Q530 257 540.5 246.5Q551 236 566 236H784Q799 236 809.5 246.5Q820 257 820 272V420Q820 435 809.5 445.5Q799 456 784 456H566Q551 456 540.5 445.5Q530 435 530 420ZM140 560V272Q140 257 150.5 246.5Q161 236 176 236H394Q409 236 419.5 246.5Q430 257 430 272V560Q430 575 419.5 585.5Q409 596 394 596H176Q161 596 150.5 585.5Q140 575 140 560ZM530 880V592Q530 577 540.5 566.5Q551 556 566 556H784Q799 556 809.5 566.5Q820 577 820 592V880Q820 895 809.5 905.5Q799 916 784 916H566Q551 916 540.5 905.5Q530 895 530 880ZM140 880V732Q140 717 150.5 706.5Q161 696 176 696H394Q409 696 419.5 706.5Q430 717 430 732V880Q430 895 419.5 905.5Q409 916 394 916H176Q161 916 150.5 905.5Q140 895 140 880ZM200 536H370V296H200ZM590 856H760V616H590ZM590 396H760V296H590ZM200 856H370V756H200ZM370 536ZM590 396ZM590 616ZM370 756Z"/></svg></span>
           <h3>Widgets</h3>
-          <p>Your own grid of widgets.</p>
+          <p>More than 80 in a searchable gallery: clocks, weather, timers, notes, stocks, US markets, and scores and fixtures from nearly 50 leagues. Small, wide or large, dragged wherever you like.</p>
           <ul>
-            <li><b>Add widgets</b> for the gallery; drag to arrange, click one for its details.</li>
+            <li><b>Add widgets</b> at the top of the page. The page joins the rail with your first one.</li>
+            <li>Click any widget for more: the forecast, a stock's chart, a game's scorers and stats.</li>
           </ul>
+          <div class="inline"><figure class="shot"><button type="button" data-title="Widgets" data-cap="Live scores and fixtures, the weather, a flip clock and the date." aria-label="View larger: Widgets"><img src="assets/shots/widgets.webp" width="1365" height="389" alt="The Widgets page: scores, fixtures, weather, a flip clock and a date tile" loading="lazy" decoding="async"></button><figcaption><b>Widgets</b> Live scores and fixtures, the weather, a flip clock and the date.</figcaption></figure></div>
         </li>
-        <li>
+        <li class="step" data-k="tools">
           <span class="ico"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M721 945 519 743Q514 738 511.5 731.5Q509 725 509.0 718.0Q509 711 511.5 704.5Q514 698 519 693L595 617Q601 611 607.0 609.0Q613 607 620.5 607.0Q628 607 634.0 609.0Q640 611 646 617L847 819Q853 824 855.5 830.5Q858 837 858.0 844.0Q858 851 855.5 857.5Q853 864 847 869L772 945Q766 950 760.0 952.5Q754 955 746.5 955.0Q739 955 733.0 952.5Q727 950 721 945ZM746 887 789 844 621 676 579 719ZM187 945 112 870Q106 864 103.5 857.5Q101 851 101.0 844.0Q101 837 103.5 830.5Q106 824 112 818L321 609H405L437 577L270 410H213L102 299L201 200L312 311V368L479 535L598 417L539 358L590 308H488L466 286L594 158L615 180V282L666 231L817 381Q832 397 840.0 416.5Q848 436 848 458Q848 478 841.5 495.5Q835 513 822 528L739 445L682 501L640 459L447 652V737L238 945Q232 950 226.0 953.0Q220 956 212.5 956.0Q205 956 198.5 953.0Q192 950 187 945ZM213 886 396 703V660H354L170 844ZM213 886 170 844 192 865 213 886ZM746 887 789 844Z"/></svg></span>
           <h3>Tools</h3>
-          <p>Power, timers and quick tiles.</p>
+          <p>Lock, sleep, sign out, restart and shut down, the last ones press-and-hold. A timer, a stopwatch, focus sessions, a color picker, keep-awake and Do Not Disturb.</p>
           <ul>
-            <li>Right-click the tiles to choose and order them.</li>
-            <li>The <b>Settings</b> tile opens Settings.</li>
+            <li>Right-click the tiles to choose which show and in what order.</li>
+            <li>A running timer counts down in a small bubble beside the pill.</li>
           </ul>
+          <div class="inline"><figure class="shot"><button type="button" data-title="Tools" data-cap="Power actions, timers and quick tiles you choose yourself." aria-label="View larger: Tools"><img src="assets/shots/tools.webp" width="1365" height="394" alt="The Tools page: power buttons, a timer, and quick tiles" loading="lazy" decoding="async"></button><figcaption><b>Tools</b> Power actions, timers and quick tiles you choose yourself.</figcaption></figure></div>
+        </li>
+        <li class="step" data-k="settings">
+          <span class="ico"><svg viewBox="0 96 960 960" aria-hidden="true" focusable="false"><path d="M436 956Q415 956 400.0 942.5Q385 929 382 909L372 834Q356 829 339.5 819.0Q323 809 309 798L240 828Q221 836 202.0 829.5Q183 823 173 805L127 727Q117 709 121.5 689.5Q126 670 142 657L202 612Q200 603 199.5 594.0Q199 585 199 576Q199 568 199.5 559.0Q200 550 202 540L142 495Q126 482 121.5 462.0Q117 442 128 425L173 348Q183 330 202.0 323.5Q221 317 240 325L309 354Q323 343 339.5 333.5Q356 324 372 318L382 243Q385 223 400.0 209.5Q415 196 436 196H524Q545 196 560.0 209.5Q575 223 578 243L588 318Q606 325 620.5 333.5Q635 342 650 354L720 325Q739 317 758.0 323.5Q777 330 788 348L833 425Q843 443 838.5 462.5Q834 482 818 495L757 541Q759 551 759.0 559.0Q759 567 759 576Q759 584 758.5 592.5Q758 601 756 612L816 657Q832 670 837.0 689.5Q842 709 831 727L786 805Q775 822 756.0 829.0Q737 836 718 827L650 798Q635 810 619.5 819.0Q604 828 588 834L578 909Q575 929 560.0 942.5Q545 956 524 956ZM440 896H519L533 789Q564 781 589.0 766.0Q614 751 638 728L737 770L777 702L690 637Q695 621 696.5 606.0Q698 591 698 576Q698 560 696.5 545.5Q695 531 690 516L777 450L738 382L637 424Q617 403 589.0 386.5Q561 370 533 363L520 256H441L427 363Q397 370 371.0 385.0Q345 400 321 423L222 382L183 450L269 514Q264 529 262.0 544.0Q260 559 260 576Q260 592 262.0 607.0Q264 622 269 637L183 702L222 770L321 728Q344 751 370.0 766.0Q396 781 427 789ZM480 696Q530 696 565.0 661.0Q600 626 600.0 576.0Q600 526 565.0 491.0Q530 456 480 456Q430 456 395.0 491.0Q360 526 360.0 576.0Q360 626 395.0 661.0Q430 696 480 696ZM480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Z"/></svg></span>
+          <h3>Settings</h3>
+          <p>The look and its colors, the edge it lives on and which screens, each picked from a small picture of the real thing. <b>Advanced</b> holds power, the weather city, backups and the display size.</p>
+          <ul>
+            <li>The <b>Settings</b> tile on Tools, or the tray menu.</li>
+            <li>Right-click the rail itself to reorder pages, take some off, or add the Shelf and Widgets back.</li>
+          </ul>
+          <div class="inline"><figure class="shot"><button type="button" data-title="Settings" data-cap="The look and its colors, where the panel lives, and which screens." aria-label="View larger: Settings"><img src="assets/shots/settings.webp" width="1365" height="431" alt="The Settings page: a color wheel, theme materials, an opacity slider, position and screens" loading="lazy" decoding="async"></button><figcaption><b>Settings</b> The look and its colors, where the panel lives, and which screens.</figcaption></figure></div>
         </li>
       </ol>
-      <aside class="anywhere" aria-labelledby="any-h">
-        <h3 id="any-h">From anywhere</h3>
-        <dl class="keys">
-          <div><dt>Open the panel</dt><dd>Rest the mouse on the middle of the top edge, press <kbd>Win</kbd> <kbd>Alt</kbd> <kbd>A</kbd>, or click the tray icon.</dd></div>
-          <div><dt>Close it</dt><dd>Move away, or press <kbd>Esc</kbd> if you opened it with the keyboard.</dd></div>
-          <div><dt>Change pages</dt><dd>Click the rail, or use the arrow keys and <kbd>1</kbd> to <kbd>6</kbd>.</dd></div>
-          <div><dt>Edit the rail</dt><dd>Right-click it: drag pages into order, <b>×</b> to take one off, and add more from the gallery beside it.</dd></div>
-          <div><dt>Arrange the long pill</dt><dd>Right-click either pill.</dd></div>
-          <div><dt>Settings</dt><dd>The tile on Tools, or the tray menu. <b>Tour</b> in Settings plays the first-run tour again.</dd></div>
-          <div><dt>Every editor</dt><dd><b>Undo</b>, <b>Redo</b> and <b>Reset</b>.</dd></div>
-        </dl>
-      </aside>
     </div>
   </div>
 </section>
 
-<section class="sec looks" id="looks" aria-labelledby="looks-h">
+<!-- lyrics: the fullscreen player, set on a blur of its own colours like the app's album art background -->
+<section class="lyrics" id="lyrics" aria-labelledby="lyr-h">
+  <div class="wash" aria-hidden="true"></div>
   <div class="wrap">
-    <div class="head">
-      <h2 id="looks-h">One panel, many looks</h2>
-      <p>The palette comes from your wallpaper, from the album art of whatever is playing, or from any accent you pick, and it can follow Windows' accent color live.</p>
+    <h2 id="lyr-h" class="sr">Fullscreen lyrics</h2>
+    <div class="lyr-grid">
+      <ol class="sing" aria-label="What the fullscreen player does">
+        <li>Click the cover.</li>
+        <li>The song fills the screen.</li>
+        <li>The words light up as they're sung,</li>
+        <li>the rest drift soft and out of focus.</li>
+        <li>Click a line to jump there.</li>
+        <li>Press S, and it spans two screens.</li>
+      </ol>
+      <div class="lyr-shot">
+        <figure class="shot"><button type="button" data-title="Fullscreen lyrics" data-cap="The cover on one side, the lyrics on the other, the sung line in focus and the rest drifting soft." aria-label="View larger: Fullscreen lyrics"><img src="assets/shots/lyrics.webp" width="1365" height="767" alt="The fullscreen player: the album cover with the song beneath it, and synced lyrics beside it with the current line in focus over a blurred red background" loading="lazy" decoding="async"></button><figcaption><b>Fullscreen lyrics</b> The cover on one side, the lyrics on the other, the sung line in focus and the rest drifting soft.</figcaption></figure>
+        <dl class="keys-row">
+          <div><dt><kbd>Esc</kbd></dt><dd>Back to the Media page</dd></div>
+          <div><dt><kbd>S</kbd> <kbd>W</kbd></dt><dd>Spread over two monitors, swap them</dd></div>
+          <div><dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Nudge the lyrics earlier or later</dd></div>
+          <div><dt>Pencil</dt><dd>Move and resize everything, in place</dd></div>
+        </dl>
+        <p class="lyr-note">Synced lyrics for Spotify, Apple Music, YouTube Music, Tidal, Deezer, SoundCloud and more, in their apps or the browser, even for songs Spotify has no lyrics for.</p>
+      </div>
     </div>
-    <div class="tabs" role="tablist" aria-label="Looks">
-      <button role="tab" id="t-dark" aria-controls="p-dark" aria-selected="true">Dark</button>
-      <button role="tab" id="t-glass" aria-controls="p-glass" aria-selected="false" tabindex="-1">Glass</button>
-      <button role="tab" id="t-light" aria-controls="p-light" aria-selected="false" tabindex="-1">Light</button>
-    </div>
-    <div class="panel" id="p-dark" role="tabpanel" aria-labelledby="t-dark">
-<figure class="shot"><button type="button" data-title="Dark" data-cap="The default. Black blends into the screen&#x27;s bezel, with a blue accent here." aria-label="View larger: Dark"><img src="assets/shots/look_dark.webp" width="1364" height="412" alt="Home in the dark look: black surfaces with blue accents" loading="lazy" decoding="async"></button><figcaption><b>Dark</b> The default. Black blends into the screen&#x27;s bezel, with a blue accent here.</figcaption></figure>
-    </div>
-    <div class="panel" id="p-glass" role="tabpanel" aria-labelledby="t-glass" hidden>
-<figure class="shot"><button type="button" data-title="Glass" data-cap="A live frosted blur of whatever is behind the panel, its tint deepening over bright pages so white text stays readable." aria-label="View larger: Glass"><img src="assets/shots/look_glass.webp" width="1365" height="385" alt="Home in the glass look: translucent surfaces with the wallpaper showing through, and pink accents" loading="lazy" decoding="async"></button><figcaption><b>Glass</b> A live frosted blur of whatever is behind the panel, its tint deepening over bright pages so white text stays readable.</figcaption></figure>
-    </div>
-    <div class="panel" id="p-light" role="tabpanel" aria-labelledby="t-light" hidden>
-<figure class="shot"><button type="button" data-title="Light" data-cap="Dark ink on pale tinted surfaces." aria-label="View larger: Light"><img src="assets/shots/look_light.webp" width="1066" height="372" alt="Home in the light look: pale grey surfaces with blue accents over a city wallpaper" loading="lazy" decoding="async"></button><figcaption><b>Light</b> Dark ink on pale tinted surfaces.</figcaption></figure>
-    </div>
-    <p class="also">Custom is the one at the top of this page: a color wheel for any accent and any background, with text that turns white or black to suit. <b>Clear</b> leaves the frost off entirely, and <b>Starfall</b> is a deep night sky with fine star dust and a slow violet glow, which the pill wears too. Turn on <b>Different theme when not on desktop</b> and your desktop and your apps each get a look of their own.</p>
   </div>
 </section>
 
-<section class="sec" id="engineering" aria-labelledby="eng-h">
-  <div class="wrap eng">
-    <div class="lead">
-      <h2 id="eng-h">Built to cost nothing while it's closed</h2>
-      <p class="first">Astraeus is one native executable written in C++20, drawing with Direct2D and DirectComposition. No Electron, no embedded web view, no runtime to install.</p>
-      <p>Frames are drawn only while something moves, so a closed panel renders nothing at all. A few seconds after it closes (8 by default), Direct3D, Direct2D and the swap chain are released and their memory goes back to Windows, then rebuilt when it opens again. While closed it runs in Windows 11's efficiency mode, and stats are sampled only every 5 seconds.</p>
-      <ul class="spec">
-        <li><span>Written in</span>C++20</li>
-        <li><span>Drawing</span>Direct2D and DirectComposition</li>
-        <li><span>Runs on</span>Windows 10 and Windows 11</li>
-        <li><span>Install</span>One file. If it starts with Windows, it copies itself to your user folder, no admin rights needed.</li>
-        <li><span>Updates</span>From this project's GitHub releases, installed only if the SHA-256 matches</li>
-        <li><span>License</span>GPL-3.0</li>
-      </ul>
+<!-- the island: shown against the top of a screen, where it lives -->
+<section class="island" id="island" aria-labelledby="island-h">
+  <div class="wrap">
+    <header class="intro-h">
+      <h2 id="island-h">The island.</h2>
+      <p>Over a maximized window, Astraeus doesn't drop the whole panel over your work. A pill shows what's playing instead, and a click opens the panel.</p>
+    </header>
+    <div class="desk">
+      <div class="desk-edge" aria-hidden="true"></div>
+      <div class="pill-one"><figure class="shot"><button type="button" data-title="The island pill" data-cap="What&#x27;s playing, over your apps. It can stay a moment, minutes, or always while music plays." aria-label="View larger: The island pill"><img src="assets/shots/pill.webp" width="373" height="68" alt="The small island pill: a tiny album cover, the song Lumière by Lorien Testard, and four red visualizer bars" loading="lazy" decoding="async"></button><figcaption><b>The island pill</b> What&#x27;s playing, over your apps. It can stay a moment, minutes, or always while music plays.</figcaption></figure></div>
+      <div class="pill-long"><figure class="shot"><button type="button" data-title="The long pill, singing along" data-cap="While a line is sung, the lyrics take the middle&#x27;s place; between lines, the middle comes back." aria-label="View larger: The long pill, singing along"><img src="assets/shots/long-pill.webp" width="1365" height="72" alt="The long pill across the top of the screen: the song and visualizer on the left, a sung lyric line in the middle, CPU and network speeds on the right" loading="lazy" decoding="async"></button><figcaption><b>The long pill, singing along</b> While a line is sung, the lyrics take the middle&#x27;s place; between lines, the middle comes back.</figcaption></figure></div>
     </div>
-    <div class="perf">
-      <h3>Measured</h3>
-      <p class="cond">On a modest laptop: Intel Core i5-4210U, integrated graphics, 8 GB RAM, Windows 11, 1366×768.</p>
-      <table>
-        <thead><tr><td></td><th scope="col">Closed</th><th scope="col">Open</th><th scope="col">After closing</th></tr></thead>
-        <tbody>
-          <tr><th scope="row">Memory, as Task Manager shows it</th><td>9<small>MB</small></td><td>~23<small>MB</small></td><td>~2<small>MB</small></td></tr>
-          <tr><th scope="row">CPU, share of one core</th><td>0.08<small>%</small></td><td>1.7<small>%</small></td><td>~0<small>%</small></td></tr>
-        </tbody>
-      </table>
-      <p class="note">Private working set from Windows performance counters, after the app settles. Closed was sampled over 20 seconds, open over 10 seconds with the panel on Home. The first open of a session is higher, about 44 MB, while fonts, cover art and the forecast load.</p>
+    <div class="island-cols">
+      <div>
+        <h3>On the desktop, and over your apps.</h3>
+        <p>With <b>Pill on the desktop</b>, on by default, it stays up whenever no window is under it. Pick the small pill or the long one separately for the desktop and for over your apps, each with its own size and its own set of items.</p>
+        <p>Windows notifications can arrive as pills too, and on a laptop one drops when you plug in, unplug, or run low.</p>
+        <p class="how">Right-click either pill to arrange the long one.</p>
+        <ul class="chips" aria-label="Items the long pill can show">
+          <li>Clock</li><li>Date</li><li>Weather</li><li>Music</li><li>Lyrics</li><li>Cover</li><li>Visualizer</li><li>Timer</li><li>Volume</li><li>Wi-Fi</li><li>CPU</li><li>GPU</li><li>RAM</li><li>Network</li><li>Disk</li><li>Battery</li><li>Language</li><li>Window</li><li>Markets</li><li>Score</li>
+        </ul>
+      </div>
+      <figure class="shot"><button type="button" data-title="Arranging the long pill" data-cap="The long pill at the top, its editor below: a tile for every item, with Undo, Redo and Reset." aria-label="View larger: Arranging the long pill"><img src="assets/shots/long-pill-edit.webp" width="1365" height="767" alt="The long pill editor: the pill at the top of the screen, and below it a grid of widget tiles with the chosen ones lit red" loading="lazy" decoding="async"></button><figcaption><b>Arranging the long pill</b> The long pill at the top, its editor below: a tile for every item, with Undo, Redo and Reset.</figcaption></figure>
     </div>
+  </div>
+</section>
+
+<!-- looks: the section itself takes on the look you pick -->
+<section class="looks" id="looks" data-look="dark" aria-labelledby="looks-h">
+  <div class="looks-bg" aria-hidden="true"><div class="glass-wash"></div></div>
+  <div class="wrap">
+    <header class="intro-h">
+      <h2 id="looks-h">One panel.<br>Every look.</h2>
+      <p>The palette comes from your wallpaper, the album art of whatever is playing, or any accent you pick, and can follow Windows' accent color live.</p>
+    </header>
+    <div class="tabs" role="tablist" aria-label="Looks">
+      <button role="tab" id="t-dark" aria-controls="p-dark" aria-selected="true" data-look="dark">Dark</button>
+      <button role="tab" id="t-glass" aria-controls="p-glass" aria-selected="false" tabindex="-1" data-look="glass">Glass</button>
+      <button role="tab" id="t-light" aria-controls="p-light" aria-selected="false" tabindex="-1" data-look="light">Light</button>
+    </div>
+    <div class="panels">
+      <div class="panel" id="p-dark" role="tabpanel" aria-labelledby="t-dark">
+        <figure class="shot"><button type="button" data-title="Dark" data-cap="The default. Black blends into the screen&#x27;s bezel." aria-label="View larger: Dark"><img src="assets/shots/look_dark.webp" width="1364" height="412" alt="Home in the dark look: black surfaces with blue accents" loading="lazy" decoding="async"></button><figcaption><b>Dark</b> The default. Black blends into the screen&#x27;s bezel.</figcaption></figure>
+      </div>
+      <div class="panel" id="p-glass" role="tabpanel" aria-labelledby="t-glass" hidden>
+        <figure class="shot"><button type="button" data-title="Glass" data-cap="A live frosted blur of whatever is behind the panel, its tint deepening over bright pages so white text stays readable." aria-label="View larger: Glass"><img src="assets/shots/look_glass.webp" width="1365" height="385" alt="Home in the glass look: translucent surfaces with the wallpaper showing through" loading="lazy" decoding="async"></button><figcaption><b>Glass</b> A live frosted blur of whatever is behind the panel, its tint deepening over bright pages so white text stays readable.</figcaption></figure>
+      </div>
+      <div class="panel" id="p-light" role="tabpanel" aria-labelledby="t-light" hidden>
+        <figure class="shot"><button type="button" data-title="Light" data-cap="Dark ink on pale tinted surfaces." aria-label="View larger: Light"><img src="assets/shots/look_light.webp" width="1066" height="372" alt="Home in the light look: pale grey surfaces with blue accents" loading="lazy" decoding="async"></button><figcaption><b>Light</b> Dark ink on pale tinted surfaces.</figcaption></figure>
+      </div>
+    </div>
+    <p class="also">Also Custom, the one at the top of this page, where a color wheel picks any accent and any background. Clear, with no frost at all. And Starfall, a deep night sky with fine star dust and a slow violet glow. Turn on <b>Different theme when not on desktop</b> and your desktop and your apps each get their own.</p>
+  </div>
+</section>
+
+<section class="keys-sec" aria-labelledby="keys-h">
+  <div class="wrap">
+    <header class="intro-h">
+      <h2 id="keys-h">Without looking.</h2>
+      <p>Everything else you might reach for, and where it is.</p>
+    </header>
+    <dl class="kb">
+      <div><dt><kbd>Win</kbd><kbd>Alt</kbd><kbd>A</kbd></dt><dd>Open the panel on the screen your mouse is on. <kbd>Esc</kbd> closes it.</dd></div>
+      <div><dt><kbd>←</kbd><kbd>→</kbd> <kbd>1</kbd>–<kbd>6</kbd></dt><dd>Move along the rail, or jump straight to a page.</dd></div>
+      <div><dt>Right-click the rail</dt><dd>Drag pages into order, take one off with ×, add more from the gallery.</dd></div>
+      <div><dt>Right-click a pill</dt><dd>Arrange the long pill, for the desktop and for over your apps.</dd></div>
+      <div><dt>Drag onto the top edge</dt><dd>Files or text land on the Shelf. Drag a card back out to drop it anywhere.</dd></div>
+      <div><dt>Tray icon</dt><dd>Open, Settings, and Check for updates.</dd></div>
+      <div><dt>Every editor</dt><dd>Undo, Redo and Reset. <b>Tour</b> in Settings plays the first-run tour again.</dd></div>
+    </dl>
+  </div>
+</section>
+
+<section class="eng" id="engineering" aria-labelledby="eng-h">
+  <div class="wrap">
+    <header class="intro-h">
+      <h2 id="eng-h">Costs nothing<br>while it's closed.</h2>
+      <p>One native executable in C++20, drawing with Direct2D and DirectComposition. No Electron, no embedded web view, no runtime. Frames are drawn only while something moves, and a few seconds after the panel closes the GPU is handed back to Windows.</p>
+    </header>
+    <div class="figs">
+      <div class="fig"><span class="num">9<small>MB</small></span><span class="lab">Memory while closed</span></div>
+      <div class="fig"><span class="num">~2<small>MB</small></span><span class="lab">A few seconds after closing</span></div>
+      <div class="fig"><span class="num">0.08<small>%</small></span><span class="lab">Of one CPU core, closed</span></div>
+    </div>
+    <p class="cond">Measured on a modest laptop: Intel Core i5-4210U, integrated graphics, 8 GB RAM, Windows 11, 1366×768. Private working set from Windows performance counters, as Task Manager shows it, after the app settles; closed sampled over 20 seconds. Open on Home it settles around 23 MB and 1.7% of one core; the first open of a session is about 44 MB while fonts, cover art and the forecast load.</p>
+    <ul class="spec">
+      <li><span>Written in</span>C++20</li>
+      <li><span>Drawing</span>Direct2D, DirectComposition</li>
+      <li><span>Runs on</span>Windows 10 and 11</li>
+      <li><span>While closed</span>Windows 11 efficiency mode</li>
+      <li><span>Updates</span>Installed only if the SHA-256 matches</li>
+      <li><span>License</span>GPL-3.0</li>
+    </ul>
   </div>
 </section>
 
 <section class="get" id="download" aria-labelledby="get-h">
-  <div class="dust" aria-hidden="true"></div>
+  <div class="sky" aria-hidden="true"><i class="tw" style="--d:4.7s;left:86.54%;top:51.49%;width:1px;height:1px;opacity:0.49"></i><i style="left:13.72%;top:78.92%;width:1px;height:1px;opacity:0.26"></i><i style="left:9.64%;top:61.67%;width:1px;height:1px;opacity:0.54"></i><i style="left:71.93%;top:54.59%;width:1px;height:1px;opacity:0.51"></i><i style="left:88.36%;top:28.50%;width:1px;height:1px;opacity:0.30"></i><i style="left:16.98%;top:55.77%;width:1px;height:1px;opacity:0.63"></i><i style="left:19.98%;top:68.22%;width:1px;height:1px;opacity:0.74"></i><i style="left:82.70%;top:30.53%;width:1px;height:1px;opacity:0.71"></i><i style="left:30.58%;top:34.63%;width:1px;height:1px;opacity:0.42"></i><i style="left:70.27%;top:74.06%;width:2px;height:2px;opacity:0.52"></i><i style="left:62.18%;top:44.26%;width:1px;height:1px;opacity:0.48"></i><i class="tw" style="--d:4.0s;left:67.13%;top:48.84%;width:1px;height:1px;opacity:0.39"></i><i style="left:71.29%;top:84.72%;width:1px;height:1px;opacity:0.45"></i><i style="left:11.61%;top:35.71%;width:1px;height:1px;opacity:0.55"></i><i style="left:76.21%;top:24.56%;width:1px;height:1px;opacity:0.46"></i><i style="left:61.90%;top:79.66%;width:1px;height:1px;opacity:0.80"></i><i style="left:64.06%;top:29.63%;width:1px;height:1px;opacity:0.49"></i><i style="left:41.87%;top:76.51%;width:1px;height:1px;opacity:0.33"></i><i style="left:56.46%;top:38.99%;width:1px;height:1px;opacity:0.54"></i><i style="left:7.80%;top:89.58%;width:1px;height:1px;opacity:0.75"></i><i style="left:66.83%;top:29.44%;width:1px;height:1px;opacity:0.31"></i><i style="left:82.80%;top:68.30%;width:2px;height:2px;opacity:0.70"></i><i class="tw" style="--d:6.6s;left:90.32%;top:8.52%;width:1px;height:1px;opacity:0.74"></i><i style="left:95.26%;top:12.78%;width:1px;height:1px;opacity:0.40"></i><i style="left:70.30%;top:66.17%;width:1px;height:1px;opacity:0.30"></i><i style="left:98.13%;top:93.86%;width:1px;height:1px;opacity:0.72"></i><i style="left:17.18%;top:98.96%;width:1px;height:1px;opacity:0.61"></i><i style="left:79.59%;top:61.33%;width:1px;height:1px;opacity:0.33"></i><i style="left:72.02%;top:61.72%;width:1px;height:1px;opacity:0.33"></i><i style="left:0.56%;top:70.95%;width:2px;height:2px;opacity:0.75"></i><i style="left:68.91%;top:87.07%;width:2px;height:2px;opacity:0.47"></i><i style="left:51.49%;top:68.95%;width:1px;height:1px;opacity:0.74"></i><i style="left:26.55%;top:60.86%;width:1px;height:1px;opacity:0.45"></i><i class="tw" style="--d:5.9s;left:30.80%;top:65.83%;width:1px;height:1px;opacity:0.65"></i><i style="left:34.61%;top:17.18%;width:1px;height:1px;opacity:0.29"></i><i style="left:4.55%;top:55.50%;width:1px;height:1px;opacity:0.26"></i><i style="left:90.22%;top:98.87%;width:1px;height:1px;opacity:0.69"></i><i style="left:72.42%;top:26.73%;width:1px;height:1px;opacity:0.47"></i><i style="left:45.31%;top:63.02%;width:2px;height:2px;opacity:0.49"></i><i style="left:7.81%;top:25.20%;width:2px;height:2px;opacity:0.47"></i><i style="left:24.49%;top:20.76%;width:1px;height:1px;opacity:0.26"></i><i style="left:64.65%;top:60.91%;width:1px;height:1px;opacity:0.66"></i><i style="left:93.84%;top:45.82%;width:1px;height:1px;opacity:0.78"></i><i style="left:99.23%;top:51.38%;width:1px;height:1px;opacity:0.60"></i><i class="tw" style="--d:3.3s;left:27.68%;top:55.11%;width:1px;height:1px;opacity:0.29"></i><i style="left:67.14%;top:60.83%;width:1px;height:1px;opacity:0.69"></i></div>
   <div class="bloom" aria-hidden="true"></div>
   <div class="wrap">
-    <div class="grid">
-      <div>
-        <h2 id="get-h">Get Astraeus</h2>
-        <p>Free and open source, one file for Windows 10 and 11. New releases install themselves in the background.</p>
-        <div class="acts">
-          <a class="btn solid" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.6 7.4 11l1.4-1.4 2.2 2.2V4h2v7.8l2.2-2.2 1.4 1.4zM5 20v-2h14v2z"/></svg>Download Astraeus.exe</a>
-          <a class="btn" href="https://github.com/Icetist/Astraeus/releases/latest">Latest release notes</a>
-        </div>
-      </div>
-      <ol class="steps">
-        <li><span>Run <code>Astraeus.exe</code>. It isn't code-signed yet, so SmartScreen may warn about an unknown publisher: choose <b>More info</b>, then <b>Run anyway</b>.</span></li>
-        <li><span>Say yes to starting with Windows and it copies itself to <code>%LOCALAPPDATA%\Programs\Astraeus</code>, so the downloaded file can go.</span></li>
-        <li><span>Every release is built from the repository by its release workflow, with its SHA-256 published beside it as <code>Astraeus.exe.sha256</code> if you'd like to check your download.</span></li>
-      </ol>
+    <img class="get-logo" src="assets/img/logo.png" width="256" height="256" alt="">
+    <h2 id="get-h" class="mark small">Get Astraeus</h2>
+    <p class="get-lede">Free and open source. One file for Windows 10 and 11, and new releases install themselves.</p>
+    <div class="get-acts">
+      <a class="btn solid big" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.6 7.4 11l1.4-1.4 2.2 2.2V4h2v7.8l2.2-2.2 1.4 1.4zM5 20v-2h14v2z"/></svg>Download Astraeus.exe</a>
+      <a class="btn" href="https://github.com/Icetist/Astraeus/releases/latest">Release notes</a>
     </div>
+    <ol class="steps">
+      <li>It isn't code-signed yet, so SmartScreen may say "unknown publisher". Choose <b>More info</b>, then <b>Run anyway</b>.</li>
+      <li>Say yes to starting with Windows and it copies itself to <code>%LOCALAPPDATA%\Programs\Astraeus</code>. No admin rights needed.</li>
+      <li>Each release is built from the repository, with its SHA-256 beside it as <code>Astraeus.exe.sha256</code>.</li>
+    </ol>
     <footer class="foot">
-      <p>Astraeus is free software under the GNU GPL-3.0. Set in Outfit (SIL Open Font License); icons are Material Symbols (Apache-2.0).</p>
+      <p>Astraeus is free software under the GNU GPL-3.0. Set in Outfit and Nunito (SIL Open Font License); icons are Material Symbols (Apache-2.0).</p>
       <nav aria-label="Project">
         <a href="https://github.com/Icetist/Astraeus">Source</a>
         <a href="https://github.com/Icetist/Astraeus/releases">Releases</a>
@@ -347,7 +329,7 @@
 
 <dialog class="viewer" id="viewer" aria-label="Screenshot">
   <button class="vbtn close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z"/></svg></button>
-  <div class="stage"><img alt=""></div>
+  <div class="vstage"><img alt=""></div>
   <div class="bar">
     <button class="vbtn prev" type="button" aria-label="Previous screenshot"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 18-6-6 6-6 1.4 1.4-4.6 4.6 4.6 4.6z"/></svg></button>
     <p class="cap" aria-live="polite"></p>

@@ -1,12 +1,14 @@
-// two small things: the screenshot viewer, and the looks switcher. nothing else moves
-document.documentElement.classList.remove("no-js");
+// the viewer, the rail story, the sung lines and the looks. each only follows the scroll or a click; nothing runs on its own
+const root = document.documentElement;
+root.classList.remove("no-js");
+root.classList.add("js");
 
-(() => {
+(() => { // screenshot viewer
   const dlg = document.getElementById("viewer");
-  if (!dlg || typeof dlg.showModal !== "function") return; // no dialog support: the shots just stay where they are
+  if (!dlg || typeof dlg.showModal !== "function") return; // no dialog support: the shots stay where they are
   const img = dlg.querySelector("img"), cap = dlg.querySelector(".cap"), count = dlg.querySelector(".count");
-  const shots = [...document.querySelectorAll(".shot button")];
-  let at = 0, opener = null;
+  const all = [...document.querySelectorAll(".shot button")];
+  let shots = all, at = 0, opener = null;
 
   const show = (i) => {
     at = (i + shots.length) % shots.length;
@@ -19,8 +21,21 @@ document.documentElement.classList.remove("no-js");
     cap.append(document.createTextNode(shots[at].dataset.cap || ""));
     count.textContent = `${at + 1} / ${shots.length}`;
   };
-
-  shots.forEach((b, i) => b.addEventListener("click", () => { opener = b; show(i); dlg.showModal(); }));
+  const seen = new Set(); // each screenshot once, even where the layout keeps a second copy
+  shots = all.filter((x) => { const s = x.querySelector("img").src; return !seen.has(s) && seen.add(s); });
+  const open = (b, from) => {
+    opener = from || b;
+    const s = b.querySelector("img").src;
+    show(Math.max(0, shots.findIndex((x) => x.querySelector("img").src === s)));
+    dlg.showModal();
+  };
+  all.forEach((b) => b.addEventListener("click", () => open(b)));
+  const screen = document.querySelector("button.frames"); // the rail story's screen opens whichever page it shows
+  screen?.addEventListener("click", () => {
+    const k = screen.querySelector(".frame.on")?.dataset.k || "home";
+    const b = document.querySelector(`.step[data-k="${k}"] .shot button`);
+    if (b) open(b, screen);
+  });
   dlg.querySelector(".prev").addEventListener("click", () => show(at - 1));
   dlg.querySelector(".next").addEventListener("click", () => show(at + 1));
   dlg.querySelector(".close").addEventListener("click", () => dlg.close());
@@ -29,7 +44,7 @@ document.documentElement.classList.remove("no-js");
     if (e.key === "ArrowRight") { e.preventDefault(); show(at + 1); }
     else if (e.key === "ArrowLeft") { e.preventDefault(); show(at - 1); }
   });
-  dlg.querySelector(".stage").addEventListener("click", (e) => { if (e.target !== img) dlg.close(); }); // the dark around the picture closes it
+  dlg.querySelector(".vstage").addEventListener("click", (e) => { if (e.target !== img) dlg.close(); });
 
   const SWIPE = 48; // px sideways before a swipe counts
   let x0 = null, y0 = 0;
@@ -42,9 +57,37 @@ document.documentElement.classList.remove("no-js");
   });
 })();
 
-(() => {
+// whichever item crosses the middle band of the screen is the lit one
+const lightUp = (items, onPick) => {
+  if (!items.length || !("IntersectionObserver" in window)) return;
+  const io = new IntersectionObserver((es) => {
+    es.forEach((e) => { if (e.isIntersecting) onPick(e.target); });
+  }, { rootMargin: "-45% 0px -45% 0px" });
+  items.forEach((i) => io.observe(i));
+  onPick(items[0]);
+};
+
+(() => { // the rail story: the screen shows the page being read, the rail lights its icon
+  const steps = [...document.querySelectorAll(".step")];
+  const frames = [...document.querySelectorAll(".frames .frame")];
+  const icons = [...document.querySelectorAll(".mini-rail li")];
+  lightUp(steps, (s) => {
+    const k = s.dataset.k;
+    steps.forEach((x) => x.classList.toggle("on", x === s));
+    frames.forEach((f) => f.classList.toggle("on", f.dataset.k === k));
+    icons.forEach((i) => i.classList.toggle("on", i.dataset.k === k));
+  });
+})();
+
+(() => { // the sung lines: one in focus, the rest soft, like the fullscreen player
+  const lines = [...document.querySelectorAll(".sing li")];
+  lightUp(lines, (l) => lines.forEach((x) => x.classList.toggle("on", x === l)));
+})();
+
+(() => { // looks: the tabs switch the shot and the section's own look
   const list = document.querySelector(".tabs");
   if (!list) return;
+  const sec = list.closest(".looks");
   const tabs = [...list.querySelectorAll("[role=tab]")];
   const pick = (t, focus) => {
     tabs.forEach((x) => {
@@ -53,6 +96,7 @@ document.documentElement.classList.remove("no-js");
       x.tabIndex = on ? 0 : -1;
       document.getElementById(x.getAttribute("aria-controls")).hidden = !on;
     });
+    sec.dataset.look = t.dataset.look;
     if (focus) t.focus();
   };
   tabs.forEach((t, i) => {
