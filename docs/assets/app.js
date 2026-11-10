@@ -108,8 +108,9 @@ $$('a[href^="#"]').forEach((a) => a.addEventListener("click", (e) => {
 
 /* ---------- the intro: press it open ---------- */
 const intro = $("#intro");
-let opened = false, seen = false;
-try { seen = sessionStorage.getItem("astraeus-intro") === "1"; } catch {}
+let opened = false;
+if ("scrollRestoration" in history) history.scrollRestoration = "manual"; // a reload starts at the top, where the intro is
+if (intro && moving) window.scrollTo(0, 0);
 function heroIn() {
   if (!moving) return;
   gsap.timeline({ defaults: { ease: "expo.out" } })
@@ -123,7 +124,6 @@ function onKey(e) {
 function open(fast) {
   if (opened) return;
   opened = true;
-  try { sessionStorage.setItem("astraeus-intro", "1"); } catch {}
   window.removeEventListener("keydown", onKey);
   if (!intro) return;
   if (fast || !moving) { intro.remove(); lenis?.start(); heroIn(); return; }
@@ -138,7 +138,7 @@ function open(fast) {
     .add(heroIn, 0.65);
 }
 if (intro) {
-  if (seen || !moving) open(true);
+  if (!moving) open(true);
   else {
     lenis?.stop();
     gsap.fromTo("#metal", { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 1.6, ease: "expo.out" });
@@ -191,6 +191,7 @@ if (moving) {
   gsap.matchMedia().add("(min-width: 900px)", () => {
     root.classList.add("js-pin");
     const kill = [storyPin(), dialPin(), lyricsPin(), looksPin(), wallScroll()];
+    ScrollTrigger.sort(); // the triggers made before the pins must measure after them, in page order
     ScrollTrigger.refresh();
     return () => { root.classList.remove("js-pin"); kill.forEach((k) => k && k()); };
   });
@@ -200,39 +201,43 @@ function storyPin() {
   const steps = $$(".st-steps li"), N = steps.length;
   const imgs = Object.fromEntries($$(".st-panel img").map((i) => [i.dataset.k, i]));
   const cards = $$(".st-cards img");
-  const title = $(".st-title span"), text = $(".st-text"), how = $(".st-how"), num = $(".st-num");
+  const title = $(".st-title span"), text = $(".st-text"), how = $(".st-how"), num = $(".st-num"), inLabel = $(".st-in");
   const dots = $(".st-dots");
   dots.innerHTML = steps.map(() => "<li></li>").join("");
   const dotEls = $$("li", dots);
   const fan = [[-31, -34, -7], [31, -36, 6], [-37, 30, 5], [37, 32, -6], [0, 52, 0]]; // where the panels behind home land: x%, y%, tilt
   let cur = -1, shown = "home";
   gsap.set(cards, { xPercent: -50, yPercent: -50 });
+  let titleTl = null;
   function show(i) {
     if (i === cur) return;
-    const s = steps[i], k = s.dataset.k, pk = k === "behind" ? "home" : k, was = cur;
+    const s = steps[i], k = s.dataset.k, pk = k === "behind" ? "home" : k, was = cur, inside = s.dataset.in;
     cur = i;
     dotEls.forEach((d, j) => d.classList.toggle("on", j === i));
     num.textContent = String(i + 1).padStart(2, "0");
-    const dir = was < i ? 1 : -1;
-    gsap.timeline()
-      .to(title, { yPercent: -105 * dir, duration: 0.22, ease: "power2.in" })
-      .add(() => { title.textContent = s.querySelector("h3").textContent; })
-      .fromTo(title, { yPercent: 105 * dir }, { yPercent: 0, duration: 0.6, ease: "expo.out" });
+    inLabel.textContent = inside ? `  ·  inside ${inside}` : ""; // the panels behind home, and settings behind tools
+    const dir = was < i ? 1 : -1, name = s.querySelector("h3").textContent;
+    titleTl?.kill(); // a quick scroll mustn't let an older title land after this one
+    titleTl = gsap.timeline()
+      .to(title, { yPercent: -105 * dir, duration: 0.18, ease: "power2.in" })
+      .add(() => { title.textContent = name; })
+      .fromTo(title, { yPercent: 105 * dir }, { yPercent: 0, duration: 0.55, ease: "expo.out" });
     text.textContent = s.querySelector("p").textContent;
     how.textContent = s.querySelector(".how")?.textContent || "";
-    gsap.fromTo([text, how], { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.6, ease: "expo.out", stagger: 0.05 });
+    gsap.fromTo([text, how], { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.5, ease: "expo.out", stagger: 0.04, overwrite: true });
     if (pk !== shown) {
-      gsap.to(imgs[shown], { opacity: 0, duration: 0.45, ease: "power2.out" });
-      gsap.fromTo(imgs[pk], { opacity: 0, scale: 1.03, filter: "blur(8px)" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.8, ease: "expo.out" });
       shown = pk;
+      Object.entries(imgs).forEach(([key, img]) => key === pk
+        ? gsap.fromTo(img, { opacity: 0, scale: 1.03, filter: "blur(8px)" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.7, ease: "expo.out", overwrite: true })
+        : gsap.to(img, { opacity: 0, duration: 0.35, ease: "power2.out", overwrite: true }));
     }
     const behind = k === "behind";
-    gsap.to(".st-panel", { scale: behind ? 0.9 : 1, opacity: behind ? 0.3 : 1, duration: 0.8, ease: "expo.out" });
+    gsap.to(".st-panel", { scale: behind ? 0.9 : 1, opacity: behind ? 0.3 : 1, duration: 0.7, ease: "expo.out", overwrite: true });
     cards.forEach((c, j) => {
       const [x, y, r] = fan[j];
       gsap.to(c, behind
-        ? { opacity: 1, xPercent: -50 + x * 2.2, yPercent: -50 + y * 2.2, rotation: r, scale: 1, duration: 0.9, delay: j * 0.06, ease: "expo.out" }
-        : { opacity: 0, xPercent: -50, yPercent: -50, rotation: 0, scale: 0.8, duration: 0.45, ease: "power2.in" });
+        ? { opacity: 1, xPercent: -50 + x * 2.2, yPercent: -50 + y * 2.2, rotation: r, scale: 1, duration: 0.8, delay: j * 0.05, ease: "expo.out", overwrite: true }
+        : { opacity: 0, xPercent: -50, yPercent: -50, rotation: 0, scale: 0.8, duration: 0.4, ease: "power2.in", overwrite: true });
     });
     setSay(s.dataset.say);
     tick(dir > 0 ? 1400 : 1150);
@@ -240,6 +245,7 @@ function storyPin() {
   const st = ScrollTrigger.create({
     trigger: ".story", pin: ".st-pin", start: "top top", end: () => "+=" + (N - 1) * window.innerHeight * 0.55,
     onUpdate: (self) => show(Math.min(N - 1, Math.floor(self.progress * N))),
+    onLeave: () => show(N - 1), onEnterBack: (self) => show(Math.min(N - 1, Math.floor(self.progress * N))), onLeaveBack: () => show(0),
   });
   const tilt = gsap.fromTo(".st-stage", { rotationX: 24, y: 80 }, { rotationX: 0, y: 0, ease: "none", transformPerspective: 1800, scrollTrigger: { trigger: ".story", start: "top bottom", end: "top top", scrub: true } });
   show(0);
@@ -371,3 +377,27 @@ function wallScroll() {
     if (Math.abs(dx) > SWIPE && Math.abs(dx) > Math.abs(dy) * 1.5) show(at + (dx < 0 ? 1 : -1));
   });
 })();
+
+/* ---------- the cursor: a star that leads, a ring that follows ---------- */
+if (moving && matchMedia("(pointer: fine) and (hover: hover)").matches) {
+  const cur = $(".cursor"), star = $(".c-star"), ring = $(".c-ring"), label = $(".c-label");
+  root.classList.add("has-cursor");
+  const sx = gsap.quickTo(star, "x", { duration: 0.12, ease: "power3" }), sy = gsap.quickTo(star, "y", { duration: 0.12, ease: "power3" });
+  const rx = gsap.quickTo(ring, "x", { duration: 0.5, ease: "power3" }), ry = gsap.quickTo(ring, "y", { duration: 0.5, ease: "power3" });
+  const spin = gsap.quickTo(star, "rotation", { duration: 0.6, ease: "power3" });
+  let lx = 0, turn = 0;
+  window.addEventListener("pointermove", (e) => {
+    sx(e.clientX); sy(e.clientY); rx(e.clientX); ry(e.clientY);
+    turn += (e.clientX - lx) * 0.6; lx = e.clientX; spin(turn); // the star rolls with the motion
+    cur.classList.remove("gone");
+    const t = e.target.closest?.(".shot button, a, button, [role=tab], kbd");
+    const view = !!t?.matches(".shot button");
+    cur.classList.toggle("view", view);
+    cur.classList.toggle("link", !!t && !view);
+    if (view) label.textContent = "View";
+  }, { passive: true });
+  window.addEventListener("pointerdown", () => cur.classList.add("down"));
+  window.addEventListener("pointerup", () => cur.classList.remove("down"));
+  document.addEventListener("pointerleave", () => cur.classList.add("gone"));
+  document.documentElement.addEventListener("mouseleave", () => cur.classList.add("gone"));
+}

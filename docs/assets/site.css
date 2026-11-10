@@ -153,7 +153,8 @@ svg { width: 1em; height: 1em; fill: currentColor; flex: none; }
 .st-cards { position: absolute; inset: 0; pointer-events: none; transform-style: preserve-3d; }
 .st-cards img { position: absolute; left: 50%; top: 50%; width: min(42%, 520px); border-radius: 12px; box-shadow: 0 30px 70px -30px var(--shade), 0 0 0 1px var(--line); opacity: 0; transform: translate(-50%, -50%); }
 .st-head { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); grid-template-rows: auto auto; column-gap: 48px; align-items: end; max-width: var(--wide); margin: 0 auto; width: 100%; }
-.st-count { grid-column: 1; font: .8rem var(--mono); color: var(--low); margin: 0 0 6px; }
+.st-count { grid-column: 1; font: .8rem var(--mono); color: var(--low); margin: 0 0 6px; white-space: pre; }
+.st-in { color: var(--ink); }
 .st-title { grid-column: 1; grid-row: 2; margin: 0; font-size: clamp(3.4rem, 9vw, 8.6rem); font-weight: 500; letter-spacing: -.06em; line-height: .86; overflow: hidden; padding-bottom: .05em; }
 .st-title span { display: inline-block; }
 .st-text { grid-column: 2; grid-row: 1 / 3; align-self: end; margin: 0; color: var(--dim); font-size: 1.05rem; }
@@ -307,3 +308,23 @@ main { overflow-x: clip; }
 .chapters:hover a, .chapters:focus-within a { color: var(--dim); }
 .chapters:hover a.on, .chapters:focus-within a.on { color: var(--ink); }
 .js-pin .ly-frame img { transition: none; }
+
+/* the cursor: the logo's star, and a ring that trails it. only with a mouse, only when motion is welcome */
+.cursor { display: none; }
+html.has-cursor, html.has-cursor * { cursor: none !important; }
+html.has-cursor input, html.has-cursor textarea { cursor: text !important; }
+html.has-cursor .cursor { display: block; position: fixed; inset: 0 auto auto 0; z-index: 300; pointer-events: none; mix-blend-mode: difference; }
+.c-star, .c-ring { position: fixed; left: 0; top: 0; display: grid; place-items: center; will-change: transform; }
+.c-star { width: 18px; height: 18px; margin: -9px 0 0 -9px; color: #fff; }
+.c-star svg { width: 18px; height: 18px; }
+.c-ring { width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 99px; box-shadow: inset 0 0 0 1px rgb(255 255 255 / .9); transition: width .45s var(--ease), height .45s var(--ease), margin .45s var(--ease), background-color .3s, box-shadow .3s; }
+.c-label { font: 500 .78rem/1 "Outfit", sans-serif; color: #000; opacity: 0; transition: opacity .2s; white-space: nowrap; }
+.cursor.link .c-ring { width: 58px; height: 58px; margin: -29px 0 0 -29px; }
+.cursor.view .c-ring { width: 84px; height: 40px; margin: -20px 0 0 -42px; background: #fff; }
+.cursor.view .c-label { opacity: 1; }
+.cursor.view .c-star { opacity: 0; }
+.cursor.down .c-ring { width: 30px; height: 30px; margin: -15px 0 0 -15px; }
+.cursor.gone { opacity: 0; }
+html:has(dialog[open]) .cursor { display: none; }
+html.has-cursor:has(dialog[open]), html.has-cursor:has(dialog[open]) * { cursor: auto !important; }
+html.has-cursor:has(dialog[open]) .vstage { cursor: zoom-out !important; }
