@@ -113,35 +113,17 @@ No Electron, no web view, no runtime to install. Just one small native executabl
   </tr>
   <tr>
     <td width="50%"><img src="./.github/assets/screenshots/widgets.png" alt="Widgets page with scores, fixtures, weather, a clock and the date" /></td>
-    <td width="50%"><img src="./.github/assets/screenshots/bluetooth.png" alt="Bluetooth control center" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/tools.png" alt="Tools" /></td>
   </tr>
   <tr>
     <td align="center"><b>Widgets</b></td>
-    <td align="center"><b>Bluetooth control center</b></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="./.github/assets/screenshots/wifi.png" alt="Wi-Fi" /></td>
-    <td width="50%"><img src="./.github/assets/screenshots/mixer.png" alt="Volume mixer" /></td>
-  </tr>
-  <tr>
-    <td align="center"><b>Wi-Fi</b></td>
-    <td align="center"><b>Volume mixer</b></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="./.github/assets/screenshots/calendar.png" alt="Calendar" /></td>
-    <td width="50%"><img src="./.github/assets/screenshots/forecast.png" alt="Forecast" /></td>
-  </tr>
-  <tr>
-    <td align="center"><b>Calendar</b></td>
-    <td align="center"><b>Forecast</b></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="./.github/assets/screenshots/tools.png" alt="Tools" /></td>
-    <td width="50%"><img src="./.github/assets/screenshots/settings.png" alt="Settings" /></td>
-  </tr>
-  <tr>
     <td align="center"><b>Tools</b></td>
-    <td align="center"><b>Settings</b></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="./.github/assets/screenshots/settings.png" alt="Settings" /></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><b>Settings</b></td>
   </tr>
 </table>
 
