@@ -26,7 +26,7 @@
 [Building](#%EF%B8%8F-building-from-source) •
 [FAQ](#-faq)
 
-<img src="./.github/assets/screenshots/home.png" width="100%" alt="Astraeus dropdown showing the media player, quick toggles and live system stats" />
+<img src="./.github/assets/screenshots/home.png" width="100%" alt="Astraeus dropdown in a custom red look, showing the media player, weather, quick toggles and live system stats" />
 
 </div>
 
@@ -90,19 +90,33 @@ No Electron, no web view, no runtime to install. Just one small native executabl
     <td align="center"><b>Fullscreen lyrics</b></td>
   </tr>
   <tr>
-    <td width="50%"><img src="./.github/assets/screenshots/pill.png" alt="The island pill" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/pill.png" alt="The island pill showing the song that's playing" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/long-pill.png" alt="The long pill singing along with the lyrics" /></td>
+  </tr>
+  <tr>
+    <td align="center"><b>The island pill</b></td>
+    <td align="center"><b>The long pill, singing along</b></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="./.github/assets/screenshots/long-pill-edit.png" alt="Arranging the long pill: a grid of widget tiles under the pill" /></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><b>Arranging the long pill</b></td>
+  </tr>
+  <tr>
     <td width="50%"><img src="./.github/assets/screenshots/system.png" alt="System" /></td>
-  </tr>
-  <tr>
-    <td align="center"><b>The Island pill</b></td>
-    <td align="center"><b>System</b></td>
-  </tr>
-  <tr>
     <td width="50%"><img src="./.github/assets/screenshots/network.png" alt="Network" /></td>
+  </tr>
+  <tr>
+    <td align="center"><b>System</b></td>
+    <td align="center"><b>Network</b></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="./.github/assets/screenshots/widgets.png" alt="Widgets page with scores, fixtures, weather, a clock and the date" /></td>
     <td width="50%"><img src="./.github/assets/screenshots/bluetooth.png" alt="Bluetooth control center" /></td>
   </tr>
   <tr>
-    <td align="center"><b>Network</b></td>
+    <td align="center"><b>Widgets</b></td>
     <td align="center"><b>Bluetooth control center</b></td>
   </tr>
   <tr>
@@ -133,23 +147,23 @@ No Electron, no web view, no runtime to install. Just one small native executabl
 
 ### Six themes
 
-Glass (above), Clear, Dark, Light, Custom, where a color wheel picks any accent and any background, and Starfall, a night sky with a slowly drifting violet glow that only Astraeus has.
+Custom (above), where a color wheel picks any accent and any background, Glass, Clear, Dark, Light, and Starfall, a night sky with a slowly drifting violet glow that only Astraeus has.
 
 <table>
   <tr>
     <td width="50%"><img src="./.github/assets/screenshots/look_dark.png" alt="Dark look" /></td>
-    <td width="50%"><img src="./.github/assets/screenshots/look_light.png" alt="Light look" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/look_glass.png" alt="Glass look, the wallpaper showing through" /></td>
   </tr>
   <tr>
     <td align="center"><b>Dark</b></td>
-    <td align="center"><b>Light</b></td>
+    <td align="center"><b>Glass</b></td>
   </tr>
   <tr>
-    <td width="50%"><img src="./.github/assets/screenshots/look_custom.png" alt="Custom look" /></td>
+    <td width="50%"><img src="./.github/assets/screenshots/look_light.png" alt="Light look" /></td>
     <td width="50%"><img src="./.github/assets/screenshots/look_light_media.png" alt="Light look on the Media page" /></td>
   </tr>
   <tr>
-    <td align="center"><b>Custom</b></td>
+    <td align="center"><b>Light</b></td>
     <td align="center"><b>Light, with the album's colors</b></td>
   </tr>
 </table>
