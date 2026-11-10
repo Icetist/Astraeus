@@ -160,6 +160,9 @@ if (moving && matchMedia("(pointer: fine)").matches) {
   $(".hero").addEventListener("pointerleave", () => { rx(0); ry(0); });
 }
 
+let owner = null; // the pinned chapter narrating right now, if any
+const own = (name, on, line) => { if (on) { owner = name; if (line) setSay(line); } else if (owner === name) owner = null; };
+
 /* ---------- the long pill's items, for the dial ---------- */
 const ITEMS = [
   ["clock", "Clock", () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })],
@@ -177,7 +180,14 @@ if (dialList) dialList.innerHTML = ITEMS.map(([, n]) => `<li>${n}</li>`).join(""
 if (moving) {
   $$("h2.big").forEach((h) => gsap.fromTo($$(".line > span", h), { yPercent: 110 }, { yPercent: 0, duration: 1.2, stagger: 0.08, ease: "expo.out", scrollTrigger: { trigger: h, start: "top 85%" } }));
   gsap.fromTo(".get .mega .line > span", { yPercent: 110 }, { yPercent: 0, duration: 1.2, ease: "expo.out", scrollTrigger: { trigger: ".get", start: "top 70%" } });
-  $$("main > section[data-say]").forEach((s) => ScrollTrigger.create({ trigger: s, start: "top 55%", end: "bottom 45%", onToggle: (st) => st.isActive && setSay(s.dataset.say) }));
+  // the narrator: whatever crosses the middle of the screen speaks, unless a pinned chapter is speaking for itself
+  const sayers = $$("main > section[data-say]");
+  ScrollTrigger.create({ start: 0, end: "max", onUpdate: () => {
+    if (owner) return;
+    const mid = innerHeight / 2;
+    const s = sayers.find((x) => { const r = x.getBoundingClientRect(); return r.top <= mid && r.bottom >= mid; });
+    if (s) setSay(s.dataset.say);
+  } });
   $$(".chapters a").forEach((a) => { const sec = $(a.getAttribute("href")); if (sec) ScrollTrigger.create({ trigger: sec, start: "top 50%", end: "bottom 50%", onToggle: (st) => a.classList.toggle("on", st.isActive) }); });
   $$(".fig .num").forEach((n) => {
     const to = parseFloat(n.dataset.to), dec = +n.dataset.dec, o = { v: 0 };
@@ -246,6 +256,7 @@ function storyPin() {
     trigger: ".story", pin: ".st-pin", start: "top top", end: () => "+=" + (N - 1) * window.innerHeight * 0.55,
     onUpdate: (self) => show(Math.min(N - 1, Math.floor(self.progress * N))),
     onLeave: () => show(N - 1), onEnterBack: (self) => show(Math.min(N - 1, Math.floor(self.progress * N))), onLeaveBack: () => show(0),
+    onToggle: (self) => own("story", self.isActive, steps[Math.max(cur, 0)].dataset.say),
   });
   const tilt = gsap.fromTo(".st-stage", { rotationX: 24, y: 80 }, { rotationX: 0, y: 0, ease: "none", transformPerspective: 1800, scrollTrigger: { trigger: ".story", start: "top bottom", end: "top top", scrub: true } });
   show(0);
@@ -282,6 +293,7 @@ function dialPin() {
   pick(0);
   const st = ScrollTrigger.create({
     trigger: ".dial-pin", pin: true, start: "top top+=60", end: () => "+=" + window.innerHeight * 1.3,
+    onToggle: (self) => { const [id, n, v] = ITEMS[Math.max(cur, 0)]; own("dial", self.isActive, `${svgUse(id)}${n} · ${v()}`); },
     onUpdate: (self) => {
       const rot = self.progress * (ITEMS.length - 1) * STEP;
       gsap.set(wheel, { rotation: -rot, svgOrigin: `${C} ${C}` });
@@ -318,6 +330,7 @@ function looksPin() {
     x: () => -dist(), ease: "none",
     scrollTrigger: {
       trigger: ".looks", pin: ".lk-pin", start: "top top", end: () => "+=" + dist(), scrub: 0.8, invalidateOnRefresh: true,
+      onToggle: (self) => own("looks", self.isActive, cards[Math.max(last, 0)].dataset.say),
       onUpdate: (self) => {
         gsap.to(smear, { v: self.getVelocity() / 260, duration: 0.3, overwrite: true, onUpdate: setFilter });
         gsap.to(track, { skewX: gsap.utils.clamp(-5, 5, -self.getVelocity() / 650), duration: 0.4, overwrite: "auto" });
