@@ -39,9 +39,16 @@ void IdleLine(Canvas& c, Model& m, const Theme& t, const Theme& mt, float x0, fl
     c.Text(clock, Rect(x0 + kWidgetW, cy - 8, inner - 2 * kWidgetW, 16), Weight::Medium, 11.5f, t.text.Alpha(a), Align::Center);
     auto widget = [&](const std::wstring& text, int g, bool atRight) { // icon and value, hugging the pill's ends
         if (text.empty()) return;
-        float ix = atRight ? x0 + inner - kWidgetW + 7 : x0 + 7;
-        c.Icon(g, {ix, cy}, 13, mt.accentHi.Alpha(a), true);
-        c.Text(text, Rect(ix + 9, cy - 7, kWidgetW - 14, 14), Weight::Medium, 10, t.textDim.Alpha(a));
+        if (atRight) {
+            float tw = c.Measure(text, Weight::Medium, 10);
+            float ix = x0 + inner - 7 - tw - 9;
+            c.Icon(g, {ix, cy}, 13, mt.accentHi.Alpha(a), true);
+            c.Text(text, Rect(ix + 9, cy - 7, tw + 2, 14), Weight::Medium, 10, t.textDim.Alpha(a));
+        } else {
+            float ix = x0 + 7;
+            c.Icon(g, {ix, cy}, 13, mt.accentHi.Alpha(a), true);
+            c.Text(text, Rect(ix + 9, cy - 7, kWidgetW - 14, 14), Weight::Medium, 10, t.textDim.Alpha(a));
+        }
     };
     widget(left, gl, false);
     widget(right, gr, true);
