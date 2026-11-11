@@ -43,7 +43,7 @@ const paintTheme = () => {
   themeBtn.innerHTML = svgUse(dark ? "sun" : "moon");
   themeBtn.setAttribute("aria-label", dark ? "Light mode" : "Dark mode");
   themeBtn.setAttribute("aria-pressed", dark);
-  $('meta[name="theme-color"]').content = dark ? "#070708" : "#f3f3f0";
+  $('meta[name="theme-color"]').content = dark ? "#000000" : "#f5f5f7";
 };
 if (themeBtn) {
   paintTheme();
@@ -97,7 +97,7 @@ function mount(el, uniforms, mipmaps, look) {
 function metalStar(el) {
   if (!el) return;
   const img = new Image();
-  img.onload = () => mount(el, { u_image: img, u_isImage: true, u_repetition: 2, u_shiftRed: 0.3, u_shiftBlue: 0.3, u_distortion: 0.07, u_angle: 70, u_shape: 0, u_fit: 1, u_scale: 0.9 }, ["u_image"], { rep: 2, ang: 70 });
+  img.onload = () => mount(el, { u_image: img, u_isImage: true, u_repetition: 2, u_shiftRed: 0.3, u_shiftBlue: 0.3, u_distortion: 0.07, u_angle: 70, u_shape: 0, u_fit: 1, u_scale: 0.9 }, ["u_image"], { rep: 2, ang: 70, shift: 0.3 });
   img.onerror = () => el.classList.add("no-gl");
   img.src = "assets/img/star-metal.png";
 }
@@ -107,15 +107,9 @@ $$(".btn.chrome, .p-dl").forEach((b) => {
   const layer = document.createElement("span");
   layer.className = "btn-metal"; layer.setAttribute("aria-hidden", "true");
   b.prepend(layer);
-  // a chrome pill pre-processed like the star; the wider mask for long buttons, the shorter one for the header's
-  const r = b.getBoundingClientRect(), wide = !r.height || r.width / r.height > 4;
-  const img = new Image();
-  img.onload = () => {
-    if (mount(layer, { u_image: img, u_isImage: true, u_shape: 0, u_repetition: 1.5, u_shiftRed: 0.25, u_shiftBlue: 0.25, u_distortion: 0.08, u_angle: 80, u_fit: 2, u_scale: 1 }, ["u_image"], { rep: 1.5, ang: 80 })) b.classList.add("live");
-    else layer.remove();
-  };
-  img.onerror = () => layer.remove();
-  img.src = `assets/img/${wide ? "pill-metal" : "pill-metal-s"}.png`;
+  // only the button's edge shows it (css masks the middle away); shape 0 fills the box, so the ring follows any size
+  if (mount(layer, { u_isImage: false, u_shape: 0, u_repetition: 1.4, u_shiftRed: 0.04, u_shiftBlue: 0.04, u_distortion: 0.08, u_angle: 80, u_fit: 0, u_scale: 1 }, [], { rep: 1.4, ang: 80, shift: 0.04 })) b.classList.add("live");
+  else layer.remove();
 });
 if (!still) {
   const t0 = performance.now();
@@ -125,7 +119,7 @@ if (!still) {
     for (const x of metals) {
       if (!x.m.isInViewport) continue;
       const a = wave(t, x.k), b = wave(t * 1.37, x.k + 17), c = wave(t * 0.83, x.k + 41);
-      x.m.setUniforms({ u_angle: x.ang + a * 34 + lean * 16, u_repetition: x.rep + b * 0.7, u_distortion: 0.1 + c * 0.07, u_shiftRed: 0.3 + b * 0.18, u_shiftBlue: 0.3 - c * 0.18 });
+      x.m.setUniforms({ u_angle: x.ang + a * 34 + lean * 16, u_repetition: x.rep + b * 0.7, u_distortion: 0.1 + c * 0.07, u_shiftRed: x.shift * (1 + b * 0.6), u_shiftBlue: x.shift * (1 - c * 0.6) });
       x.m.setSpeed(0.75 + a * 0.45); // it hurries and lingers
     }
     requestAnimationFrame(drift);
@@ -142,13 +136,12 @@ if (moving && Lenis) {
   gsap.ticker.add((t) => lenis.raf(t * 1000));
   gsap.ticker.lagSmoothing(250, 33); // a slow frame (shaders compiling) mustn't skip the intro ahead
 }
-/* the chrome rims turn with the scroll and the pointer; the back-to-top ring fills as you read */
-const toTop = $(".to-top"), rims = $$(".rim");
-let rimPointer = 0, maxY = 1;
+/* the back-to-top ring fills as you read */
+const toTop = $(".to-top");
+let maxY = 1;
 const measure = () => { maxY = Math.max(1, document.documentElement.scrollHeight - innerHeight); };
 function onScrolled() {
-  const y = scrollY, rim = `${(y * 0.12 + rimPointer) % 360}deg`;
-  rims.forEach((r) => r.style.setProperty("--rim", rim)); // set on the rims alone, so a scroll doesn't restyle the page
+  const y = scrollY;
   toTop?.style.setProperty("--read", (y / maxY).toFixed(4));
   toTop?.classList.toggle("on", y > innerHeight * 0.9);
 }
@@ -156,7 +149,6 @@ measure();
 window.addEventListener("resize", measure);
 if (moving) ScrollTrigger.addEventListener("refresh", measure);
 window.addEventListener("scroll", onScrolled, { passive: true });
-window.addEventListener("pointermove", (e) => { rimPointer = (e.clientX / innerWidth) * 120; onScrolled(); }, { passive: true });
 onScrolled();
 $$('a[href^="#"]').forEach((a) => a.addEventListener("click", (e) => {
   const id = a.getAttribute("href"); if (id.length < 2) return;
@@ -419,11 +411,6 @@ function lyricsPin() {
 function looksPin() {
   const track = $(".lk-track"), cards = $$(".lk-card");
   const dist = () => track.scrollWidth - window.innerWidth + 80;
-  const smear = { v: 0 };
-  const setFilter = () => {
-    const x = gsap.utils.clamp(-14, 14, smear.v);
-    track.style.filter = Math.abs(x) < 0.3 ? "" : `drop-shadow(${x}px 0 0 rgb(255 40 110 / .45)) drop-shadow(${-x}px 0 0 rgb(0 170 255 / .45))`; // colours part as it slides, light through glass
-  };
   let last = -1;
   const tw = gsap.to(track, {
     x: () => -dist(), ease: "none",
@@ -431,8 +418,6 @@ function looksPin() {
       trigger: ".looks", pin: ".lk-pin", start: "top top", end: () => "+=" + dist(), scrub: 0.8, invalidateOnRefresh: true,
       onToggle: (self) => own("looks", self.isActive, cards[Math.max(last, 0)].dataset.say),
       onUpdate: (self) => {
-        gsap.to(smear, { v: self.getVelocity() / 260, duration: 0.3, overwrite: true, onUpdate: setFilter });
-        gsap.to(track, { skewX: gsap.utils.clamp(-5, 5, -self.getVelocity() / 650), duration: 0.4, overwrite: "auto" });
         const i = Math.min(cards.length - 1, Math.round(self.progress * (cards.length - 1)));
         if (i !== last) { last = i; if (owner === "looks") { setSay(cards[i].dataset.say); tick(1300); } }
       },
