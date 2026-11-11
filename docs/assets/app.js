@@ -56,53 +56,114 @@ if (themeBtn) {
 
 /* ---------- the narrator: the long pill's middle, like a sung line ---------- */
 const say = $(".p-say");
-let said = "";
-function setSay(html) {
-  if (!say || !html || html === said) return;
+const SAY_SETTLE = 140; // ms a line must hold before it's spoken, so a fling doesn't stack lines in the pill
+let said = "", sayTimer = 0;
+function speak(html) {
+  if (html === said) return;
   said = html;
-  const old = say.querySelector(".p-line:last-child"), next = document.createElement("span");
+  const lines = $$(".p-line", say), next = document.createElement("span");
   next.className = "p-line"; next.innerHTML = html;
   if (!moving) { say.replaceChildren(next); return; }
+  // only the line on show leaves; anything still mid-flight is dropped at once
+  gsap.killTweensOf(lines);
+  const old = lines.pop();
+  lines.forEach((l) => l.remove());
   say.style.position = "relative";
   next.style.cssText = "position:absolute;left:0;right:0";
   say.append(next);
-  gsap.fromTo(next, { yPercent: 90, opacity: 0, filter: "blur(4px)" }, { yPercent: 0, opacity: 1, filter: "blur(0px)", duration: 0.55, ease: "expo.out", onComplete: () => { next.style.cssText = ""; } });
-  if (old) gsap.to(old, { yPercent: -90, opacity: 0, filter: "blur(4px)", duration: 0.35, ease: "power2.in", onComplete: () => old.remove() });
+  // the old line clears out first, so two lines never cross in the pill
+  if (old) gsap.to(old, { yPercent: -70, opacity: 0, filter: "blur(4px)", duration: 0.2, ease: "power2.in", onComplete: () => old.remove() });
+  gsap.fromTo(next, { yPercent: 70, opacity: 0, filter: "blur(4px)" }, { yPercent: 0, opacity: 1, filter: "blur(0px)", duration: 0.45, delay: old ? 0.16 : 0, ease: "expo.out", onComplete: () => { next.style.cssText = ""; } });
+}
+function setSay(html, now = false) {
+  if (!say || !html) return;
+  clearTimeout(sayTimer);
+  if (now || !moving) speak(html); else sayTimer = setTimeout(() => speak(html), SAY_SETTLE);
 }
 
-/* ---------- liquid chrome: the logo's star ---------- */
-function metal(el, scale) {
+/* ---------- liquid chrome: the logo's star, and the download buttons ---------- */
+// each mount wanders through its own settings on slow waves that never line up, so the metal doesn't loop
+const metals = [];
+const wave = (t, k) => Math.sin(t * 0.131 + k) * 0.5 + Math.sin(t * 0.0713 + k * 2.31) * 0.3 + Math.sin(t * 0.0377 + k * 5.13) * 0.2;
+let lean = 0, leanTo = 0; // the pointer tips the light a little
+const BASE = { u_softness: 0.1, u_contour: 0.4, u_rotation: 0, u_offsetX: 0, u_offsetY: 0, u_originX: 0.5, u_originY: 0.5, u_worldWidth: 0, u_worldHeight: 0, u_colorBack: color("rgba(0,0,0,0)"), u_colorTint: color("#ffffff") };
+function mount(el, uniforms, mipmaps, look) {
+  try {
+    const m = new ShaderMount(el, liquidMetalFragmentShader, { ...BASE, ...uniforms }, { premultipliedAlpha: false }, still ? 0 : 1, Math.random() * 6e5, 2, undefined, mipmaps);
+    metals.push({ m, k: Math.random() * 100, ...look });
+    return true;
+  } catch { el.classList.add("no-gl"); return false; } // no webgl: the css chrome stays
+}
+function metalStar(el) {
   if (!el) return;
   const img = new Image();
-  img.onload = () => {
-    try {
-      new ShaderMount(el, liquidMetalFragmentShader, {
-        u_image: img, u_isImage: true,
-        u_colorBack: color("rgba(0,0,0,0)"), u_colorTint: color("#ffffff"),
-        u_repetition: 2, u_softness: 0.1, u_shiftRed: 0.3, u_shiftBlue: 0.3, u_distortion: 0.07, u_contour: 0.4, u_angle: 70, u_shape: 0,
-        u_fit: 1, u_scale: scale, u_rotation: 0, u_offsetX: 0, u_offsetY: 0, u_originX: 0.5, u_originY: 0.5, u_worldWidth: 0, u_worldHeight: 0,
-      }, { premultipliedAlpha: false }, still ? 0 : 1, 0, 2, undefined, ["u_image"]);
-    } catch { el.classList.add("no-gl"); } // no webgl: the static star from css instead
-  };
+  img.onload = () => mount(el, { u_image: img, u_isImage: true, u_repetition: 2, u_shiftRed: 0.3, u_shiftBlue: 0.3, u_distortion: 0.07, u_angle: 70, u_shape: 0, u_fit: 1, u_scale: 0.9 }, ["u_image"], { rep: 2, ang: 70 });
   img.onerror = () => el.classList.add("no-gl");
   img.src = "assets/img/star-metal.png";
 }
-metal($("#metal"), 0.9);
-metal($("#metal2"), 0.9);
+metalStar($("#metal"));
+metalStar($("#metal2"));
+$$(".btn.chrome, .p-dl").forEach((b) => {
+  const layer = document.createElement("span");
+  layer.className = "btn-metal"; layer.setAttribute("aria-hidden", "true");
+  b.prepend(layer);
+  // a chrome pill pre-processed like the star; the wider mask for long buttons, the shorter one for the header's
+  const r = b.getBoundingClientRect(), wide = !r.height || r.width / r.height > 4;
+  const img = new Image();
+  img.onload = () => {
+    if (mount(layer, { u_image: img, u_isImage: true, u_shape: 0, u_repetition: 1.5, u_shiftRed: 0.25, u_shiftBlue: 0.25, u_distortion: 0.08, u_angle: 80, u_fit: 2, u_scale: 1 }, ["u_image"], { rep: 1.5, ang: 80 })) b.classList.add("live");
+    else layer.remove();
+  };
+  img.onerror = () => layer.remove();
+  img.src = `assets/img/${wide ? "pill-metal" : "pill-metal-s"}.png`;
+});
+if (!still) {
+  const t0 = performance.now();
+  const drift = () => {
+    const t = (performance.now() - t0) / 1000;
+    lean += (leanTo - lean) * 0.04;
+    for (const x of metals) {
+      if (!x.m.isInViewport) continue;
+      const a = wave(t, x.k), b = wave(t * 1.37, x.k + 17), c = wave(t * 0.83, x.k + 41);
+      x.m.setUniforms({ u_angle: x.ang + a * 34 + lean * 16, u_repetition: x.rep + b * 0.7, u_distortion: 0.1 + c * 0.07, u_shiftRed: 0.3 + b * 0.18, u_shiftBlue: 0.3 - c * 0.18 });
+      x.m.setSpeed(0.75 + a * 0.45); // it hurries and lingers
+    }
+    requestAnimationFrame(drift);
+  };
+  requestAnimationFrame(drift);
+  window.addEventListener("pointermove", (e) => { leanTo = e.clientX / innerWidth - 0.5; }, { passive: true });
+}
 
 /* ---------- smooth scroll ---------- */
 let lenis = null;
 if (moving && Lenis) {
-  lenis = new Lenis({ lerp: 0.09, smoothWheel: true });
+  lenis = new Lenis({ lerp: 0.075, wheelMultiplier: 0.85, touchMultiplier: 1.2, smoothWheel: true }); // a touch heavier, so a flick glides instead of jumping
   lenis.on("scroll", ScrollTrigger.update);
   gsap.ticker.add((t) => lenis.raf(t * 1000));
-  gsap.ticker.lagSmoothing(0);
+  gsap.ticker.lagSmoothing(250, 33); // a slow frame (shaders compiling) mustn't skip the intro ahead
 }
+/* the chrome rims turn with the scroll and the pointer; the back-to-top ring fills as you read */
+const toTop = $(".to-top"), rims = $$(".rim");
+let rimPointer = 0, maxY = 1;
+const measure = () => { maxY = Math.max(1, document.documentElement.scrollHeight - innerHeight); };
+function onScrolled() {
+  const y = scrollY, rim = `${(y * 0.12 + rimPointer) % 360}deg`;
+  rims.forEach((r) => r.style.setProperty("--rim", rim)); // set on the rims alone, so a scroll doesn't restyle the page
+  toTop?.style.setProperty("--read", (y / maxY).toFixed(4));
+  toTop?.classList.toggle("on", y > innerHeight * 0.9);
+}
+measure();
+window.addEventListener("resize", measure);
+if (moving) ScrollTrigger.addEventListener("refresh", measure);
+window.addEventListener("scroll", onScrolled, { passive: true });
+window.addEventListener("pointermove", (e) => { rimPointer = (e.clientX / innerWidth) * 120; onScrolled(); }, { passive: true });
+onScrolled();
 $$('a[href^="#"]').forEach((a) => a.addEventListener("click", (e) => {
   const id = a.getAttribute("href"); if (id.length < 2) return;
   const el = $(id); if (!el) return;
   e.preventDefault();
-  if (lenis) lenis.scrollTo(id === "#top" ? 0 : el, { duration: 1.4 }); else el.scrollIntoView();
+  const far = Math.abs(el.getBoundingClientRect().top) > innerHeight * 4;
+  if (lenis) lenis.scrollTo(id === "#top" ? 0 : el, { duration: far ? 2.2 : 1.4, easing: (x) => 1 - Math.pow(1 - x, 4) }); else el.scrollIntoView({ behavior: still ? "auto" : "smooth" });
   history.replaceState(null, "", id);
 }));
 
@@ -112,8 +173,8 @@ let opened = false;
 if ("scrollRestoration" in history) history.scrollRestoration = "manual"; // a reload starts at the top, where the intro is
 if (intro && moving) window.scrollTo(0, 0);
 function heroIn() {
-  if (!moving) return;
-  gsap.timeline({ defaults: { ease: "expo.out" } })
+  if (!moving) return null;
+  return gsap.timeline({ defaults: { ease: "expo.out" } })
     .fromTo(".hero-panel", { clipPath: "inset(0% 0% 100% 0% round 18px)", y: -30 }, { clipPath: "inset(0% 0% 0% 0% round 18px)", y: 0, duration: 1.4, clearProps: "clipPath" })
     .fromTo(".hero .line > span", { yPercent: 110 }, { yPercent: 0, duration: 1.2, stagger: 0.08 }, 0.35)
     .fromTo(".hero-foot", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 1 }, 0.7);
@@ -126,16 +187,33 @@ function open(fast) {
   opened = true;
   window.removeEventListener("keydown", onKey);
   if (!intro) return;
-  if (fast || !moving) { intro.remove(); lenis?.start(); heroIn(); return; }
+  // skip is a cut: the page is simply there
+  if (fast || !moving) { gsap?.killTweensOf("#metal, .intro-ui, .intro kbd"); intro.remove(); lenis?.start(); return; }
   tick(520, 0.25, 0.07);
-  const star = $("#metal"), mark = $(".p-brand svg");
+  gsap.killTweensOf("#metal, .intro-ui, .intro kbd"); // an early press: the entrance gives way to the opening
+  gsap.set(".intro kbd", { opacity: 1, y: 0 });
+  const star = $("#metal"), mark = $(".p-brand svg"), pill = $("#pill");
+  gsap.set(pill, { xPercent: -50, x: 0 }); // the pill centres by percent, so a resize mid-flight can't strand it
   const pr = mark.getBoundingClientRect(), sr = star.getBoundingClientRect();
-  gsap.timeline({ onComplete: () => { intro.remove(); lenis?.start(); } })
-    .to(".intro-ui, .intro-skip", { opacity: 0, y: 10, duration: 0.3 })
-    // the star flies up into the pill's logo
-    .to(star, { x: pr.left + pr.width / 2 - (sr.left + sr.width / 2), y: pr.top + pr.height / 2 - (sr.top + sr.height / 2), scale: pr.height / sr.height, duration: 1.05, ease: "expo.inOut" }, 0.1)
-    .to(intro, { backgroundColor: "rgba(0,0,0,0)", duration: 0.6 }, 0.55)
-    .add(heroIn, 0.65);
+  const keys = $$(".intro kbd");
+  const tl = gsap.timeline({ onComplete: () => { intro.remove(); gsap.set(pill, { clearProps: "transform" }); lenis?.start(); } });
+  // the shortcut is pressed, key by key
+  keys.forEach((k, i) => tl.add(() => { k.classList.add("down"); tick(1500 + i * 220, 0.03); }, i * 0.13));
+  tl.add(() => keys.forEach((k) => k.classList.remove("down")), keys.length * 0.13 + 0.12)
+    .to(".intro-ui, .intro-skip", { opacity: 0, y: 10, filter: "blur(4px)", duration: 0.35, ease: "power2.in", overwrite: true }, 0.5) // overwrite: an early press beats the fade-in
+    // the star gathers itself
+    .to(star, { scale: 1.14, rotation: -14, duration: 0.45, ease: "power2.inOut" }, 0.5)
+    // a seam of light opens the page from the middle
+    .to(".intro-seam", { width: "100%", duration: 0.55, ease: "expo.inOut" }, 0.75)
+    .to(".intro-half.top", { yPercent: -100, duration: 1.15, ease: "expo.inOut" }, 1.12)
+    .to(".intro-half.bot", { yPercent: 100, duration: 1.15, ease: "expo.inOut" }, 1.12)
+    .to(".intro-seam", { opacity: 0, scaleY: 6, duration: 0.5, ease: "power2.out" }, 1.25)
+    // and the star flies up into the pill's logo, spinning home
+    .to(star, { x: pr.left + pr.width / 2 - (sr.left + sr.width / 2), y: pr.top + pr.height / 2 - (sr.top + sr.height / 2), scale: pr.height / sr.height, rotation: 360, duration: 1.2, ease: "expo.inOut" }, 1.0)
+    .fromTo(pill, { y: -90 }, { y: 0, duration: 1, ease: "expo.out", immediateRender: false }, 1.35)
+    .add(() => tick(900, 0.12, 0.05), 2.15);
+  const hero = heroIn();
+  if (hero) tl.add(hero, 1.2);
 }
 if (intro) {
   if (!moving) open(true);
@@ -143,6 +221,7 @@ if (intro) {
     lenis?.stop();
     gsap.fromTo("#metal", { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 1.6, ease: "expo.out" });
     gsap.fromTo(".intro-ui", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 1, delay: 0.5, ease: "expo.out" });
+    gsap.fromTo(".intro kbd", { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.6, delay: 0.8, stagger: 0.09, ease: "back.out(2)" });
     window.addEventListener("keydown", onKey);
     $(".intro-go").addEventListener("click", () => open(false));
     $(".intro-skip").addEventListener("click", () => open(true));
@@ -249,8 +328,7 @@ function storyPin() {
         ? { opacity: 1, xPercent: -50 + x * 2.2, yPercent: -50 + y * 2.2, rotation: r, scale: 1, duration: 0.8, delay: j * 0.05, ease: "expo.out", overwrite: true }
         : { opacity: 0, xPercent: -50, yPercent: -50, rotation: 0, scale: 0.8, duration: 0.4, ease: "power2.in", overwrite: true });
     });
-    setSay(s.dataset.say);
-    tick(dir > 0 ? 1400 : 1150);
+    if (owner === "story") { setSay(s.dataset.say); tick(dir > 0 ? 1400 : 1150); }
   }
   const st = ScrollTrigger.create({
     trigger: ".story", pin: ".st-pin", start: "top top", end: () => "+=" + (N - 1) * window.innerHeight * 0.55,
@@ -287,34 +365,55 @@ function dialPin() {
     const [id, n, v] = ITEMS[i];
     ico.innerHTML = svgUse(id); name.textContent = n; val.textContent = v();
     labs.forEach((l, j) => l.classList.toggle("on", j === i));
-    setSay(`${svgUse(id)}${n} · ${v()}`);
-    tick(1700, 0.025, 0.04);
+    if (owner === "dial") { setSay(`${svgUse(id)}${n} · ${v()}`); tick(1700, 0.025, 0.04); } // only while the dial is on screen
   }
   pick(0);
+  const DIAL_PER_ITEM = 0.17; // screens of scrolling per item: a notch at a time, not a spin
+  gsap.set(wheel, { svgOrigin: `${C} ${C}` });
+  const turn = gsap.quickTo(wheel, "rotation", { duration: 0.6, ease: "power3" });
   const st = ScrollTrigger.create({
-    trigger: ".dial-pin", pin: true, start: "top top+=60", end: () => "+=" + window.innerHeight * 1.3,
+    trigger: ".dial-pin", pin: true, start: "top top+=60", end: () => "+=" + window.innerHeight * DIAL_PER_ITEM * (ITEMS.length - 1),
+    snap: { snapTo: 1 / (ITEMS.length - 1), duration: { min: 0.2, max: 0.5 }, delay: 0.12, ease: "power2.inOut" },
     onToggle: (self) => { const [id, n, v] = ITEMS[Math.max(cur, 0)]; own("dial", self.isActive, `${svgUse(id)}${n} · ${v()}`); },
     onUpdate: (self) => {
       const rot = self.progress * (ITEMS.length - 1) * STEP;
-      gsap.set(wheel, { rotation: -rot, svgOrigin: `${C} ${C}` });
+      turn(-rot);
       pick(Math.round(rot / STEP));
     },
   });
   return () => st.kill();
 }
 
+function splitWords(li) {
+  if (li.dataset.split) return;
+  li.dataset.split = "1";
+  li.innerHTML = li.textContent.split(/(\s+)/).map((w) => (/^\s+$/.test(w) ? w : `<span class="w">${w}</span>`)).join("");
+}
 function lyricsPin() {
-  const frame = $(".ly-frame"), lines = $$(".sing li"), sing = $(".sing");
+  const frame = $(".ly-frame"), lines = $$(".sing li"), sing = $(".sing"), stage = $(".ly-stage"), fill = $(".ly-bar b"), clock = $(".ly-t0");
+  const SONG = 221, LINE = 0.5, START = 1.25; // a 3:41 song; each line holds half a beat of the timeline
+  lines.forEach(splitWords);
   const w0 = Math.min(window.innerWidth * 0.46, 760);
-  const tl = gsap.timeline({ scrollTrigger: { trigger: ".lyrics", pin: ".ly-pin", start: "top top", end: () => "+=" + window.innerHeight * 2, scrub: 0.6, invalidateOnRefresh: true } });
+  const centre = (l) => -(l.offsetTop + l.offsetHeight / 2); // lifts the list so this line sits on the singing height
+  const tl = gsap.timeline({ scrollTrigger: { trigger: ".lyrics", pin: ".ly-pin", start: "top top", end: () => "+=" + window.innerHeight * 2.6, scrub: 0.7, invalidateOnRefresh: true,
+    onUpdate: (self) => { const sec = Math.round(self.progress * SONG * 0.42); clock.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`; } } });
   tl.fromTo(frame, { width: w0, height: w0 * 767 / 1365, borderRadius: 22 }, { width: () => window.innerWidth, height: () => window.innerHeight, borderRadius: 0, duration: 1, ease: "power2.inOut" })
-    .fromTo(sing, { opacity: 0 }, { opacity: 1, duration: 0.2 }, 0.85)
-    .fromTo(".ly-frame img", { filter: "blur(0px) brightness(1)" }, { filter: "blur(18px) brightness(.55)", duration: 0.35 }, 0.8); // the player steps back so the words can sing over it
+    // the player melts into a field of its own colours, so the words have a room to sing in
+    .fromTo(".ly-frame img", { filter: "blur(0px) saturate(1) brightness(1)", scale: 1 }, { filter: "blur(46px) saturate(1.6) brightness(.62)", scale: 1.25, duration: 0.45, ease: "power1.inOut" }, 0.85)
+    .fromTo(frame, { "--shade-in": 0 }, { "--shade-in": 1, duration: 0.4 }, 0.9)
+    .fromTo(stage, { opacity: 0 }, { opacity: 1, duration: 0.25 }, 1.05)
+    .fromTo(".ly-np", { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.25 }, 1.05)
+    .fromTo(fill, { scaleX: 0 }, { scaleX: 0.42, duration: START + lines.length * LINE - 1.05, ease: "none" }, 1.05)
+    .set(sing, { y: () => centre(lines[0]) }, 0);
   lines.forEach((l, i) => {
-    tl.to(l, { opacity: 1, filter: "blur(0px)", duration: 0.25 }, 1 + i * 0.35);
-    if (i < lines.length - 1) tl.to(l, { opacity: 0.25, filter: "blur(3px)", duration: 0.25 }, 1 + i * 0.35 + 0.35);
+    const at = START + i * LINE;
+    tl.to(sing, { y: () => centre(l), duration: LINE * 0.45, ease: "power2.inOut" }, at - LINE * 0.2)
+      .to(l, { opacity: 1, filter: "blur(0px)", scale: 1, duration: LINE * 0.3 }, at - LINE * 0.15)
+      .to($$(".w", l), { opacity: 1, duration: LINE * 0.12, stagger: (LINE * 0.6) / Math.max(1, $$(".w", l).length) }, at);
+    if (i < lines.length - 1) tl.to(l, { opacity: 0.26, filter: "blur(2.5px)", scale: 0.94, duration: LINE * 0.3 }, at + LINE * 0.8);
   });
-  return () => { tl.scrollTrigger?.kill(); tl.kill(); gsap.set([frame, sing, ...lines, ".ly-frame img"], { clearProps: "all" }); };
+  tl.to({}, { duration: 0.3 }); // the last line holds a moment before the pin lets go
+  return () => { tl.scrollTrigger?.kill(); tl.kill(); gsap.set([frame, sing, stage, fill, ".ly-np", ...lines, ...$$(".sing .w"), ".ly-frame img"], { clearProps: "all" }); };
 }
 
 function looksPin() {
@@ -335,7 +434,7 @@ function looksPin() {
         gsap.to(smear, { v: self.getVelocity() / 260, duration: 0.3, overwrite: true, onUpdate: setFilter });
         gsap.to(track, { skewX: gsap.utils.clamp(-5, 5, -self.getVelocity() / 650), duration: 0.4, overwrite: "auto" });
         const i = Math.min(cards.length - 1, Math.round(self.progress * (cards.length - 1)));
-        if (i !== last) { last = i; setSay(cards[i].dataset.say); tick(1300); }
+        if (i !== last) { last = i; if (owner === "looks") { setSay(cards[i].dataset.say); tick(1300); } }
       },
     },
   });

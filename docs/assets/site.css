@@ -53,7 +53,7 @@ svg { width: 1em; height: 1em; fill: currentColor; flex: none; }
 .mega.small { font-size: clamp(3rem, 9vw, 8.5rem); }
 .big { font-size: clamp(2.8rem, 7.4vw, 7.2rem); }
 .big.center { text-align: center; }
-.line { display: block; overflow: hidden; padding-bottom: .06em; }
+.line { display: block; overflow: hidden; padding-bottom: .18em; margin-bottom: -.12em; } /* room for g, j and y under the mask */
 .line > span { display: inline-block; }
 
 /* paper's thin crosses, marking the page like a drafting sheet */
@@ -83,7 +83,13 @@ svg { width: 1em; height: 1em; fill: currentColor; flex: none; }
 
 /* ---------- intro ---------- */
 .intro { display: none; }
-.js .intro { display: grid; position: fixed; inset: 0; z-index: 150; place-items: center; background: var(--bg); }
+.js .intro { display: grid; position: fixed; inset: 0; z-index: 150; place-items: center; }
+.intro-half { position: absolute; left: 0; right: 0; height: 50.5%; background: var(--bg); }
+.intro-half.top { top: 0; } .intro-half.bot { bottom: 0; }
+.intro-seam { position: absolute; left: 0; right: 0; top: 50%; height: 1px; margin: auto; width: 0; background: linear-gradient(90deg, transparent, #9a9aa4 20%, #fff 50%, #9a9aa4 80%, transparent); box-shadow: 0 0 24px rgb(255 255 255 / .8); }
+.intro .metal { position: relative; }
+.intro kbd { transition: transform .12s, background-color .12s, color .12s, box-shadow .12s; }
+.intro kbd.down { transform: translateY(2px); box-shadow: none; background: var(--ink); color: var(--bg); }
 .intro .metal { width: min(42vh, 360px); aspect-ratio: 656 / 800; }
 .intro-ui { position: absolute; left: 50%; top: calc(50% + min(26vh, 220px)); transform: translateX(-50%); text-align: center; }
 .intro-term { margin: 0 0 18px; font: 400 .92rem/1.6 var(--mono); color: var(--dim); }
@@ -155,7 +161,7 @@ svg { width: 1em; height: 1em; fill: currentColor; flex: none; }
 .st-head { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); grid-template-rows: auto auto; column-gap: 48px; align-items: end; max-width: var(--wide); margin: 0 auto; width: 100%; }
 .st-count { grid-column: 1; font: .8rem var(--mono); color: var(--low); margin: 0 0 6px; white-space: pre; }
 .st-in { color: var(--ink); }
-.st-title { grid-column: 1; grid-row: 2; margin: 0; font-size: clamp(3.4rem, 9vw, 8.6rem); font-weight: 500; letter-spacing: -.06em; line-height: .86; overflow: hidden; padding-bottom: .05em; }
+.st-title { grid-column: 1; grid-row: 2; margin: 0; font-size: clamp(3.4rem, 9vw, 8.6rem); font-weight: 500; letter-spacing: -.06em; line-height: .86; overflow: hidden; padding-bottom: .18em; margin-bottom: -.12em; }
 .st-title span { display: inline-block; }
 .st-text { grid-column: 2; grid-row: 1 / 3; align-self: end; margin: 0; color: var(--dim); font-size: 1.05rem; }
 .st-how { grid-column: 2; margin: 10px 0 0; font-size: .95rem; }
@@ -199,11 +205,26 @@ svg { width: 1em; height: 1em; fill: currentColor; flex: none; }
 .ly-frame .shot, .ly-frame .shot button, .ly-frame .shot img { height: 100%; border-radius: 0; }
 .ly-frame .shot img { object-fit: cover; }
 .ly-frame figcaption { display: none; }
-.sing { list-style: none; margin: 40px auto 0; padding: 0 var(--gutter); max-width: var(--wide); font: 800 clamp(1.8rem, 4vw, 3.4rem)/1.12 "Nunito", "Outfit", sans-serif; letter-spacing: -.015em; }
+.ly-stage { max-width: var(--wide); margin: 40px auto 0; padding: 0 var(--gutter); }
+.ly-np { display: flex; gap: 12px; align-items: baseline; margin: 0 0 18px; font: .8rem var(--mono); color: var(--dim); }
+.ly-np b { font-weight: 500; color: var(--ink); }
+.sing { list-style: none; margin: 0; padding: 0; font: 800 clamp(1.8rem, 4vw, 3.4rem)/1.12 "Nunito", "Outfit", sans-serif; letter-spacing: -.015em; }
 .sing li { margin-bottom: .35em; }
+.ly-bar { display: none; }
 .js-pin .ly-frame { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); height: auto; aspect-ratio: 1365 / 767; }
-.js-pin .sing { position: absolute; right: var(--gutter); bottom: 10vh; margin: 0; max-width: 46vw; color: #fff; text-shadow: 0 4px 30px rgb(0 0 0 / .4); }
-.js-pin .sing li { opacity: .25; filter: blur(3px); }
+/* pinned: the player becomes the room. its own colours, blurred into a field, and the words sung over it */
+.js-pin .ly-frame::after { content: ""; position: absolute; inset: 0; background: radial-gradient(120% 90% at 20% 50%, rgb(0 0 0 / .1), rgb(0 0 0 / .55)); opacity: var(--shade-in, 0); pointer-events: none; }
+.js-pin .ly-stage { position: absolute; inset: 0; margin: 0; max-width: none; padding: 0; color: #fff; pointer-events: none; opacity: 0; }
+.js-pin .ly-np { position: absolute; left: calc(var(--gutter) + 6vw); top: 15vh; color: rgb(255 255 255 / .6); }
+.js-pin .ly-np b { color: #fff; }
+/* the lines live in a window that fades at both ends, like the player's own list */
+.js-pin .ly-lines { position: absolute; left: 0; right: 0; top: 22vh; bottom: 16vh; overflow: hidden; -webkit-mask-image: linear-gradient(transparent, #000 22%, #000 78%, transparent); mask-image: linear-gradient(transparent, #000 22%, #000 78%, transparent); }
+.js-pin .sing { position: absolute; left: calc(var(--gutter) + 6vw); right: var(--gutter); top: 50%; font-size: clamp(2.6rem, 5.6vw, 5.6rem); line-height: 1.04; letter-spacing: -.025em; }
+.js-pin .sing li { margin-bottom: .32em; transform-origin: 0 50%; opacity: .26; filter: blur(2.5px); }
+.sing .w { display: inline-block; opacity: .4; white-space: pre; }
+.js-pin .ly-bar { display: flex; position: absolute; left: calc(var(--gutter) + 6vw); right: calc(var(--gutter) + 6vw); bottom: 8vh; align-items: center; gap: 16px; font: .75rem var(--mono); color: rgb(255 255 255 / .6); }
+.ly-bar i { flex: 1; height: 3px; border-radius: 3px; background: rgb(255 255 255 / .2); overflow: hidden; }
+.ly-bar b { display: block; height: 100%; background: linear-gradient(90deg, #8d8d96, #fff 60%, #c9c9d1); transform-origin: 0 50%; transform: scaleX(0); }
 
 /* ---------- 04 looks ---------- */
 .looks { position: relative; margin-top: 18vh; }
@@ -295,7 +316,7 @@ p { text-wrap: pretty; }
 html:not(.js-pin) .dial { display: none; }
 html:not(.js-pin) .ly-pin { min-height: 0; padding: 0 var(--gutter); }
 html:not(.js-pin) .ly-frame { width: 100%; }
-html:not(.js-pin) .sing li { opacity: 1; }
+html:not(.js-pin) .sing li, html:not(.js-pin) .sing .w { opacity: 1; }
 
 /* fixes from the first walk-through */
 main { overflow-x: clip; }
@@ -328,3 +349,42 @@ html.has-cursor .cursor { display: block; position: fixed; inset: 0 auto auto 0;
 html:has(dialog[open]) .cursor { display: none; }
 html.has-cursor:has(dialog[open]), html.has-cursor:has(dialog[open]) * { cursor: auto !important; }
 html.has-cursor:has(dialog[open]) .vstage { cursor: zoom-out !important; }
+
+/* ---------- chrome ---------- */
+/* no scrollbar: smooth scroll and the ring on the back-to-top button stand in for it */
+html { scrollbar-width: none; }
+html::-webkit-scrollbar { display: none; }
+
+/* a chrome rim that turns with the scroll and the pointer, never on its own loop */
+@property --rim { syntax: "<angle>"; inherits: true; initial-value: 0deg; }
+.rim::before { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none; z-index: 1;
+  background: conic-gradient(from var(--rim), #6e6e78, #fff 12%, #8a8a94 24%, #3a3a42 38%, #e9e9ee 52%, #7c7c86 66%, #fdfdff 80%, #55555e 92%, #6e6e78);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); }
+.pill.rim::before, .dial-now.rim::before { padding: 1.5px; }
+.get-card.rim::before { padding: 1.5px; opacity: .8; }
+
+/* the download buttons: liquid metal behind the words */
+.btn.chrome.live { background: #c9c9cf; }
+.btn.chrome.live::after { display: none; }
+.btn-metal { position: absolute; inset: 0; z-index: -1; border-radius: inherit; overflow: hidden; }
+.btn-metal canvas { display: block; width: 100%; height: 100%; }
+.btn.chrome.live, .p-dl.live { text-shadow: 0 0 10px rgb(255 255 255 / .95), 0 0 2px rgb(255 255 255 / .9); }
+.p-dl { position: relative; isolation: isolate; overflow: hidden; }
+.p-dl.live { background: #c9c9cf; }
+
+/* the star in the pill takes on the chrome */
+.p-brand svg { fill: url(#chromefill); }
+
+/* back to the top: a chrome bead whose ring fills as you read */
+.to-top { position: fixed; z-index: 110; right: 22px; bottom: 22px; width: 52px; height: 52px; display: grid; place-items: center; border-radius: 50%; color: #0c0c0e; background: var(--chrome);
+  box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgb(0 0 0 / .25), 0 14px 30px -12px var(--shade), 0 0 0 1px rgb(0 0 0 / .12);
+  opacity: 0; transform: translateY(16px) scale(.8); pointer-events: none; transition: opacity .5s var(--ease), transform .5s var(--ease); }
+.to-top.on { opacity: 1; transform: none; pointer-events: auto; }
+.to-top:hover { transform: translateY(-3px); }
+.to-top > svg:last-child { width: 20px; height: 20px; position: relative; }
+.tt-ring { position: absolute; inset: -5px; width: 62px; height: 62px; transform: rotate(-90deg); fill: none; overflow: visible; }
+.tt-ring circle { stroke: var(--ink); stroke-width: 1.5; stroke-linecap: round; stroke-dasharray: 154 154; stroke-dashoffset: calc(154px * (1 - var(--read, 0))); transform: scale(1.18); transform-origin: 26px 26px; opacity: .55; }
+.no-js .to-top { opacity: 1; transform: none; pointer-events: auto; }
+[data-theme="dark"] .p-brand svg { fill: currentColor; }
+/* a pale veil over the metal keeps the words readable when a dark band slides under them */
+.btn-metal::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgb(255 255 255 / .38), rgb(255 255 255 / .18)); pointer-events: none; }
