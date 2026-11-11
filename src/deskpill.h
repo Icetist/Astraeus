@@ -58,20 +58,25 @@ private:
         struct Shape { // what it can be on its own in each place
             float len = 560, gap = 10;
             bool floats = true;
+            float thick = 30; // and with it, how big its type is
         } shape[2]; // on the desktop, not on the desktop
         int edge = 0;
-        float pos = 500, thick = 30;
+        float pos = 500;
         bool desk = true; // the long pill on the desktop; false: the regular one there
         bool apps = false; // the long pill when not on desktop; false: the regular one there
         int fill = 0, fillApps = 0; // its body on the desktop, and over an app
         std::vector<int> items; // the set showing now
         std::vector<int> itemsOther; // the other context's set, while split
         bool split = false; // its own widgets when not on desktop
+        int mid = Model::kMidAuto, midOther = Model::kMidAuto; // what holds the middle, for items and for itemsOther
     };
     int itemsCtx = 0; // which context spec.items holds now: 0 the desktop's, 1 over apps
     void SyncItems(); // the set for the context showing: swapped in as it changes
     const std::vector<int>& DeskSet() const { return itemsCtx == 0 ? spec.items : spec.itemsOther; }
     const std::vector<int>& AppsSet() const { return itemsCtx == 0 ? spec.itemsOther : spec.items; }
+    int DeskMid() const { return itemsCtx == 0 ? spec.mid : spec.midOther; }
+    int AppsMid() const { return itemsCtx == 0 ? spec.midOther : spec.mid; }
+    int Anchor(const std::vector<int>& items) const; // the item holding the middle, or -1: one centred row
     struct Pose { // where it's drawn: its edge side's middle, turned to its edge
         float ax = 0, ay = 0, angle = 0, len = 0, thick = 0, flat = 0;
     };
@@ -88,6 +93,7 @@ private:
     static LRESULT CALLBACK Proc(HWND, UINT, WPARAM, LPARAM);
     LRESULT Handle(UINT msg, WPARAM wp, LPARAM lp);
     void Poke() { dirty = true; }
+    void Watch(); // what it shows against what it showed: a frame only when that changed; the next lyric line is waited for to the moment
     int Ctx() const { return spec.apps && (editing || leaving ? previewApps : onApp) ? 1 : 0; } // which of its two it is now; the editor shows the tab that's picked
     Spec::Shape& Sh() { return spec.shape[Ctx()]; }
     const Spec::Shape& Sh() const { return spec.shape[Ctx()]; }
@@ -100,7 +106,8 @@ private:
     Pose Goal() const { return Goal(Ctx()); }
     D2D1_RECT_F Reach(float pad) const; // the room both of its shapes take together
     bool StepRest(float dt); // resting: eases over to the other shape as the place changes
-    void Grow(float need) { for (Spec::Shape& s : spec.shape) s.len = (std::max)(s.len, need); } // items are shared: both have to fit them
+    void Grow(const std::vector<int>& items, float least = 0); // items are shared: both have to fit them, each at its own thickness
+    float NeedAll(const std::vector<int>& items); // the most either shape in use needs for these
     void SetPreview(bool apps); // the editor's tab: which of the two it shows and changes
     void FitSong(std::vector<Placed>& all, size_t from, size_t to, float room, float gap, float thick); // a long title gives way, nothing else does
     D2D1_MATRIX_3X2_F Local(const Pose& p) const;
@@ -180,6 +187,11 @@ private:
     Ui ui;
     LPCWSTR cursor = IDC_HAND;
     std::vector<Placed> placed; // this frame's items, for hit tests
+    int midAt = -1; // which of them holds the middle, where a sung line goes
+    Placed midLast{}, midWas{}; // the middle as last drawn; what it was as a fade began, going out
+    bool midLastOn = false, midHad = false, midFading = false;
+    std::wstring midKey; // a sung line by its words, anything else by its kind: the clock ticking isn't a change
+    double midSince = 0;
 
     Drag drag = Drag::None;
     bool pressedOnBar = false, moved = false, offPill = false, bareDown = false;
@@ -187,6 +199,9 @@ private:
     int dragKind = -1;
     float shake = 0; // an item that won't fit: the pill says no
     bool magnetMid = false; // the drag is held at the edge's middle
+    bool midZone = false; // an item held over the pill's middle: let go and it holds it
+    bool midSnapped = false; // the middle as it was when this drag began, taken once
+    int midAtPick = Model::kMidAuto, holderAtPick = -1; // the saved choice, and the item that held the middle then
     int wallFor = 0; // 0 none, 1 glass only, 2 sharp too
 
     ComPtr<ID3D11Device> d3d;

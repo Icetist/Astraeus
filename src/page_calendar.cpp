@@ -161,7 +161,7 @@ void Hero(PageCtx& p, const Frame& f, const SYSTEMTIME& now) { // today, huge, i
     c.Stroke(card, Height(card) / 2, t.accentHi.Alpha(0.35f + 0.35f * sel), 1);
     float cy = (card.top + card.bottom) / 2;
     c.Icon(fmt::WxIcon(wx.code, wx.isDay), {card.left + 24, cy}, 22, t.accentHi, true);
-    c.Text(fmt::Temp(wx.tempC, p.m.cfg.fahr), Rect(card.left + 44, card.top, 56, Height(card)), Weight::Semi, 15, t.text);
+    c.Text(fmt::Temp(wx.tempC, (p.m.fahr != 0)), Rect(card.left + 44, card.top, 56, Height(card)), Weight::Semi, 15, t.text);
     c.Text(fmt::WxText(wx.code), Rect(card.left + 94, card.top, Width(card) - 106, Height(card)), Weight::Light, 12, t.textDim);
 }
 
@@ -181,7 +181,7 @@ void Forecast(PageCtx& p, const D2D1_RECT_F& list) { // the hours and days ahead
     const Theme& t = p.shell;
     Model& m = p.m;
     const sys::Wx& wx = m.wx;
-    bool fahr = m.cfg.fahr;
+    bool fahr = m.fahr != 0;
     c.Text(L"Forecast", Rect(list.left + 2, list.top - 6, 200, 40), Weight::Semi, 26, t.text);
     if (w::IconBtn(ui, t, Ui::Id("cal.close"), {list.right - 14, list.top + 15}, 30, glyph::Close, 18)) m.CloseCal();
     D2D1_RECT_F back = Rect(list.right - 120, list.top + 3, 86, 24); // back to the month
@@ -275,10 +275,26 @@ void Agenda(PageCtx& p, const D2D1_RECT_F& list, int y, int mo, int d) { // the 
     }
     auto events = m.cals.Day(y, mo, d);
     float ry = list.top + kHeadH + 4;
-    if (events.empty()) {
+    std::vector<int> due; // the to-dos due this day, read straight from the list: no copy to fall out of step
+    for (int i = 0, ymd = y * 10000 + mo * 100 + d; i < (int)m.todos.size(); ++i)
+        if (m.todos[i].due == ymd) due.push_back(i);
+    if (events.empty() && due.empty()) {
         c.Text(m.cals.Busy() ? L"Syncing\u2026" : L"Nothing on this day", Rect(list.left + 4, ry, Width(list) - 8, 24), Weight::Light, 13, t.textDim);
         return;
     }
+    for (int i : due) { // a to-do: tick it off here too
+        if (ry + kRowH > list.bottom) break;
+        auto& todo = m.todos[i];
+        D2D1_RECT_F row = Rect(list.left, ry, Width(list), kRowH - 6);
+        Ui::Hit h = ui.Button(Ui::Id("cal.ag.todo", i), row);
+        c.Fill(row, 12, t.text.Alpha(h.hover ? 0.07f : 0.04f));
+        c.Icon(todo.done ? glyph::BoxOn : glyph::Box, {row.left + 20, (row.top + row.bottom) / 2}, 18, todo.done ? t.accentHi : t.textDim, todo.done);
+        c.Text(todo.text, Rect(row.left + 38, row.top + 3, Width(row) - 46, 18), Weight::Medium, 13, todo.done ? t.textLow : t.text);
+        c.Text(todo.done ? L"To-do, done" : L"To-do", Rect(row.left + 38, row.top + 19, Width(row) - 46, 16), Weight::Light, 11.5f, t.accentHi);
+        if (h.clicked) todo.done = !todo.done, m.SaveTodos();
+        ry += kRowH;
+    }
+    if (events.empty()) return;
     size_t fit = (size_t)(std::max)(1.0f, (list.bottom - ry) / kRowH);
     for (size_t i = 0; i < events.size() && i < fit; ++i, ry += kRowH) {
         const auto& e = events[i];
@@ -445,7 +461,7 @@ void DrawCalendar(PageCtx& p, float k) {
             if (h.hover && !outside) greet = feast, greetAt = {o.x, o.y - rad};
         }
         c.Text(std::to_wstring(d), Rect(o.x - rad, o.y - rad, 2 * rad, 2 * rad), today || feast ? Weight::Semi : past ? Weight::Light : Weight::Medium, today ? 15.0f : 13.5f, ink.Alpha(in), Align::Center);
-        if (m.cals.HasEvents(y, mo, d)) c.Dot({o.x, o.y + rad * 0.68f}, 1.8f, (today ? t.onAccent : t.accentHi).Alpha((outside ? 0.45f : 1.0f) * in)); // something on that day
+        if (m.cals.HasEvents(y, mo, d) || m.TodoDueOn(y, mo, d)) c.Dot({o.x, o.y + rad * 0.68f}, 1.8f, (today ? t.onAccent : t.accentHi).Alpha((outside ? 0.45f : 1.0f) * in)); // something on that day
         if (h.clicked) {
             pickY = y, pickM = mo, pickD = d;
             if (outside) viewYear = y, viewMonth = mo; // a day from the next or last month takes you there

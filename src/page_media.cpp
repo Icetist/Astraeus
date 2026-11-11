@@ -4,6 +4,7 @@
 
 #include "anim.h"
 #include "glyphs.h"
+#include "lyricview.h"
 #include "pages.h"
 
 namespace {
@@ -303,14 +304,39 @@ void Controls(PageCtx& p, float cx, float cy, float k) { // shuffle, previous, p
     OnDot(p, "md.repeat", {cx + s1, cy}, has && tr.repeat != 0);
 }
 
-void MediaCompact(PageCtx& p) { // a smaller cover beside the song, the wave and the controls across the whole card
+constexpr float kLyrSplit = 0.5f, kLyrSplitMin = 380; // beside the words the player goes compact and takes this share of the card
+constexpr float kLyrGap = 18, kLyrInset = 22, kLyrMinW = 220, kLyrMinH = 110; // the words' column, and the least it's worth showing in
+
+bool LyricsOn(PageCtx& p, const D2D1_RECT_F& r) { // switched on, room for them, and a song from a music app: the column is meant to go in r
+    const sys::Track& tr = p.m.track;
+    if (!p.lyrics || !p.m.mediaLyrics || !p.m.hasTrack || !tr.music || Width(r) < kLyrMinW || Height(r) < kLyrMinH) return false;
+    p.lyricsAt = r;
+    return p.lyrics->Has() || p.lyricsWaiting; // a song without synced lines keeps the plain player
+}
+
+void Lyrics(PageCtx& p, const D2D1_RECT_F& r, const D2D1_RECT_F& card) { // the fullscreen player's words, in the card
+    const sys::Track& tr = p.m.track;
+    Canvas& c = p.ui.C();
+    float a = p.ui.SmoothFrom(Ui::Id("md.lyr.in", (int)(tr.coverId & 0x7fffffff)), 1, 0, 8); // each song's words fade in
+    c.Target()->PushAxisAlignedClip(card, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE); // the lines far from the sung one stay inside the card
+    if (p.lyrics->Has()) {
+        double at = tr.Elapsed() / 1e7 - p.lyricsShift;
+        double jump = p.lyrics->Draw(p.dc, c, p.ui, r, at, a, p.media, tr.playing);
+        if (jump >= 0 && tr.canSeek && tr.duration > 0) p.m.media.Seek(jump * 1e7 / tr.duration); // a line clicked: the song goes there
+        if (tr.playing || p.lyrics->Busy()) p.ui.Wake(); // the sung words light up as they go
+    } else {
+        p.lyrics->Waiting(c, r, a, p.media, p.ui.Now());
+        p.ui.Wake();
+    }
+    c.Target()->PopAxisAlignedClip();
+}
+
+void MediaCompact(PageCtx& p, const D2D1_RECT_F& r) { // a smaller cover beside the song, the wave and the controls across r
     Canvas& c = p.ui.C();
     const Theme& t = p.media;
-    const D2D1_RECT_F& r = p.area;
     const sys::Track& tr = p.m.track;
     bool has = p.m.hasTrack;
-    constexpr float kRadius = 24, kArt = 104, kPad = 26;
-    Backing(p, r, kRadius);
+    constexpr float kArt = 104, kPad = 26;
     D2D1_RECT_F place = Rect(r.left + kPad, r.top + kPad, kArt, kArt), art = ArtHover(p, place); // the rest lays out from where it sits, not from its hover lift
     FlipArt(p, art, 16, 40);
     art = place;
@@ -370,6 +396,8 @@ void MediaTall(PageCtx& p) { // sidebar: big centered art, everything else stack
         p.m.media.CycleRepeat();
     OnDot(p, "md.shuffle", {cx - 132, cy}, has && tr.shuffle);
     OnDot(p, "md.repeat", {cx + 132, cy}, has && tr.repeat != 0);
+    D2D1_RECT_F lr = {r.left + kLyrInset, cy + 44, r.right - kLyrInset, r.bottom - kLyrInset}; // the room under the controls
+    if (LyricsOn(p, lr)) Lyrics(p, lr, r);
 }
 
 static void DrawMediaBody(PageCtx& p);
@@ -392,17 +420,26 @@ static void DrawMediaBody(PageCtx& p) {
         MediaTall(p);
         return;
     }
+    const D2D1_RECT_F& r = p.area;
+    const float radius = 24;
+    float split = (std::max)(kLyrSplitMin, Width(r) * kLyrSplit);
+    D2D1_RECT_F lr = {r.left + split + kLyrGap, r.top + kLyrInset, r.right - kLyrInset, r.bottom - kLyrInset};
+    if (LyricsOn(p, lr)) { // the words on the right, the player compact on the left
+        Backing(p, r, radius);
+        MediaCompact(p, {r.left, r.top, r.left + split, r.bottom});
+        Lyrics(p, lr, r);
+        return;
+    }
     if (p.m.mediaCompact) {
-        MediaCompact(p);
+        Backing(p, r, radius);
+        MediaCompact(p, r);
         return;
     }
     Ui& ui = p.ui;
     Canvas& c = ui.C();
     const Theme& t = p.media;
-    const D2D1_RECT_F& r = p.area;
     const sys::Track& tr = p.m.track;
     bool has = p.m.hasTrack;
-    const float radius = 24;
 
     Backing(p, r, radius);
     float side = Height(r) - 52; // square art, 26px margin top/bottom

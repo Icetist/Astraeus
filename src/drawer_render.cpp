@@ -311,8 +311,37 @@ void Drawer::TrimDev() { // closed but the pill still needs the device: drop wha
     HeapSetInformation(nullptr, HeapOptimizeResources, &info, sizeof(info)); // freed heap back to windows; the working set stays, the pill is still animating
 }
 
+void Drawer::SyncMediaLyrics(double now) {
+    constexpr double kAskAfter = 1.5, kAskAgain = 16, kPollEvery = 0.25; // as the fullscreen player asks: once the length is known, again if it failed
+    constexpr float kTypeShare = 0.075f, kTypeMin = 14, kTypeMax = 26; // the type, by the column's height
+    const sys::Track& tr = model.track;
+    bool want = opened && page == Model::kPgMedia && model.mediaLyrics && model.hasTrack && tr.music && !tr.title.empty();
+    std::wstring key = want ? sys::LyricSrc::Key(tr.title, tr.artist) : L"";
+    if (key != medKey) {
+        medKey = key;
+        medDoc.reset();
+        medAsked = -1;
+        medKeyAt = now;
+    }
+    if (key.empty()) return;
+    if ((medAsked < 0 && (tr.duration > 0 || now - medKeyAt > kAskAfter)) || (!medDoc && medAsked >= 0 && now - medAsked > kAskAgain)) {
+        model.lyrics.Want(tr.title, tr.artist, tr.album, tr.duration / 1e7);
+        medAsked = now;
+    }
+    if ((!medDoc || medDoc->interim) && medAsked >= 0 && now - medPoll > kPollEvery) {
+        medPoll = now;
+        medDoc = model.lyrics.Get(key);
+    }
+    if (Width(medAt) <= 0) return; // no room on the page: nothing to lay out
+    float size = (std::clamp)(Height(medAt) * kTypeShare, kTypeMin, kTypeMax) * model.lyricScale / 100.0f;
+    if (medDoc && !medDoc->lines.empty()) mediaLyr.Sync(ctx.Get(), medDoc, Width(medAt), size);
+    else mediaLyr.Sync(ctx.Get(), nullptr, 0, 0);
+    mediaLyr.Prepare(ctx.Get());
+}
+
 void Drawer::FreeDev() {
     if (ctx) ctx->SetTarget(nullptr); // nothing left pointing at the backbuffer
+    mediaLyr = LyricView{}; // its baked lines belong to this device
     canvas.reset();
     cover.Reset();
     coverBlur.Reset();
@@ -617,6 +646,11 @@ void Drawer::DrawBody(float h, float dt, double now) {
     pc.coverPrev = art && pc.flip < 0.5f ? coverPrev.Get() : nullptr;
     if (pc.flip > 0.999f) coverPrev.Reset(); // turned: the old one can go
     pc.backdrop = backA;
+    pc.dc = ctx.Get();
+    pc.lyrics = &mediaLyr;
+    constexpr double kLyrWaitSec = 12; // how long the column waits for a new song's lines before giving way
+    pc.lyricsWaiting = !medKey.empty() && !medDoc && ui.Now() - medKeyAt < kLyrWaitSec;
+    pc.lyricsShift = medDoc ? medDoc->offsetMs / 1000.0 : 0;
     if (page != pageDrawn) pageDrawn = page, ++model.pageVisit;
     if (page != Model::kPgWidgets) model.faceSearch = false; // left the gallery: the keyboard goes back
     ui.Block(touring || sheet > 0.01f || wsheet > 0.01f || ssheet > 0.01f || csheet > 0.01f || msheet > 0.01f); // page under a sheet takes no input
@@ -632,6 +666,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
         }
     }
     if (fading) ctx->PopLayer();
+    medAt = page == Model::kPgMedia && under > 0.001f ? pc.lyricsAt : D2D1_RECT_F{};
     ctx->SetTransform(base);
     ui.Block(touring); // the sheets themselves take input
     if (page == Model::kPgTools && under > 0.001f) tourSpots[3] = pc.spotSettings; // empty when its tile is taken off

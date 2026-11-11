@@ -26,6 +26,7 @@ constexpr int kGreetTries = 20; // the gpu or the shell not ready yet: a few mor
 constexpr LONG kGreetSlack = 2; // pixels the cursor may drift (a touchpad's jitter) before it counts as moving
 constexpr UINT kTrimMs = 3000; // a resting pill this long after its last whole frame: hand back what startup and the drop left behind
 constexpr UINT kFollowMs = 120; // every screen mode, open: how often to look which screen the cursor is on
+constexpr double kTypeHold = 0.4; // seconds after a key that frames stay at full rate: a word typed in a burst never waits on a slow frame
 constexpr int kDevTries = 30; // windows lets go of an old composition target a moment later: ~3 seconds of retries, 100 ms apart
 constexpr GUID kDisplayState = {0x6fe69556, 0x704a, 0x47a0, {0x8f, 0x24, 0xc2, 0x8d, 0x93, 0x6f, 0xda, 0x47}}; // GUID_CONSOLE_DISPLAY_STATE, without pulling in initguid
 
@@ -1023,6 +1024,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         else ShelfOut();
         return 0;
     case WM_CHAR: // only reaches us while a field holds the keyboard
+        typedAt = Seconds();
         if (model.faceSearch) { // the widget gallery's search
             wchar_t ch = (wchar_t)wp;
             if (ch == VK_ESCAPE) {
@@ -1378,6 +1380,7 @@ void Drawer::Frame() {
         skyLayer.Reset(); // the panel went: its gpu memory goes too
         skyKey = 0;
     }
+    SyncMediaLyrics(now); // their lines and blur, made before the frame opens
     ctx->BeginDraw();
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
     D2D1_RECT_F vis = Visible();
@@ -1442,7 +1445,8 @@ void Drawer::Frame() {
         GlassBlur(model.GlassBlur() / 100.0f);
         GlassMask(outline.Get());
     }
-    bool fast = moving || dragging || uiBusy || themes || pageT < 1; // anything actively animating
+    bool typing = Seconds() - typedAt < kTypeHold; // keys landing: each one shows on the next vsync, not behind the caret's slow blink frames
+    bool fast = moving || dragging || uiBusy || themes || pageT < 1 || typing; // anything actively animating
     if (cfg.perfLog) {
         int why = moving ? 0 : dragging ? 1 : uiBusy ? 2 : (themes || pageT < 1) ? 3 : ambient ? 4 : 5;
         ++perfWhy[why];
@@ -1455,11 +1459,11 @@ void Drawer::Frame() {
     if (glass) { // no swapchain: the frame lands with the blur outline, a timer paces the next one
         GlassPresent();
         LARGE_INTEGER due;
-        due.QuadPart = -(LONGLONG)((fast ? fastSync : calm) * 1e7 / hz); // relative, 100 ns units
+        due.QuadPart = -(LONGLONG)((typing ? 1 : fast ? fastSync : calm) * 1e7 / hz); // relative, 100 ns units
         SetWaitableTimer(frameWait, &due, 0, nullptr, nullptr, FALSE);
         hr = S_OK;
     } else {
-        hr = swap->Present(fast ? fastSync : (std::min)(calm, 4u), 0); // ambient-only motion runs at ~30 fps, the pill at ~15; a whole present: with dirty rects, a frame shown while the window is a sliver is never retired and the loop stalls
+        hr = swap->Present(typing ? 1 : fast ? fastSync : (std::min)(calm, 4u), 0); // ambient-only motion runs at ~30 fps, the pill at ~15; a whole present: with dirty rects, a frame shown while the window is a sliver is never retired and the loop stalls
     }
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) { // driver reset / gpu switch
         FreeDev();

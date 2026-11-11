@@ -130,6 +130,8 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     notifyPills = (std::clamp)(sys::ReadNum(L"NotifyPills", 0), 0, 1);
     quiet = sys::ReadNum(kQuietVal, 0) ? 1 : 0; // missing means off
     fullLyrics = (std::clamp)(sys::ReadNum(L"FullLyrics", 1), 0, 1);
+    mediaLyrics = (std::clamp)(sys::ReadNum(L"MediaLyrics", 0), 0, 1);
+    fahr = (std::clamp)(sys::ReadNum(L"Fahrenheit", cfg.fahr ? 1 : 0), 0, 1);
     BOOL anim = TRUE;
     SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &anim, 0); // windows' own "animation effects": off means start calm
     reduceMotion = (std::clamp)(sys::ReadNum(L"ReduceMotion", anim ? 0 : 1), 0, 1);
@@ -185,6 +187,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     deskLenApps = (std::clamp)(sys::ReadNum(L"DeskLenApps", deskLen), 60, 8000); // never set: as it is on the desktop
     deskGapApps = (std::clamp)(sys::ReadNum(L"DeskGapApps", deskGap), 4, 120);
     deskFloatApps = flag(L"DeskFloatApps", deskFloat);
+    deskThickApps = (std::clamp)(sys::ReadNum(L"DeskThickApps", deskThick), 24, 56); // never set: as it is on the desktop
     deskApps = flag(L"DeskApps", 0);
     deskFill = (std::clamp)(sys::ReadNum(L"DeskFill", 0), 0, 3);
     auto items = [&](const wchar_t* name, std::vector<int>& out) { // "-": taken all off on purpose; nothing saved: the defaults
@@ -195,7 +198,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
             size_t end = saved.find(L',', at);
             if (end == std::wstring::npos) end = saved.size();
             int v = _wtoi(saved.substr(at, end - at).c_str());
-            if (((v > kWNone && v < kWidgets) || (v >= kDClock && v <= kDScore)) && std::find(out.begin(), out.end(), v) == out.end()) out.push_back(v);
+            if (((v > kWNone && v < kWidgets) || (v >= kDClock && v <= kDLyrics)) && std::find(out.begin(), out.end(), v) == out.end()) out.push_back(v);
             at = end + 1;
         }
     };
@@ -203,12 +206,19 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     deskSplit = flag(L"DeskSplit", 0);
     if (sys::ReadText(L"DeskItemsApps").empty()) deskItemsApps = deskItems; // never split yet: it starts as the desktop's
     else items(L"DeskItemsApps", deskItemsApps);
+    deskMid = (std::max)(sys::ReadNum(L"DeskMid", kMidAuto), kMidNone); // never set: the clock keeps the middle, as it always has
+    deskMidApps = (std::max)(sys::ReadNum(L"DeskMidApps", deskMid), kMidNone);
     mediaCompact = flag(L"MediaCompact", 0);
     pillMusic = flag(L"PillMusic", 1);
     showArt = flag(L"ShowArt", 1);
     desk = sys::LoadDesk();
-    for (const auto& line : SplitLines(sys::ReadText(L"Todos"))) // "1|text": done, then the words
-        if (line.size() > 2 && line[1] == L'|' && (int)todos.size() < kMaxTodos) todos.push_back({line.substr(2), line[0] == L'1'});
+    for (const auto& line : SplitLines(sys::ReadText(L"Todos"))) { // "1|text": done, then the words; a tab and yyyymmdd when it's due (typing can't make a tab)
+        if (line.size() <= 2 || line[1] != L'|' || (int)todos.size() >= kMaxTodos) continue;
+        std::wstring text = line.substr(2);
+        int due = 0;
+        if (size_t tab = text.rfind(L'\t'); tab != std::wstring::npos) due = _wtoi(text.c_str() + tab + 1), text.resize(tab);
+        todos.push_back({text, line[0] == L'1', due > 19000101 && due < 30000101 ? due : 0});
+    }
     for (const auto& line : SplitLines(sys::ReadText(L"Servers")))
         if (!line.empty() && (int)hosts.size() < kMaxHosts) hosts.push_back(line);
     vizOn = flag(L"Visualizer", cfg.viz ? 1 : 0); // the ini's choice until the switch in settings is used
@@ -398,7 +408,7 @@ void Model::Tick() {
     }
     DeskTick(1, false); // apps come and go; groups keep their levels
     SyncExtras();
-    if (fullLyrics && hasTrack && track.music && track.duration > 0) // the song's lyrics, fetched while it plays: ready long before fullscreen opens; a cache check once known
+    if ((fullLyrics || mediaLyrics || PillLyrics()) && hasTrack && track.music && track.duration > 0) // the song's lyrics, fetched while it plays: ready long before fullscreen opens; a cache check once known
         lyrics.Want(track.title, track.artist, track.album, track.duration / 1e7);
     if (focusOn && GetTickCount64() >= focusEnd) { // a block ends: focus hands over to a break, a break to the next round
         focusEvent = focusBreak ? 2 : 1;
@@ -466,7 +476,7 @@ void Model::ReadAudio() {
 void Model::OnMedia() {
     hasTrack = media.Snapshot(track);
     media.Sources(mediaSources, mediaPin);
-    if (fullLyrics && hasTrack && track.music && track.duration > 0) lyrics.Want(track.title, track.artist, track.album, track.duration / 1e7); // ready before fullscreen opens; no-op once known
+    if ((fullLyrics || mediaLyrics || PillLyrics()) && hasTrack && track.music && track.duration > 0) lyrics.Want(track.title, track.artist, track.album, track.duration / 1e7); // ready before fullscreen opens; no-op once known
 }
 
 void Model::OnBright(WPARAM value) {
@@ -857,8 +867,32 @@ void Model::SyncExtras() {
 
 void Model::SaveTodos() {
     std::wstring s;
-    for (const auto& t : todos) s += (t.done ? L"1|" : L"0|") + t.text + L"\n";
+    for (const auto& t : todos) s += (t.done ? L"1|" : L"0|") + t.text + (t.due ? L"\t" + std::to_wstring(t.due) : L"") + L"\n";
     sys::SaveText(L"Todos", s);
+}
+
+int Model::TodoToday() {
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    return st.wYear * 10000 + st.wMonth * 100 + st.wDay;
+}
+
+int Model::TodoAddDays(int ymd, int days) { // through filetime: months and years roll over on their own
+    constexpr LONGLONG kDay = 864000000000LL; // 100 ns ticks
+    SYSTEMTIME st{};
+    st.wYear = (WORD)(ymd / 10000), st.wMonth = (WORD)(ymd / 100 % 100), st.wDay = (WORD)(ymd % 100);
+    FILETIME ft;
+    if (!SystemTimeToFileTime(&st, &ft)) return ymd;
+    ULARGE_INTEGER u{ft.dwLowDateTime, ft.dwHighDateTime};
+    u.QuadPart += days * kDay;
+    ft = {u.LowPart, u.HighPart};
+    FileTimeToSystemTime(&ft, &st);
+    return st.wYear * 10000 + st.wMonth * 100 + st.wDay;
+}
+
+bool Model::TodoDueOn(int y, int mo, int d) const {
+    int ymd = y * 10000 + mo * 100 + d;
+    return std::any_of(todos.begin(), todos.end(), [&](const Todo& t) { return !t.done && t.due == ymd; });
 }
 
 void Model::SaveHosts() {
@@ -1308,6 +1342,47 @@ void Model::CommitCity() {
 
 constexpr size_t kPillWordMax = 10, kPillTitleMax = 18; // the pill has room for a short word beside its clock
 constexpr size_t kDeskSongMax = 32; // the long pill has room for a song's name
+constexpr double kLyricHold = 1.5; // seconds a line stays after it's sung
+constexpr double kLyricBridge = 5; // a breath shorter than this keeps the line up till the next
+constexpr double kLyricLone = 8; // a line with no end of its own: about this long
+
+// the line being sung while a song plays, and the seconds until that changes (-1: nothing coming); hold keeps its lyrics alive while the line is read
+static const sys::LyricLine* SungLine(const Model& m, std::shared_ptr<const sys::Lyrics>& hold, double& wait) {
+    wait = -1;
+    const sys::Track& tr = m.track;
+    if (!m.hasTrack || !tr.playing || !tr.music || tr.title.empty()) return nullptr;
+    hold = m.lyrics.Get(sys::LyricSrc::Key(tr.title, tr.artist));
+    if (!hold || hold->lines.empty()) return nullptr;
+    const std::vector<sys::LyricLine>& ls = hold->lines;
+    double t = tr.Elapsed() / 1e7 - hold->offsetMs / 1000.0; // the song's own nudge, as fullscreen has it
+    auto next = std::upper_bound(ls.begin(), ls.end(), t, [](double v, const sys::LyricLine& l) { return v < l.start; });
+    if (next == ls.begin()) {
+        wait = next->start - t;
+        return nullptr;
+    }
+    const sys::LyricLine& at = *(next - 1);
+    double until = (at.end > at.start ? at.end : at.start + kLyricLone) + kLyricHold;
+    if (next != ls.end() && next->start - until < kLyricBridge) until = next->start;
+    if (next != ls.end()) until = (std::min)(until, next->start);
+    if (t < until && !at.text.empty()) {
+        wait = until - t;
+        return &at;
+    }
+    if (next != ls.end()) wait = next->start - t;
+    return nullptr;
+}
+
+bool Model::PillLyrics() const {
+    auto on = [](const std::vector<int>& v) { return std::find(v.begin(), v.end(), (int)kDLyrics) != v.end(); };
+    return AnyLong() && (on(deskItems) || (deskSplit && on(deskItemsApps)));
+}
+
+double Model::LyricWait() const {
+    std::shared_ptr<const sys::Lyrics> hold;
+    double wait = -1;
+    SungLine(*this, hold, wait);
+    return wait;
+}
 
 std::vector<int> Model::DeskDefaults() { return {kWWeather, kDMusic, kDClock, kWCpu, kDVolume}; }
 
@@ -1333,6 +1408,7 @@ const wchar_t* Model::DeskItemName(int k) {
     case kWDisk: return L"Disk";
     case kWMarket: return L"Markets";
     case kDScore: return L"Score";
+    case kDLyrics: return L"Lyrics";
     default: return L"";
     }
 }
@@ -1401,6 +1477,12 @@ std::wstring Model::DeskItemText(int k, int& icon) const {
         icon = shown.sport >= 0 && shown.sport < sports::kSports ? glyph::kSportIcons[shown.sport] : glyph::Trophy; // its own sport's mark
         return sports::Line(shown);
     }
+    case kDLyrics: { // the sung line; with none, the pill's middle shows what it always does
+        std::shared_ptr<const sys::Lyrics> hold;
+        double wait = -1;
+        const sys::LyricLine* line = SungLine(*this, hold, wait);
+        return line ? line->text : L"";
+    }
     case kDTimer:
         if (Activity() == kActNone) return L"";
         icon = glyph::Timer;
@@ -1452,7 +1534,7 @@ std::wstring Model::PillWidget(int which, int& icon) const {
     case kWWeather:
         if (!cfg.weather || !wx.valid) return L"";
         icon = fmt::WxIcon(wx.code, wx.isDay);
-        return fmt::Temp(wx.tempC, cfg.fahr);
+        return fmt::Temp(wx.tempC, fahr != 0);
     case kWBattery:
         if (batPct < 0) return L"";
         icon = charging ? glyph::BatteryCharging : batPct <= batLow ? glyph::BatteryLow : glyph::Battery;

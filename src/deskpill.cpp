@@ -33,6 +33,17 @@ constexpr UINT kCoverPx = 128; // a small square: no more is ever drawn
 constexpr float kBarW = 3.5f, kBarStep = 6, kBarLow = 3, kBarRise = 11; // the visualizer, as the small pill's
 constexpr int kBarCount = 4;
 constexpr UINT kBarsSync = 4; // vsyncs per frame while only they move: about 15 a second at 60 Hz, as the small pill's
+constexpr UINT_PTR kLyricTimer = 1;
+constexpr double kLyricSoon = 1.2; // a line due sooner than the next second's look is waited for on its own
+constexpr UINT kLyricLateMs = 20; // just past the line's start, so it's there when looked
+constexpr double kMidFade = 0.62; // seconds: a line hands over to the next, or to what the middle holds
+constexpr float kMidRise = 9; // the words drift up through the change, as a lyric sheet scrolls
+constexpr float kMidOut = 0.55f, kMidIn = 0.3f; // of the fade: the old is gone by this much; the new starts at this much, so they barely cross
+
+bool Stretchy(int kind) { return kind == Model::kDMusic || kind == Model::kDLyrics; } // a long title or line gives way
+
+bool In(const std::vector<int>& items, int kind) { return std::find(items.begin(), items.end(), kind) != items.end(); }
+
 
 double Seconds() {
     static LARGE_INTEGER freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
@@ -119,6 +130,11 @@ LRESULT CALLBACK DeskPill::Proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 
 LRESULT DeskPill::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+    case WM_TIMER:
+        if (wp != kLyricTimer) break;
+        KillTimer(hwnd, kLyricTimer);
+        if (wantUp && !Editing()) Watch();
+        return 0;
     case WM_MOUSEACTIVATE:
         return studio ? MA_ACTIVATE : MA_NOACTIVATE; // never the keyboard's while it's the pill: esc comes by hotkey. the widgets editor has a search to type in
     case WM_MOUSEWHEEL:
@@ -198,11 +214,12 @@ void DeskPill::Measure(HMONITOR on) {
     MW = (monitor.right - monitor.left) / scale;
     MH = (monitor.bottom - monitor.top) / scale;
     if (!editing) { // the saved values; while editing the working copy is what counts
-        spec.edge = model.deskEdge, spec.pos = (float)model.deskPos, spec.thick = (float)model.deskThick;
-        spec.shape[0] = {(float)model.deskLen, (float)model.deskGap, model.deskFloat != 0};
-        spec.shape[1] = {(float)model.deskLenApps, (float)model.deskGapApps, model.deskFloatApps != 0};
+        spec.edge = model.deskEdge, spec.pos = (float)model.deskPos;
+        spec.shape[0] = {(float)model.deskLen, (float)model.deskGap, model.deskFloat != 0, (float)model.deskThick};
+        spec.shape[1] = {(float)model.deskLenApps, (float)model.deskGapApps, model.deskFloatApps != 0, (float)model.deskThickApps};
         spec.apps = model.deskApps != 0, spec.desk = model.deskPill != 0, spec.fill = model.deskFill, spec.fillApps = model.deskFillApps, spec.items = model.deskItems;
         spec.itemsOther = model.deskItemsApps, spec.split = model.deskSplit != 0, itemsCtx = 0;
+        spec.mid = model.deskMid, spec.midOther = model.deskSplit ? model.deskMidApps : model.deskMid;
         DropAppItems();
     }
 }
@@ -211,6 +228,7 @@ void DeskPill::SyncItems() {
     int want = spec.split && spec.apps ? Ctx() : 0;
     if (want == itemsCtx) return;
     std::swap(spec.items, spec.itemsOther);
+    std::swap(spec.mid, spec.midOther); // the middle goes with its set
     itemsCtx = want;
     Poke();
 }
@@ -229,7 +247,7 @@ DeskPill::Pose DeskPill::Goal(int which) const {
     float lo, hi;
     Span(spec.edge, lo, hi);
     Pose p;
-    p.thick = spec.thick;
+    p.thick = s.thick;
     p.len = (std::min)(s.len, hi - lo - 2 * kEdgeRoom);
     float room = p.len / 2 + kEdgeRoom, along = (std::clamp)(lo + (hi - lo) * spec.pos / 1000, lo + room, hi - room), gap = s.floats ? s.gap : 0;
     p.flat = s.floats ? 0.0f : 1.0f;
@@ -254,7 +272,8 @@ bool DeskPill::StepRest(float dt) {
     moving = anim::Approach(rest.ay, g.ay, rate, dt, 0.02f) || moving;
     moving = anim::Approach(rest.len, g.len, rate, dt, 0.02f) || moving;
     moving = anim::Approach(rest.flat, g.flat, calm ? 200.0f : kShapeFlat, dt, 0.004f) || moving;
-    rest.thick = g.thick, rest.angle = g.angle;
+    moving = anim::Approach(rest.thick, g.thick, rate, dt, 0.02f) || moving; // each place has its own: it swells or slims as it goes over
+    rest.angle = g.angle;
     if (!moving && shapeShift) shapeShift = false, FitWindow(); // settled: an empty window would only be in the way of clicks
     return moving;
 }
@@ -474,7 +493,7 @@ void DeskPill::FitSong(std::vector<Placed>& all, size_t from, size_t to, float r
     size_t song = to;
     for (size_t i = from; i < to; ++i) {
         sum += all[i].w + (i > from ? gap : 0);
-        if (all[i].kind == Model::kDMusic && !all[i].idle) song = i;
+        if (Stretchy(all[i].kind) && !all[i].idle) song = i;
     }
     if (sum <= room || song == to) return;
     Placed& p = all[song];
@@ -482,22 +501,50 @@ void DeskPill::FitSong(std::vector<Placed>& all, size_t from, size_t to, float r
     p.w = (std::min)(p.w, (std::max)(room - others, kSongLeast * TypeScale(thick))); // it trims, ending in "..."
 }
 
+int DeskPill::Anchor(const std::vector<int>& items) const { // the chosen item holds the middle; unchosen, the clock does, as it always has
+    int mid = spec.mid;
+    if (mid == Model::kMidNone) return -1;
+    if (mid >= 0 && mid != Model::kDLyrics && In(items, mid)) return mid; // the lyrics only ever borrow the middle
+    return In(items, Model::kDClock) ? (int)Model::kDClock : -1;
+}
+
 std::vector<DeskPill::Placed> DeskPill::LayOut(const std::vector<int>& items, float len, float thick) {
     float k = TypeScale(thick), gap = kItemGap * k, inner = len - thick; // the round ends keep their own room
     std::vector<Placed> all;
     int clockAt = -1;
+    int anchor = Anchor(items);
     for (int kind : items) {
+        if (kind == Model::kDLyrics) continue; // no place of its own: it borrows the middle's
         Placed p{kind, 0, 0, L"", 0, false};
         Text(kind, p.text, p.icon, p.idle);
         if (p.idle) {
             if (!editing) continue; // nothing to show: it takes no room
             p.text = Model::DeskItemName(kind);
         }
-        if (kind == Model::kDClock) clockAt = (int)all.size();
+        if (kind == anchor) clockAt = (int)all.size();
         p.w = ItemW(kind, p.text, p.icon, p.idle, thick);
         all.push_back(std::move(p));
     }
+    Placed sung{Model::kDLyrics, 0, 0, L"", 0, false};
+    if (!editing && In(items, Model::kDLyrics)) sung.text = model.DeskItemText(Model::kDLyrics, sung.icon); // the editor shows the middle as it really is
+    if (!sung.text.empty()) { // a line is sung: it takes the middle's place until the next gap
+        int mid = clockAt >= 0 ? clockAt : (int)all.size() / 2;
+        sung.w = ItemW(sung.kind, sung.text, sung.icon, false, thick);
+        if (mid < (int)all.size()) all[mid] = std::move(sung);
+        else all.push_back(std::move(sung));
+        clockAt = mid;
+    }
+    if (clockAt >= 0 && Stretchy(all[clockAt].kind)) { // the sung line in the middle gives way to what's beside it
+        float before = 0, after = 0;
+        for (int i = 0; i < (int)all.size(); ++i) {
+            if (i == clockAt) continue;
+            float w = Stretchy(all[i].kind) ? (std::min)(all[i].w, kSongLeast * k) : all[i].w;
+            (i < clockAt ? before : after) += w + gap;
+        }
+        all[clockAt].w = (std::min)(all[clockAt].w, (std::max)(inner - 2 * (std::max)(before, after), kSongLeast * k));
+    }
     std::vector<Placed> out;
+    midAt = -1;
     if (clockAt < 0) { // no clock to anchor on: one row, centered
         FitSong(all, 0, all.size(), inner, gap, thick);
         float sum = 0;
@@ -513,6 +560,7 @@ std::vector<DeskPill::Placed> DeskPill::LayOut(const std::vector<int>& items, fl
             x += all[i].w + gap;
             out.push_back(all[i]);
         }
+        midAt = all.size() / 2 < n ? (int)(all.size() / 2) : -1; // where a sung line would land
         return out;
     }
     all[clockAt].x = -all[clockAt].w / 2;
@@ -527,6 +575,7 @@ std::vector<DeskPill::Placed> DeskPill::LayOut(const std::vector<int>& items, fl
         x += all[i].w + gap;
         out.push_back(all[i]);
     }
+    midAt = (int)out.size();
     out.push_back(all[clockAt]);
     used = 0;
     x = inner / 2;
@@ -543,21 +592,32 @@ std::vector<DeskPill::Placed> DeskPill::LayOut(const std::vector<int>& items, fl
     return out;
 }
 
+float DeskPill::NeedAll(const std::vector<int>& items) {
+    float need = NeedLen(items, spec.shape[0].thick);
+    return spec.apps ? (std::max)(need, NeedLen(items, spec.shape[1].thick)) : need;
+}
+
+void DeskPill::Grow(const std::vector<int>& items, float least) {
+    for (Spec::Shape& s : spec.shape) s.len = (std::max)({s.len, least, NeedLen(items, s.thick)});
+}
+
 float DeskPill::NeedLen(const std::vector<int>& items, float thick) {
     float gap = kItemGap * TypeScale(thick), left = 0, right = 0, mid = 0;
-    bool past = false, hasClock = std::find(items.begin(), items.end(), (int)Model::kDClock) != items.end();
+    bool past = false;
+    int anchor = Anchor(items);
     for (int kind : items) {
+        if (kind == Model::kDLyrics) continue; // it borrows the middle: no room of its own
         std::wstring text;
         int ic = 0;
         bool idle = false;
         Text(kind, text, ic, idle);
         if (idle) text = Model::DeskItemName(kind);
         float w = ItemW(kind, text, ic, idle, thick);
-        if (kind == Model::kDMusic) w = (std::min)(w, kSongLeast * TypeScale(thick)); // how long a song's title is never decides how long the pill must be
-        if (kind == Model::kDClock) mid = w, past = true;
+        if (Stretchy(kind)) w = (std::min)(w, kSongLeast * TypeScale(thick)); // how long a song's title or a line is never decides how long the pill must be
+        if (kind == anchor) mid = w, past = true;
         else (past ? right : left) += w + gap;
     }
-    if (!hasClock) return left - (left > 0 ? gap : 0) + thick + 2;
+    if (anchor < 0) return left - (left > 0 ? gap : 0) + thick + 2;
     return 2 * (std::max)(left, right) + mid + thick + 2;
 }
 
@@ -654,33 +714,60 @@ void DeskPill::DrawPill(const Theme& t, const Pose& p, float alpha) {
     }
     placed = LayOut(spec.items, p.len, p.thick);
     float content = anim::Clamp01((alpha - 0.35f) / 0.65f);
-    for (Placed& it : placed) {
-        float x = ui.Smooth(Ui::Id("dk.x", it.kind), it.x, holding ? 22.0f : 16.0f); // neighbours slide aside, they don't jump
-        it.x = x;
-        if (drag == Drag::Item && it.kind == dragKind && moved) continue; // its place stays open under the mouse
-        float a = content * (it.idle ? 0.45f : 1.0f);
+    auto draw = [&](const Placed& it, float a, float dy) {
+        float x = it.x, y = cy + dy;
         if (!it.idle && it.kind == Model::kDCover) { // the song's art, rounded like an app icon
             float art = p.thick - kArtInset;
-            D2D1_RECT_F r = Rect(x, cy - art / 2, art, art);
+            D2D1_RECT_F r = Rect(x, y - art / 2, art, art);
             if (cover) c.Art(cover.Get(), coverBlur.Get(), r, art * 0.24f, a);
-            else c.Fill(r, art * 0.24f, ink.Alpha(0.14f * a)), c.Icon(glyph::Music, {x + art / 2, cy}, art * 0.6f, lit.Alpha(a), true);
-            continue;
+            else c.Fill(r, art * 0.24f, ink.Alpha(0.14f * a)), c.Icon(glyph::Music, {x + art / 2, y}, art * 0.6f, lit.Alpha(a), true);
+            return;
         }
         if (!it.idle && it.kind == Model::kDBars) {
             for (int i = 0; i < kBarCount; ++i) {
                 float bh = (kBarLow + kBarRise * bars[i]) * k, bw = kBarW * k;
-                c.Fill(Rect(x + i * kBarStep * k, cy - bh / 2, bw, bh), bw / 2, lit.Alpha(a));
+                c.Fill(Rect(x + i * kBarStep * k, y - bh / 2, bw, bh), bw / 2, lit.Alpha(a));
             }
-            continue;
+            return;
         }
         float tx = x;
         if (it.icon) {
             float is = 15 * k;
-            c.Icon(it.icon, {x + is / 2, cy}, is, lit.Alpha(a), true);
+            c.Icon(it.icon, {x + is / 2, y}, is, lit.Alpha(a), true);
             tx += is + 5 * k;
         }
-        if (!it.text.empty()) c.Text(it.text, Rect(tx, cy - box / 2, x + it.w - tx + 2, box), Weight::Medium, size, (it.kind == Model::kDClock || it.kind == Model::kDScore ? ink : dim).Alpha(a));
+        if (!it.text.empty()) c.Text(it.text, Rect(tx, y - box / 2, x + it.w - tx + 2, box), Weight::Medium, size, (it.kind == Model::kDClock || it.kind == Model::kDScore || it.kind == Model::kDLyrics ? ink : dim).Alpha(a));
+    };
+    std::wstring key; // the middle: a line coming, changing or going crossfades instead of snapping
+    if (midAt >= 0) key = placed[midAt].kind == Model::kDLyrics ? L"L" + placed[midAt].text : L"K" + std::to_wstring(placed[midAt].kind);
+    double now = Seconds();
+    if (key != midKey) {
+        bool sung = (!key.empty() && key[0] == L'L') || (!midKey.empty() && midKey[0] == L'L');
+        midFading = sung && !editing;
+        if (midFading) midSince = now, midWas = midLast, midHad = midLastOn;
+        midKey = key;
     }
+    float u = 1; // how far through the fade
+    if (midFading) {
+        u = (float)((now - midSince) / kMidFade);
+        if (u >= 1) midFading = false, u = 1;
+    }
+    auto soft = [](float v) { v = anim::Clamp01(v); return v * v * (3 - 2 * v); };
+    float glide = 1 - (1 - u) * (1 - u) * (1 - u); // fast off the mark, settling slowly
+    float e = soft((u - kMidIn) / (1 - kMidIn)), gone = soft(u / kMidOut); // the new one's in, the old one's out
+    float rise = model.reduceMotion ? 0 : kMidRise * k;
+    for (int i = 0; i < (int)placed.size(); ++i) {
+        Placed& it = placed[i];
+        bool mid = i == midAt && midFading;
+        float eased = ui.Smooth(Ui::Id("dk.x", it.kind), it.x, holding ? 22.0f : 16.0f); // neighbours slide aside, they don't jump
+        if (!mid) it.x = eased; // a new line rises in where it belongs, not sideways from where the last one sat
+        if (drag == Drag::Item && it.kind == dragKind && moved) continue; // its place stays open under the mouse
+        float a = content * (it.idle ? 0.45f : 1.0f);
+        draw(it, mid ? a * e : a, mid ? rise * (1 - glide) : 0);
+    }
+    if (midFading && midHad) draw(midWas, content * (1 - gone), -rise * glide); // the one before, on its way out
+    midLastOn = midAt >= 0;
+    if (midLastOn) midLast = placed[midAt];
     ctx->SetTransform(D2D1::Matrix3x2F::Translation(-view.x, -view.y));
 }
 
@@ -713,12 +800,21 @@ void DeskPill::Second() {
     static int inkTick = 0;
     constexpr int kInkEvery = 2; // seconds: a page scrolls, a slideshow moves on; a thin band is a cheap read
     if (FillNow() == kFillClear && ++inkTick % kInkEvery == 0) SampleInk();
+    Watch();
+}
+
+void DeskPill::Watch() {
     std::wstring now = std::to_wstring(model.hasTrack ? model.track.coverId : 0) + (model.hasTrack && model.track.playing ? L"p|" : L"|"); // a new song's art; the bars start and stop
     for (int kind : spec.items) {
+        std::wstring text;
         int ic = 0;
-        now += model.DeskItemText(kind, ic) + L"|" + std::to_wstring(ic) + L"|";
+        bool idle = false;
+        Text(kind, text, ic, idle); // as it's drawn, the sung line too
+        now += text + L"|" + std::to_wstring(ic) + L"|";
     }
     if (now != sig) sig = std::move(now), Poke();
+    double wait = Has(Model::kDLyrics) ? model.LyricWait() : -1;
+    if (wait >= 0 && wait < kLyricSoon) SetTimer(hwnd, kLyricTimer, (UINT)(wait * 1000) + kLyricLateMs, nullptr); // a new line lands between the seconds
 }
 
 void DeskPill::Frame(const Theme& shell) {
@@ -817,5 +913,5 @@ void DeskPill::Frame(const Theme& shell) {
         return;
     }
     if (inkDue > 0 && now >= inkDue) inkDue = 0, SampleInk();
-    dirty = moving || busy || barsMoving || drag != Drag::None || inkDue > 0 || leaving || (!editing && appear.target <= 0); // going away: on to the frame that lets go of everything
+    dirty = moving || busy || barsMoving || midFading || drag != Drag::None || inkDue > 0 || leaving || (!editing && appear.target <= 0); // going away: on to the frame that lets go of everything
 }

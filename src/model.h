@@ -161,7 +161,11 @@ public:
     struct Todo {
         std::wstring text;
         bool done = false;
+        int due = 0; // yyyymmdd, 0 none; shown on the calendar's day too
     };
+    static int TodoToday(); // today as yyyymmdd
+    static int TodoAddDays(int ymd, int days);
+    bool TodoDueOn(int y, int mo, int d) const; // anything not done due that day: the calendar marks it
     std::vector<Todo> todos; // the tools page's to-do list, kept in the registry
     std::vector<std::wstring> hosts; // the servers it watches
     enum Field { kFieldNone, kFieldTodo, kFieldHost, kFieldTimer };
@@ -315,6 +319,8 @@ public:
     int quiet = 0; // do not disturb: no notification pills; shared with halobar through the same value
     bool haloPills = false; // halobar runs with its pills on: it stays quiet while we're up, so we show them
     int fullLyrics = 1; // the fullscreen player shows synced lyrics beside the cover (on by default)
+    int mediaLyrics = 0; // the media page shows them too, beside the song (off by default)
+    int fahr = 0; // temperatures in fahrenheit; until it's set in settings, as the ini says
     bool settingsOpen = false;
     bool calOpen = false, calFresh = false; // fresh: just opened, start on this month
     bool calForecast = false; // the calendar sheet shows the forecast instead of the month
@@ -429,7 +435,7 @@ public:
     bool AnyLong() const { return LongPill() || deskApps != 0; } // the long pill shows somewhere: on the desktop, over apps, or both
     enum { kEditFromLong, kEditFromDesk, kEditFromApps }; // who opened the long pill's editor: itself or settings, or the regular pill on the desktop or over an app
     int deskFillApps = 0; // its body while an app is under it
-    int deskLenApps = 560, deskGapApps = 10, deskFloatApps = 1; // not on desktop it can be its own length, stuck or floating
+    int deskLenApps = 560, deskGapApps = 10, deskFloatApps = 1, deskThickApps = 30; // not on desktop it can be its own length, stuck or floating, thickness
     int deskPreview = -1; // its editor is showing this one's theme: 0 desktop, 1 not on desktop; -1 not open
     enum StudioAsk { kStudioNone, kStudioWidgets, kStudioTiles, kStudioPages };
     int studioAsk = kStudioNone; // an editor over the wallpaper, asked for: it opens after the frame
@@ -444,7 +450,9 @@ public:
     float faceAreaW = 0, faceAreaH = 0, tileAreaW = 0, tileAreaH = 0; // the room they have on their pages: their editors show them at just this size
     int deskEdge = 0, deskPos = 500, deskLen = 560, deskThick = 30, deskGap = 10, deskFloat = 1, deskFill = 0; // its edge, place along it in thousandths, size, gap, stuck or floating, body
     int deskApps = 0; // it also stands in for the small pill over maximized apps, on the same rules
-    enum DeskItem { kDClock = 20, kDDate, kDVolume, kDWifi, kDMusic, kDTimer, kDCover, kDBars, kDScore }; // beyond the widgets above; new ones go last
+    enum DeskItem { kDClock = 20, kDDate, kDVolume, kDWifi, kDMusic, kDTimer, kDCover, kDBars, kDScore, kDLyrics }; // beyond the widgets above; new ones go last
+    bool PillLyrics() const; // the long pill shows the sung line somewhere: the song's lyrics are looked up for it
+    double LyricWait() const; // seconds until its line changes; -1: nothing coming while it plays
     int scoreAt = 0; // the long pill's score: which of the followed leagues' games it shows; the wheel over it steps on
     struct ScoreSeen { bool live = false; double end = 0; }; // a game seen on, and when it was seen to finish
     mutable std::map<std::wstring, ScoreSeen> scoreSeen; // by league and game: a game just over stays on the pill a while
@@ -458,6 +466,8 @@ public:
     void SetDeskItems(const std::vector<int>& items);
     std::vector<int> deskItemsApps; // its own set when not on desktop, while deskSplit is on
     int deskSplit = 0; // off: the same widgets everywhere
+    static constexpr int kMidAuto = -1, kMidNone = -2; // what holds the long pill's middle: the clock if it's there, or nothing (one centred row); else an item's kind
+    int deskMid = kMidAuto, deskMidApps = kMidAuto; // for the desktop's set, and for the set when not on desktop
     void SetDeskItemsApps(const std::vector<int>& items);
     void WantDeskAudio(); // the speakers read, for its volume
     std::wstring PillWidget(int which, int& icon) const; // what a widget shows now, empty when it has nothing

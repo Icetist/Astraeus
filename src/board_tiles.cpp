@@ -156,7 +156,7 @@ void Board::TileWeather(const D2D1_RECT_F& r, float k) { // now, big; the next d
                12.5f * k, t.textDim, Align::Center);
         return;
     }
-    bool fahr = model.cfg.fahr;
+    bool fahr = model.fahr != 0;
     bool row = wx.nDays > 0 && Height(r) > Width(r) * 0.62f; // tall enough for the coming days
     float topH = row ? Height(r) * 0.58f : Height(r);
     float big = std::clamp(topH * 0.34f, 18.0f, 110.0f);

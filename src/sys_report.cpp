@@ -19,7 +19,7 @@ constexpr int kUnset = -1;
 
 // plain numbers only, named one by one: text settings hold places, notes and screen names, and anything not on this list stays out of a report
 constexpr const wchar_t* kShared[] = {L"Appearance", L"AccentMode", L"BgOpacity", L"GlassBlur", L"Layout", L"Edge", L"Corners", L"UiScale", L"Screens", L"ReduceMotion", L"Hud",
-                                      L"KeyOnly", L"AppKeyOnly", L"DefaultPage", L"RememberPage", L"PillAlways", L"PillDesktop", L"NotifyPills", L"Quiet", L"Board", L"MediaCompact",
+                                      L"KeyOnly", L"AppKeyOnly", L"DefaultPage", L"RememberPage", L"PillAlways", L"PillDesktop", L"NotifyPills", L"Quiet", L"Board", L"MediaCompact", L"MediaLyrics", L"Fahrenheit",
                                       L"MediaArtBg", L"StageMode", L"StageAnimation", L"StageThump", L"FullLyrics", L"VizFull", L"A11yContrast", L"A11yKeys", L"A11yReader",
                                       L"A11yText", L"A11yFollowText"};
 

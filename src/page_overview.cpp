@@ -167,7 +167,7 @@ void WxCard(PageCtx& p, const D2D1_RECT_F& r) {
         c.Icon(fmt::WxIcon(wx.code, wx.isDay), {r.left + 28, r.top + 28}, 24, t.accent, true);
         c.Text(fmt::WxText(wx.code), Rect(r.left + 48, r.top + 19, Width(r) - 62, 18), Weight::Regular, 12.5f, t.textDim);
         float room = Height(r) - kWxTopLine - 6, fs = (std::min)(52.0f, room * 0.82f);
-        c.Text(fmt::Temp(wx.tempC, p.m.cfg.fahr), Rect(r.left + 14, r.top + kWxTopLine, Width(r) - 24, room), Weight::Thin, fs, t.text);
+        c.Text(fmt::Temp(wx.tempC, (p.m.fahr != 0)), Rect(r.left + 14, r.top + kWxTopLine, Width(r) - 24, room), Weight::Thin, fs, t.text);
         return;
     }
     c.Icon(fmt::WxIcon(wx.code, wx.isDay), {r.left + 32, r.top + 34}, 30, t.accent, true); // day/night icon variant
@@ -187,9 +187,9 @@ void WxCard(PageCtx& p, const D2D1_RECT_F& r) {
         c.Text(mm, Rect(right - cw, mid + step - lh / 2, cw, lh), Weight::Thin, fs, t.accent, Align::Right);
     }
     float textW = clock ? Width(r) - (std::min)(Height(r) * 0.36f, 58.0f) * 1.25f - 26 : 162; // weather keeps left of the clock
-    c.Text(fmt::Temp(wx.tempC, p.m.cfg.fahr), Rect(r.left + 14, r.top + 52, textW + 8, 62), Weight::Thin, 52, t.text);
+    c.Text(fmt::Temp(wx.tempC, (p.m.fahr != 0)), Rect(r.left + 14, r.top + 52, textW + 8, 62), Weight::Thin, 52, t.text);
     c.Text(fmt::WxText(wx.code), Rect(r.left + 18, r.top + 110, textW, 18), Weight::Regular, 13, t.text);
-    std::wstring sub = clock ? wx.place : wx.place + L"  ·  " + fmt::Temp(wx.highC, p.m.cfg.fahr) + L" / " + fmt::Temp(wx.lowC, p.m.cfg.fahr); // place · hi / lo
+    std::wstring sub = clock ? wx.place : wx.place + L"  ·  " + fmt::Temp(wx.highC, (p.m.fahr != 0)) + L" / " + fmt::Temp(wx.lowC, (p.m.fahr != 0)); // place · hi / lo
     c.Text(sub, Rect(r.left + 18, r.top + 129, textW, 16), Weight::Light, 11.5f, t.textDim);
 }
 

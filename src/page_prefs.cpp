@@ -6,6 +6,7 @@
 #include "anim.h"
 #include "glyphs.h"
 #include "page_sheet.h"
+#include "preview.h"
 #include "starfall.h"
 #include "entry.h"
 #include "report.h"
@@ -34,6 +35,7 @@ bool SwitchRow(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, con
     c.Text(label, {r.left, r.top, r.right - 56, r.bottom}, Weight::Regular, 11.5f, enabled ? t.text : t.textLow);
     bool flip = w::Switch(ui, t, Ui::Id(id), {r.right - 24, cy}, on, live && enabled);
     if (live && enabled) ui.Name(label);
+    preview::Want(ui, preview::ForId(id), live && enabled && Inside(r, ui.In().mouse)); // hovered a moment: a sketch of what it does
     return flip || h.clicked;
 }
 
@@ -212,26 +214,41 @@ void Media(PageCtx& p, const D2D1_RECT_F& r, bool live) { // what the player is 
     struct Opt {
         const wchar_t* label;
         int* field;
-        const wchar_t* key;
-    } opts[] = {{L"Compact player", &m.mediaCompact, L"MediaCompact"}, {L"Music in the pill", &m.pillMusic, L"PillMusic"},
-                {L"Album art", &m.showArt, L"ShowArt"}, {L"Visualizer", &m.vizOn, L"Visualizer"}};
-    float cw = (Width(in) - 8) / 2;
-    for (int i = 0; i < 4; ++i) { // lit chips: on or off at a glance
-        D2D1_RECT_F q = Rect(in.left + (i % 2) * (cw + 8), in.top + 2 + (i / 2) * (kChipH + 8), cw, kChipH);
-        if (w::Chip(ui, t, Ui::Id("set.media", i), q, opts[i].label, *opts[i].field != 0) && live) Flip(m, *opts[i].field, opts[i].key);
+        const wchar_t* key; // none: it has its own setter
+    } opts[] = {{L"Compact player", &m.mediaCompact, L"MediaCompact"}, {L"Music in the pill", &m.pillMusic, L"PillMusic"}, {L"Album art", &m.showArt, L"ShowArt"},
+                {L"Art background", &m.artBack, nullptr}, {L"Visualizer", &m.vizOn, L"Visualizer"},
+                {L"Lyrics", &m.mediaLyrics, L"MediaLyrics"}}; // lyrics: beside the song on the media page; fullscreen's are in its own editor
+    constexpr int kN = (int)std::size(opts);
+    constexpr float kGap = 6, kPad = 24, kSize = 11.5f; // kPad: the chip's own inset both sides, and air
+    float want[kN];
+    int row[kN], rows = 1;
+    float x = 0;
+    for (int i = 0; i < kN; ++i) { // chips as wide as their words, wrapped: fixed columns cut the long ones off
+        want[i] = c.Measure(opts[i].label, Weight::Medium, kSize) + kPad;
+        if (x > 0 && x + want[i] > Width(in)) ++rows, x = 0;
+        row[i] = rows - 1;
+        x += want[i] + kGap;
     }
-    Note(c, t, in, in.top + 2 * (kChipH + 8) + 2, L"Edit it from fullscreen"); // one short line: the card has no room for two
-}
-
-void ArtBack(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the cover behind the media page; the fullscreen player's is in its editor
-    Ui& ui = p.ui;
-    Canvas& c = ui.C();
-    const Theme& t = p.shell;
-    Model& m = p.m;
-    D2D1_RECT_F in = Box(c, t, r, L"Album art background");
-    bool can = m.showArt != 0; // no art shown: nothing to lay behind anything
-    if (SwitchRow(ui, t, "set.media.back", Rect(in.left, in.top, Width(in), kRowH), can ? L"Media page" : L"Album art is switched off", m.artBack != 0, live && can, can))
-        m.SetArtBack(m.artBack == 0); // shared: halobar's player follows
+    float h = (std::min)(kChipH, (Height(in) - 2 - (rows - 1) * kGap) / rows); // three rows squeeze a little
+    for (int r0 = 0, i = 0; r0 < rows; ++r0) { // each row stretched to the edge, the spare split evenly
+        int first = i;
+        float used = 0;
+        for (; i < kN && row[i] == r0; ++i) used += want[i];
+        int k = i - first;
+        float extra = (Width(in) - used - (k - 1) * kGap) / k;
+        x = in.left;
+        for (int j = first; j < i; ++j) { // lit chips: on or off at a glance
+            float wdt = want[j] + extra;
+            D2D1_RECT_F q = Rect(x, in.top + 2 + r0 * (h + kGap), wdt, h);
+            x += wdt + kGap;
+            static constexpr int kSketch[] = {preview::kCompact, preview::kPillMusic, preview::kAlbumArt, preview::kArtBg, preview::kVisualizer, preview::kLyrics}; // in the chips' order
+            if (j < (int)std::size(kSketch)) preview::Want(ui, kSketch[j], live && Inside(q, ui.In().mouse));
+            if (!w::Chip(ui, t, Ui::Id("set.media", j), q, opts[j].label, *opts[j].field != 0) || !live) continue;
+            if (opts[j].key) Flip(m, *opts[j].field, opts[j].key);
+            else m.SetArtBack(m.artBack == 0); // shared: halobar's player follows
+        }
+    }
+    if (rows < 3) Note(c, t, in, in.top + 2 + rows * (h + kGap), L"Edit it from fullscreen"); // only when it has the room
 }
 
 constexpr float kTourH = 30 + 10 + kRowH + 6; // the tour card: its title and one row
@@ -354,6 +371,14 @@ void Weather(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a city typed in, 
     const Theme& t = p.shell;
     Model& m = p.m;
     D2D1_RECT_F in = Box(c, t, r, L"Weather");
+    constexpr float kUnitW = 40, kUnitGap = 4, kUnitSpace = 2 * kUnitW + kUnitGap + 10; // °C and °F, right of the city
+    static const wchar_t* const kUnits[] = {L"°C", L"°F"};
+    for (int i = 0; i < 2; ++i) {
+        D2D1_RECT_F q = Rect(in.right - (2 - i) * kUnitW - (1 - i) * kUnitGap, in.top + 3, kUnitW, kChipH);
+        if (w::Chip(ui, t, Ui::Id("set.wx.unit", i), q, kUnits[i], m.fahr == i) && live && m.fahr != i) m.SetPref(m.fahr, L"Fahrenheit", i);
+    }
+    D2D1_RECT_F whole = in; // the notes under it still run the card's width
+    in.right -= kUnitSpace; // the city has the rest of the row
     std::wstring city = m.weather.City();
     D2D1_RECT_F field = Rect(in.left, in.top + 2, Width(in) - (city.empty() || m.cityFocus ? 0 : 36), 30);
     uint32_t id = Ui::Id("set.city");
@@ -385,8 +410,8 @@ void Weather(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a city typed in, 
                         : st == sys::WxSvc::kCityMissing ? L"No place by that name, try another spelling"
                         : city.empty() ? L"Your IP address finds the nearest city"
                                        : L"Your IP address is never used to look you up";
-    Note(c, t, in, in.top + 40, note);
-    Note(c, t, in, in.top + 58, L"Forecasts and city search by Open-Meteo");
+    Note(c, t, whole, in.top + 40, note);
+    Note(c, t, whole, in.top + 58, L"Forecasts and city search by Open-Meteo");
 }
 
 void ShelfIntake(PageCtx& p, const D2D1_RECT_F& r, bool live) { // what the shelf takes in, and whether it outlasts a restart
@@ -395,7 +420,7 @@ void ShelfIntake(PageCtx& p, const D2D1_RECT_F& r, bool live) { // what the shel
     const Theme& t = p.shell;
     Model& m = p.m;
     D2D1_RECT_F in = Box(c, t, r, L"Shelf");
-    if (SwitchRow(ui, t, "set.shelf.cap", Rect(in.left, in.top, Width(in), kRowH), L"Everything you copy goes to the Shelf", m.shelfCapture != 0, live)) {
+    if (SwitchRow(ui, t, "set.shelf.cap", Rect(in.left, in.top, Width(in), kRowH), L"Catch everything you copy", m.shelfCapture != 0, live)) {
         Flip(m, m.shelfCapture, L"ShelfCapture");
         m.SyncShelf(); // starts or stops listening right away
     }
@@ -446,10 +471,11 @@ void Hud(PageCtx& p, const D2D1_RECT_F& r, bool live) { // astraeus' own volume 
     c.Text(L"Replace Windows volume popup", Rect(row.left, row.top, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, t.text); // two lines: the whole name, nothing cut
     c.Text(L"(experimental)", Rect(row.left, row.top + kNoteH, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, t.textDim);
     bool hudFlip = w::Switch(ui, t, Ui::Id("set.hud"), {row.right - 24, (row.top + row.bottom) / 2}, m.hud != 0, live);
+    preview::Want(ui, preview::kHud, live && Inside(row, ui.In().mouse));
     if (live) ui.Name(L"Replace Windows volume popup, experimental");
     if (hudFlip || h.clicked) Flip(m, m.hud, L"Hud");
-    Note(c, t, in, row.bottom + 4, L"While on, the volume keys are taken from Windows");
-    Note(c, t, in, row.bottom + 20, L"Brightness keys still show their own popup");
+    Note(c, t, in, row.bottom + 4, L"Takes the volume keys from Windows");
+    Note(c, t, in, row.bottom + 20, L"Brightness keeps its own popup");
 }
 
 void Backup(PageCtx& p, const D2D1_RECT_F& r, bool live) { // export, import, start over
@@ -663,7 +689,6 @@ float Advanced(PageCtx& p, const D2D1_RECT_F& area, bool live, int cols) { // po
     Display(p, next(), live); // the two sizes side by side
     Opening(p, next(), live); // how the closed island opens: anywhere, then over apps
     Apps(p, next(), live);
-    ArtBack(p, next(), live);
     FullBtns(p, next(), live);
     ShelfIntake(p, next(), live); // the shelf's intake and its history, side by side
     ShelfHistory(p, next(), live);

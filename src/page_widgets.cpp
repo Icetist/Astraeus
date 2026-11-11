@@ -134,7 +134,7 @@ faces::Host MakeHost(Model& m) {
     faces::Host h;
     const auto& wx = m.wx;
     h.cpu = m.cpuHist.Last(), h.mem = m.ramHist.Last(), h.memUsedGb = m.stats.memUsedGb, h.memTotalGb = m.stats.memTotalGb;
-    h.wxValid = wx.valid, h.wxDay = wx.isDay, h.fahrenheit = m.cfg.fahr, h.cards = true;
+    h.wxValid = wx.valid, h.wxDay = wx.isDay, h.fahrenheit = (m.fahr != 0), h.cards = true;
     wchar_t format[32] = {};
     GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, LOCALE_STIMEFORMAT, format, 32);
     h.h24 = wcschr(format, L'H') != nullptr;

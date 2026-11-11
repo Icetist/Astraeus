@@ -7,6 +7,7 @@
 #include "anim.h"
 #include "glyphs.h"
 #include "page_sheet.h"
+#include "preview.h"
 #include "starfall.h"
 #include "version.h"
 
@@ -458,6 +459,7 @@ void ThemeTabs(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a whole second 
     constexpr float kWords = 216, kKnob = 24, kSegW = 220;
     c.Text(L"Different theme when not on desktop", Rect(r.left + 4, r.top, kWords, kTabsRow), Weight::Medium, 12, t.text);
     if (w::Switch(ui, t, Ui::Id("set.appstheme"), {r.left + kWords + kKnob, r.top + kTabsRow / 2}, m.appsTheme != 0, live)) m.SetPref(m.appsTheme, L"AppsTheme", m.appsTheme ? 0 : 1);
+    preview::Want(ui, preview::kAppsTheme, live && Inside(Rect(r.left, r.top, kWords + 2 * kKnob, kTabsRow), ui.In().mouse));
     if (live) ui.Name(L"Different theme when not on desktop");
     if (!m.appsTheme) return;
     static const wchar_t* const kSets[] = {L"Desktop", L"Not on desktop"};
@@ -703,6 +705,7 @@ void Island(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the pill over a ma
     D2D1_RECT_F desk = Rect(x0, y + 36, rw, kDeskRowH); // off: on the desktop a hover drops the whole panel, as before
     Ui::Hit h = live ? ui.Button(Ui::Id("set.desk", 1), {desk.left, desk.top, desk.right - 52, desk.bottom}) : Ui::Hit{}; // the words flip it too
     c.Text(L"Pill on the desktop", {desk.left, desk.top, desk.right - 56, desk.bottom}, Weight::Regular, 11.5f, t.text);
+    preview::Want(ui, preview::kPillDesk, live && Inside(desk, ui.In().mouse));
     if ((w::Switch(ui, t, Ui::Id("set.desk"), {desk.right - 24, (desk.top + desk.bottom) / 2}, m.pillDesk != 0, live) || h.clicked) && live)
         m.SetPref(m.pillDesk, L"PillDesktop", m.pillDesk ? 0 : 1); // shown while no app is under it, even with stays short of always
 }
@@ -812,5 +815,6 @@ void DrawSettings(PageCtx& p, float k) {
     Fades(c, t, view, scroll, content);
 
     if (ui.RClick(s)) m.CloseSettings(); // right click closes, like the other sheets
+    preview::Draw(ui, t, s); // last, over everything in the sheet
     End(p, frame);
 }

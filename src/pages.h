@@ -5,6 +5,8 @@
 #include "theme.h"
 #include "ui.h"
 
+class LyricView;
+
 struct PageCtx {
     Ui& ui;
     Model& m;
@@ -24,6 +26,11 @@ struct PageCtx {
     ID2D1Bitmap* coverPrev = nullptr; // the cover before the track changed, shown for the first half of the flip
     float flip = 1; // 0..1 the art turning over to the new cover
     float backdrop = 0; // 0..1 the album art fills the panel behind the media page: its card goes see-through
+    ID2D1DeviceContext* dc = nullptr; // for the lyrics, which draw with more than the canvas
+    LyricView* lyrics = nullptr; // the media page's lyrics, laid out by the drawer before the frame
+    bool lyricsWaiting = false; // a new song's lines are on their way
+    double lyricsShift = 0; // seconds: the song's own timing nudge
+    D2D1_RECT_F lyricsAt{}; // where the page means them to go, for the next frame's layout; empty: nowhere
 };
 
 void VizGlow(PageCtx& p, const D2D1_RECT_F& r, float scale, const Theme& t); // audio-reactive glow behind art, in t's accent

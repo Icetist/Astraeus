@@ -355,6 +355,7 @@ private:
     double lastFrame = 0;
     int framesSeen = 0, framesLate = 0; // the governor's window of animation frames
     UINT fastSync = 1; // vsyncs per animation frame: 1 normally, more on a machine that can't keep up
+    double typedAt = -10; // the last key into a field: echoes go out at full rate, not the caret's idle pace
     bool lastFast = false;
     double syncRetry = 0; // when to try full rate again
     void Govern(bool fast, double gap); // steps animation down to a rate the machine holds, and back up
@@ -407,5 +408,12 @@ private:
     ComPtr<ID2D1Bitmap1> cover;
     ComPtr<ID2D1Bitmap> coverBlur;
     ComPtr<ID2D1Bitmap> coverBack; // the media page's full-bleed backdrop, baked once per cover while the panel shows
+
+    void SyncMediaLyrics(double now); // the media page's lyrics: asked for as the fullscreen player does, laid out before the frame starts
+    LyricView mediaLyr;
+    std::wstring medKey;
+    std::shared_ptr<const sys::Lyrics> medDoc;
+    double medAsked = -1, medPoll = 0, medKeyAt = 0;
+    D2D1_RECT_F medAt{}; // where the page last meant them to go
     uint64_t backFailed = 0; // the cover whose backdrop couldn't be baked
 };
