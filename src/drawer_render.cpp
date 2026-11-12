@@ -274,7 +274,7 @@ bool Drawer::GlassDev(const DXGI_SWAP_CHAIN_DESC1& d) {
 void Drawer::FitSurfaces() {
     // the island alone: its pill and the room its spring bounces into. anything more (opening, a peek, the pill growing) gets the whole panel.
     // only the depth changes and the surfaces stay anchored to the same corner, so nothing on screen moves when they grow back
-    bool pillOnly = !opened && !peeking && !grow && !dragging && spring.target <= kIslandH + 1 && spring.value <= kIslandH + overshoot;
+    bool pillOnly = !opened && !peeking && !alarmBanner && !grow && !dragging && spring.target <= kIslandH + 1 && spring.value <= kIslandH + overshoot;
     bool alone = pillOnly && edgeNow != 2; // the right edge draws at its window's far side, and that window stays panel deep
     float depth = alone ? kIslandH + overshoot : Depth() + overshoot;
     if (!pillOnly && ctx) devWide = true, trimKey = 0; // the next resting pill tidies up, even if it looks just like the last one
@@ -556,7 +556,7 @@ ComPtr<ID2D1Geometry> Drawer::BuildShape(float h, float w) const {
     float f = (std::min)(cfg.fillet, h / 2), r = (std::min)(cfg.corner, h / 2); // shrink radii when short so arcs don't overlap
     float left = (Span() - w) / 2;
     float xr = left + w - cfg.fillet, xl = left + cfg.fillet; // panel edges inside the fillet margins
-    if (Floating() && !islandLook && !peeking) { // a card clear of the edge: it slides in from past it, rounded all round
+    if (Floating() && !islandLook && !peeking && !alarmBanner) { // a card clear of the edge: it slides in from past it, rounded all round
         float top = h - Depth() + kFloatGap, rr = (std::min)(cfg.corner, (xr - xl) / 2);
         ComPtr<ID2D1RoundedRectangleGeometry> card;
         if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect({xl, top, xr, h}, rr, rr), &card))) return nullptr;
@@ -630,6 +630,28 @@ void Drawer::DrawBody(float h, float dt, double now) {
     bool fieldFocus = model.Typing() || Entry::Get().focus || StagePrefs::Get().capture || ui.Captured(); // a text field, a key being picked or a slider held keeps its arrows
     railHot = opened && !fieldFocus && Inside(RailBox(), local.mouse);
     D2D1_RECT_F area = Tall() ? D2D1_RECT_F{14, kTopRail + 10, panelW - 14, panelH - 14} : D2D1_RECT_F{kRailW + 14, 18, panelW - 20, H - 20};
+    if (const Alarm* ring = model.alarms.Ringing()) {
+        D2D1_RECT_F bar = {area.left, area.top, area.right, area.top + 36};
+        area.top += 42;
+        canvas->Fill(bar, 12, shellNow.cardHi.Alpha(0.85f));
+        canvas->Stroke(bar, 12, shellNow.accent.Alpha(0.45f), 1);
+        float cy = (bar.top + bar.bottom) / 2;
+        canvas->Dot({bar.left + 18, cy}, 11, shellNow.accent.Alpha(0.22f));
+        canvas->Icon(glyph::Bell, {bar.left + 18, cy}, 14, shellNow.accentHi, true);
+        std::wstring title = AlarmStore::FormatTime(ring->hour, ring->minute);
+        if (!ring->label.empty()) title += L"  \u00B7  " + ring->label;
+        float dismissW = 72, snoozeW = 98, rightX = bar.right - 6;
+        D2D1_RECT_F dismissR = {rightX - dismissW, bar.top + 5, rightX, bar.bottom - 5};
+        D2D1_RECT_F snoozeR = {dismissR.left - 6 - snoozeW, bar.top + 5, dismissR.left - 6, bar.bottom - 5};
+        canvas->Text(title, {bar.left + 36, bar.top, snoozeR.left - 8, bar.bottom}, Weight::Medium, 12.5f, shellNow.text);
+        if (w::Chip(ui, shellNow, Ui::Id("al.bar.snz"), snoozeR, L"Snooze (+5m)", false)) model.SnoozeAlarm(), SyncHide();
+        Ui::Hit dh = ui.Button(Ui::Id("al.bar.dis"), dismissR);
+        ui.Name(L"Dismiss alarm");
+        float dhov = ui.Smooth(Ui::Id("al.bar.dis.h"), dh.hover ? 1.0f : 0.0f, 16);
+        canvas->Fill(dismissR, Height(dismissR) / 2, shellNow.accent.Mix(shellNow.accentHi, dhov));
+        canvas->Text(L"Dismiss", dismissR, Weight::Medium, 11.5f, shellNow.onAccent, Align::Center);
+        if (dh.clicked) model.DismissAlarm(), SyncHide();
+    }
 
     if (pageT < 1) pageT = (std::min)(1.0f, pageT + dt / 0.38f); // 380ms page switch
     float e = anim::EaseOut(pageT);
@@ -847,6 +869,65 @@ void Drawer::DrawPeek(float h) {
     }
     canvas->Text(peekTitle, Rect(cx - 84, cy - 20, 240, 22), Weight::Medium, 15, t.text.Alpha(a));
     canvas->Text(peekDetail, Rect(cx - 84, cy + 1, 240, 18), Weight::Light, 12.5f, t.textDim.Alpha(a));
+}
+
+void Drawer::DrawAlarmRing(float h) {
+    const Alarm* ring = model.alarms.Ringing();
+    if (!ring) return;
+    const Theme& t = shellNow;
+    float a = anim::Clamp01((h - 26) / 30);
+    if (a <= 0) {
+        alarmSnoozeR = alarmDismissR = {};
+        return;
+    }
+    auto drawBtn = [&](const D2D1_RECT_F& r, const wchar_t* text, bool primary, bool hot) {
+        float rad = Height(r) / 2;
+        if (primary) {
+            canvas->Fill(r, rad, (hot ? t.accentHi : t.accent).Alpha(a));
+            canvas->Text(text, r, Weight::Medium, 11.5f, t.onAccent.Alpha(a), Align::Center);
+        } else {
+            canvas->Fill(r, rad, t.track.Mix(t.cardHi, hot ? 0.65f : 0.35f).Alpha(a));
+            canvas->Stroke(r, rad, (hot ? t.accent.Alpha(0.55f) : t.hairTop).Alpha(a), 1);
+            canvas->Text(text, r, Weight::Medium, 11.5f, t.text.Alpha(a), Align::Center);
+        }
+    };
+    std::wstring timeStr = AlarmStore::FormatTime(ring->hour, ring->minute);
+    std::wstring sub = ring->label.empty() ? L"Alarm" : ring->label;
+    hand = alarmHot != 0;
+
+    if (Side()) {
+        D2D1_RECT_F area = edgeNow == 1 ? Rect(0, cfg.fillet, h, CH()) : Rect(winH - h, cfg.fillet, h, CH());
+        float left = area.left + 18, right = area.right - 18, top = area.top + 28, w = right - left;
+        if (w < 160) {
+            alarmSnoozeR = alarmDismissR = {};
+            return;
+        }
+        canvas->Dot({left + 16, top + 18}, 16, t.accent.Alpha(0.20f * a));
+        canvas->Icon(glyph::Bell, {left + 16, top + 18}, 19, t.accentHi.Alpha(a), true);
+        canvas->Text(timeStr, {left + 40, top + 1, right, top + 21}, Weight::Medium, 15, t.text.Alpha(a));
+        canvas->Text(sub, {left + 40, top + 20, right, top + 37}, Weight::Light, 12, t.textDim.Alpha(a));
+        float btnY = top + 46, btnH = 28, snoozeW = (w - 8) * 0.56f, dismissW = w - 8 - snoozeW;
+        alarmSnoozeR = Rect(left, btnY, snoozeW, btnH);
+        alarmDismissR = Rect(left + snoozeW + 8, btnY, dismissW, btnH);
+        drawBtn(alarmSnoozeR, L"Snooze (+5m)", false, alarmHot == 1);
+        drawBtn(alarmDismissR, L"Dismiss", true, alarmHot == 2);
+        return;
+    }
+
+    float pw = AlarmSpan();
+    float left = (W - pw) / 2 + cfg.fillet + 16, right = (W + pw) / 2 - cfg.fillet - 16, cy = h / 2;
+    float btnH = 30, btnY = cy - btnH / 2, dismissW = 74, snoozeW = 102;
+    alarmDismissR = Rect(right - dismissW, btnY, dismissW, btnH);
+    alarmSnoozeR = Rect(alarmDismissR.left - 8 - snoozeW, btnY, snoozeW, btnH);
+    canvas->Dot({left + 15, cy}, 16, t.accent.Alpha(0.20f * a));
+    canvas->Icon(glyph::Bell, {left + 15, cy}, 19, t.accentHi.Alpha(a), true);
+    float tx = left + 38, tw = alarmSnoozeR.left - 10 - tx;
+    if (tw > 40) {
+        canvas->Text(timeStr, Rect(tx, cy - 17, tw, 19), Weight::Medium, 14.5f, t.text.Alpha(a));
+        canvas->Text(sub, Rect(tx, cy + 1, tw, 16), Weight::Light, 11.5f, t.textDim.Alpha(a));
+    }
+    drawBtn(alarmSnoozeR, L"Snooze (+5m)", false, alarmHot == 1);
+    drawBtn(alarmDismissR, L"Dismiss", true, alarmHot == 2);
 }
 
 bool Drawer::StepIslandBars(float dt, double now) {

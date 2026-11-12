@@ -34,7 +34,7 @@ public:
     void Toggle();
     void KeyOpen(); // from the shortcut: open on the screen with the mouse and take the keyboard, or close
     void Peek(const std::wstring& title, const std::wstring& detail, int icon = 0); // brief notification drop, 0 = timer icon
-    void RingAlarm() { Redraw(); }
+    void RingAlarm(); // interactive alarm island drop (or panel refresh if open)
     void SetFull(bool on); // fullscreen app present, stay out of the way
     void SyncHide();
     void OnSecond();
@@ -45,7 +45,7 @@ public:
     void PlayFull(); // the fullscreen player for the playing song, asked for from outside (halobar's cover), panel open or not
     void Reconfig(); // astraeus.ini changed on disk: sizes and corners follow without a restart
 
-    bool Busy() const { return opened || peeking || dragging || island; } // user is looking, don't restart now
+    bool Busy() const { return opened || peeking || alarmBanner || dragging || island; } // user is looking, don't restart now
     bool NeedsFrame() const { return needsFrame || stage; } // main loop polls this to keep rendering
     HANDLE FrameWait() const { return stage ? stage->Wait() : frameWait; } // swapchain waitable, paces to vsync
     void Frame();
@@ -150,7 +150,7 @@ private:
     void MoveDrag(float y);
     void EndDrag();
     float Rubber(float raw) const; // resist drag past full height
-    bool MainShown() const { return opened || dragging || peeking || island || spring.value > 0.5f; }
+    bool MainShown() const { return opened || dragging || peeking || alarmBanner || island || spring.value > 0.5f; }
     void Redraw() {
         if (MainShown()) needsFrame = true; // skip frames when fully closed
     }
@@ -183,6 +183,8 @@ private:
     ComPtr<ID2D1Geometry> BuildShape(float h, float w) const;
     void DrawBody(float h, float dt, double now);
     void DrawPeek(float h);
+    void DrawAlarmRing(float h);
+    void EndAlarmBanner();
     void DrawHint(float h); // the page's tip, just outside the panel
     static constexpr float kHintRoom = 40; // extra window depth while a tip shows
     const wchar_t* hintText = nullptr;
@@ -264,7 +266,7 @@ private:
     int inkTick = 0; // seconds toward its next look
     bool Clear() const { return lookNow == Model::kLookClear; }
     bool Frosted() const { return lookNow == 2 || Clear(); } // drawn on the live blur
-    bool ClearPill() const { return Clear() && islandLook && !peeking; } // no body at all: only the ink. a peek brings words to read: glass
+    bool ClearPill() const { return Clear() && islandLook && !peeking && !alarmBanner; } // no body at all: only the ink. a peek brings words to read: glass
     Color Tint(float k) const; // what keeps the ink readable where the page fights it: smoke, or frost, in the tint's color
     float TintFor(float lum) const; // how much of it, over a page this bright
     void SyncWallTone(); // clear: is the wallpaper dark or light
@@ -314,13 +316,17 @@ private:
 
     static constexpr float kPeekH = 66; // peek banner height in dips
     static constexpr float kPeekSide = 300; // peek reach on a side edge, room for its text
+    static constexpr float kAlarmH = 66, kAlarmSide = 300, kAlarmW = 440; // ringing alarm banner geometry in dips
+    float AlarmSpan() const { return Side() ? kAlarmSide : (std::min)(Span(), kAlarmW); }
     static constexpr float kIslandH = 34, kIslandW = 260; // island pill size in dips, width includes the shoulders
     static constexpr float kIslandSide = 240; // on a side edge the song runs along the pill like a book spine
     bool islandHot = false; // mouse over the island: show the expand hint
     bool stayWasAlways = false; // the island was set to always last second, to notice it being switched off
     float islandBars[4] = {}; // mini visualizer levels, eased per frame
     anim::Spring spring;
-    bool opened = false, dragging = false, peeking = false;
+    bool opened = false, dragging = false, peeking = false, alarmBanner = false;
+    int alarmHot = 0; // 0 none, 1 snooze button, 2 dismiss button
+    D2D1_RECT_F alarmSnoozeR{}, alarmDismissR{};
     bool island = false; // island pill is up (or dropping)
     bool islandLook = false; // draw the narrow island shape, until it has fully retracted
     bool grow = false; // panel is expanding out of the island, width morphs

@@ -291,11 +291,13 @@ void Drawer::SyncHide() {
         if (opened) Close(); // the pill, over a fullscreen app: the panel comes back on a click, if that's allowed
     }
     overFull = stayUp;
+    bool ringing = model.alarms.Ringing() != nullptr;
     bool hide = cfg.hideFull && !model.pillFull && full;
     HMONITOR here = mon ? mon : MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
     hide = hide || (BoardOn(here) && !stage); // a dashboard owns this screen: the island steps aside, as for a game
     bool arranging = desk && desk->Editing();
     hide = hide || arranging; // the desktop pill is being arranged: nothing else on this screen
+    if (ringing) hide = false; // active alarm always surfaces above fullscreen apps
     if (hide && !hidden && !stage && !arranging)
         if (HMONITOR to = Refuge()) return Hop(to); // every screen: a game took this one, the pill carries on next door
     if (hide == hidden) return;
@@ -308,6 +310,7 @@ void Drawer::SyncHide() {
         FreeDev(); // a game is fullscreen, give the gpu back now
     } else {
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        if (ringing) SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 }
 
@@ -342,7 +345,9 @@ void Drawer::Retract() { // the open panel and every hover state gone at once, n
         KillTimer(hwnd, kHoverTimer);
         KillTimer(hwnd, kCloseTimer);
         KillTimer(hwnd, kPeekTimer);
-        armed = peeking = dragging = island = islandLook = grow = false;
+        armed = peeking = alarmBanner = dragging = island = islandLook = grow = false;
+        alarmHot = 0;
+        alarmSnoozeR = alarmDismissR = {};
         if (GetCapture() == hwnd) ReleaseCapture(); // mid-drag when the game took over
         if (opened) { // same teardown as Close, minus the animation
             opened = false;
