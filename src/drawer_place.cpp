@@ -345,7 +345,7 @@ void Drawer::Retract() { // the open panel and every hover state gone at once, n
         KillTimer(hwnd, kHoverTimer);
         KillTimer(hwnd, kCloseTimer);
         KillTimer(hwnd, kPeekTimer);
-        armed = peeking = alarmBanner = dragging = island = islandLook = grow = false;
+        armed = peeking = alarmBanner = alarmLook = dragging = island = islandLook = grow = false;
         alarmHot = 0;
         alarmSnoozeR = alarmDismissR = {};
         if (GetCapture() == hwnd) ReleaseCapture(); // mid-drag when the game took over

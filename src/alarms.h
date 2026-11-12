@@ -21,6 +21,7 @@ int64_t LocalEpochSec(const SYSTEMTIME& st); // wall-clock seconds via SystemTim
 struct AlarmStore {
     static constexpr int kMaxAlarms = 16;
     static constexpr int kSnoozeSec = 5 * 60;
+    static constexpr int64_t kRingTimeoutSec = 120;
     static constexpr size_t kMaxLabelLen = 40;
 
     std::vector<Alarm> items;

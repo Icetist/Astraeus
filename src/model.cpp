@@ -944,9 +944,11 @@ void Model::SaveAlarmEditor() {
     bool ok = alarmEditId > 0 ? alarms.Update(alarmEditId, alarmHour, alarmMin, alarmDaily, alarmLabel)
                               : alarms.Add(alarmHour, alarmMin, alarmDaily, alarmLabel) > 0;
     if (ok) {
-        SYSTEMTIME now{};
-        GetLocalTime(&now);
-        alarms.lastCheck = LocalEpochSec(now);
+        if (alarms.lastCheck <= 0) {
+            SYSTEMTIME now{};
+            GetLocalTime(&now);
+            alarms.lastCheck = LocalEpochSec(now);
+        }
         SaveAlarms();
         SaveAlarmSeen();
     }
@@ -963,8 +965,9 @@ bool Model::TickAlarms() {
     GetLocalTime(&now);
     int64_t nowSec = LocalEpochSec(now);
     bool wasMissed = alarms.HasMissed();
+    bool wasRinging = alarms.ringingId != 0;
     int fired = alarms.Tick(nowSec, now);
-    if (fired > 0 || alarms.HasMissed() != wasMissed) {
+    if (fired > 0 || alarms.HasMissed() != wasMissed || (wasRinging && alarms.ringingId == 0)) {
         SaveAlarms();
         SaveAlarmSeen();
         alarmSeenTick = 0;

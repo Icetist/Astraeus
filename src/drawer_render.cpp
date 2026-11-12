@@ -274,7 +274,7 @@ bool Drawer::GlassDev(const DXGI_SWAP_CHAIN_DESC1& d) {
 void Drawer::FitSurfaces() {
     // the island alone: its pill and the room its spring bounces into. anything more (opening, a peek, the pill growing) gets the whole panel.
     // only the depth changes and the surfaces stay anchored to the same corner, so nothing on screen moves when they grow back
-    bool pillOnly = !opened && !peeking && !alarmBanner && !grow && !dragging && spring.target <= kIslandH + 1 && spring.value <= kIslandH + overshoot;
+    bool pillOnly = !opened && !peeking && !alarmBanner && !alarmLook && !grow && !dragging && spring.target <= kIslandH + 1 && spring.value <= kIslandH + overshoot;
     bool alone = pillOnly && edgeNow != 2; // the right edge draws at its window's far side, and that window stays panel deep
     float depth = alone ? kIslandH + overshoot : Depth() + overshoot;
     if (!pillOnly && ctx) devWide = true, trimKey = 0; // the next resting pill tidies up, even if it looks just like the last one
@@ -395,7 +395,7 @@ void Drawer::SyncCover() {
     }
     if (coverSrc && !cover && SUCCEEDED(ctx->CreateBitmapFromWicBitmap(coverSrc.Get(), nullptr, &cover))) // gpu upload, redone after device loss
         coverBlur = Blur(cover.Get());
-    bool showing = opened || (spring.value > 0.5f && !islandLook); // the open panel, or it still retracting: a pill or the strip never needs it
+    bool showing = opened || (spring.value > 0.5f && !islandLook && !alarmLook); // the open panel, or it still retracting: a pill or the strip never needs it
     if (!model.artBack || !model.showArt || !cover || !showing) coverBack.Reset(); // freed as the panel goes, baked again on the next open
     else if (!coverBack && backFailed != coverId) {
         coverBack = BakeBackdrop(ctx.Get(), cover.Get());
@@ -556,7 +556,7 @@ ComPtr<ID2D1Geometry> Drawer::BuildShape(float h, float w) const {
     float f = (std::min)(cfg.fillet, h / 2), r = (std::min)(cfg.corner, h / 2); // shrink radii when short so arcs don't overlap
     float left = (Span() - w) / 2;
     float xr = left + w - cfg.fillet, xl = left + cfg.fillet; // panel edges inside the fillet margins
-    if (Floating() && !islandLook && !peeking && !alarmBanner) { // a card clear of the edge: it slides in from past it, rounded all round
+    if (Floating() && !islandLook && !peeking && !alarmBanner && !alarmLook) { // a card clear of the edge: it slides in from past it, rounded all round
         float top = h - Depth() + kFloatGap, rr = (std::min)(cfg.corner, (xr - xl) / 2);
         ComPtr<ID2D1RoundedRectangleGeometry> card;
         if (FAILED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect({xl, top, xr, h}, rr, rr), &card))) return nullptr;
@@ -875,7 +875,7 @@ void Drawer::DrawAlarmRing(float h) {
     const Alarm* ring = model.alarms.Ringing();
     if (!ring) return;
     const Theme& t = shellNow;
-    float a = anim::Clamp01((h - 26) / 30);
+    float a = Side() ? anim::Clamp01((h - 190) / 60) : anim::Clamp01((h - 26) / 30);
     if (a <= 0) {
         alarmSnoozeR = alarmDismissR = {};
         return;
@@ -896,12 +896,18 @@ void Drawer::DrawAlarmRing(float h) {
     hand = alarmHot != 0;
 
     if (Side()) {
-        D2D1_RECT_F area = edgeNow == 1 ? Rect(0, cfg.fillet, h, CH()) : Rect(winH - h, cfg.fillet, h, CH());
-        float left = area.left + 18, right = area.right - 18, top = area.top + 28, w = right - left;
-        if (w < 160) {
+        float pw = AlarmSpan();
+        float topBand = (winW - pw) / 2 + cfg.fillet;
+        float botBand = (winW + pw) / 2 - cfg.fillet;
+        D2D1_RECT_F area = edgeNow == 1 ? Rect(0, topBand, h, botBand - topBand)
+                                        : Rect(winH - h, topBand, h, botBand - topBand);
+        float left = area.left + 16, right = area.right - 16, w = right - left;
+        constexpr float contentH = 74;
+        if (w < 160 || Height(area) < contentH + 8) {
             alarmSnoozeR = alarmDismissR = {};
             return;
         }
+        float top = area.top + (Height(area) - contentH) / 2;
         canvas->Dot({left + 16, top + 18}, 16, t.accent.Alpha(0.20f * a));
         canvas->Icon(glyph::Bell, {left + 16, top + 18}, 19, t.accentHi.Alpha(a), true);
         canvas->Text(timeStr, {left + 40, top + 1, right, top + 21}, Weight::Medium, 15, t.text.Alpha(a));

@@ -42,8 +42,9 @@ void SaveFlag(const wchar_t* name, bool on) { SaveNum(name, on ? 1 : 0); }
 std::wstring ReadText(const wchar_t* name) {
     DWORD bytes = 0;
     if (RegGetValueW(HKEY_CURRENT_USER, kRegKey, name, RRF_RT_REG_SZ, nullptr, nullptr, &bytes) != ERROR_SUCCESS || bytes < sizeof(wchar_t)) return {};
-    std::wstring out(bytes / sizeof(wchar_t), L'\0');
-    if (RegGetValueW(HKEY_CURRENT_USER, kRegKey, name, RRF_RT_REG_SZ, nullptr, out.data(), &bytes) != ERROR_SUCCESS) return {};
+    std::wstring out((bytes + sizeof(wchar_t) - 1) / sizeof(wchar_t), L'\0');
+    DWORD bufBytes = (DWORD)(out.size() * sizeof(wchar_t));
+    if (RegGetValueW(HKEY_CURRENT_USER, kRegKey, name, RRF_RT_REG_SZ, nullptr, out.data(), &bufBytes) != ERROR_SUCCESS) return {};
     out.resize(wcsnlen(out.c_str(), out.size()));
     return out;
 }

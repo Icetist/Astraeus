@@ -28,7 +28,7 @@ void DrawDigitSlot(PageCtx& p, uint32_t id, const D2D1_RECT_F& r, int value, con
     if (hov > 0.01f) c.Fill(r, 12, t.text.Alpha(0.06f * hov));
     if (h.hover) c.Stroke(r, 12, t.accent.Alpha(0.35f * hov), 1);
     c.Text(TwoDigits(value), r, Weight::Thin, 42, t.text, Align::Center);
-    if (float notch = ui.Wheel(r)) {
+    if (float notch = ui.Wheel(r); notch != 0) {
         int dir = notch > 0 ? 1 : -1;
         target = ((target + dir) % mod + mod) % mod;
     } else if (h.clicked) {
@@ -81,7 +81,14 @@ void DrawEditor(PageCtx& p, const D2D1_RECT_F& r) {
     const Preset presets[] = {{L"+15m", 15, false, 0, 0}, {L"+1h", 60, false, 0, 0}, {L"09:00", 0, true, 9, 0}};
     float chipY = clockY + slotH + 8, chipGap = 5, cw = (leftW - 2 * chipGap) / 3;
     for (int i = 0; i < 3; ++i) {
-        if (w::Chip(ui, t, Ui::Id("al.pre", i), Rect(r.left + i * (cw + chipGap), chipY, cw, 28), presets[i].name, false)) {
+        D2D1_RECT_F cr = Rect(r.left + i * (cw + chipGap), chipY, cw, 28);
+        Ui::Hit ch = ui.Button(Ui::Id("al.pre", i), cr);
+        ui.Name(presets[i].name);
+        float hot = ui.Smooth(Ui::Id("al.pre.h", i), ch.hover ? 1.0f : 0.0f, 16);
+        c.Fill(cr, 14, t.track.Mix(t.cardHi, 0.35f + 0.35f * hot));
+        c.Stroke(cr, 14, hot > 0.02f ? t.accent.Alpha(0.35f * hot) : t.hairTop, 1);
+        c.Text(presets[i].name, Inset(cr, 4, 0), Weight::Medium, 10.5f, t.textDim.Mix(t.text, hot), Align::Center);
+        if (ch.clicked) {
             if (presets[i].fixed) {
                 m.alarmHour = presets[i].fh;
                 m.alarmMin = presets[i].fm;

@@ -617,7 +617,7 @@ void DrawTools(PageCtx& p) {
         c.TextSp(kTabs[i], Rect(tx, timer.top + 16, tw + 8, 14), Weight::Medium, fontSz, t.textLow.Mix(t.text, th.hover ? 0.5f : 0).Mix(t.accent, on), sp);
         if (on > 0.02f) c.Fill(Rect(tx, timer.top + 34, tw * on, 2), 1, t.accent);
         if (th.clicked) {
-            m.toolTab = i, m.field = Model::kFieldNone;
+            m.toolTab = i, m.field = Model::kFieldNone, m.fieldEdit.clear();
             if (i != Model::kTabAlarm) m.alarmEditId = -1;
         }
         tx += tw + tabGap;

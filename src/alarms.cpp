@@ -57,6 +57,7 @@ std::wstring AlarmStore::Serialize() const {
         out += (a.daily ? L"1|" : L"0|");
         out += (a.enabled ? L"1|" : L"0|");
         out += (a.missed ? L"1|" : L"0|");
+        out += std::to_wstring((std::max)(int64_t{0}, a.snoozeUntil)) + L'|';
         out += SanitizeLabel(a.label);
     }
     return out;
@@ -75,13 +76,16 @@ void AlarmStore::Deserialize(const std::wstring& raw) {
         if (rec.empty()) continue;
 
         std::vector<std::wstring> cols;
-        for (size_t p = 0; p <= rec.size() && cols.size() < 6;) {
-            if (cols.size() == 5) {
+        for (size_t p = 0; p <= rec.size() && cols.size() < 7;) {
+            if (cols.size() == 6) {
                 cols.push_back(rec.substr(p));
                 break;
             }
             size_t bar = rec.find(L'|', p);
-            if (bar == std::wstring::npos) break;
+            if (bar == std::wstring::npos) {
+                cols.push_back(rec.substr(p));
+                break;
+            }
             cols.push_back(rec.substr(p, bar - p));
             p = bar + 1;
         }
@@ -98,7 +102,16 @@ void AlarmStore::Deserialize(const std::wstring& raw) {
         a.daily = cols[2] == L"1";
         a.enabled = cols[3] == L"1";
         a.missed = cols[4] == L"1";
-        if (cols.size() >= 6) a.label = SanitizeLabel(cols[5]);
+        if (cols.size() >= 7) {
+            try {
+                a.snoozeUntil = (std::max)(int64_t{0}, std::stoll(cols[5]));
+            } catch (...) {
+                a.snoozeUntil = 0;
+            }
+            a.label = SanitizeLabel(cols[6]);
+        } else if (cols.size() == 6) {
+            a.label = SanitizeLabel(cols[5]);
+        }
         items.push_back(std::move(a));
     }
     SortAlarms(items);
@@ -176,17 +189,29 @@ int AlarmStore::Tick(int64_t nowLocalSec, const SYSTEMTIME& localNow) {
 
     int64_t prev = lastCheck;
     lastCheck = nowLocalSec;
+    if (ringingId != 0 && ringStarted > 0 && nowLocalSec - ringStarted >= kRingTimeoutSec) {
+        for (auto& a : items) {
+            if (a.id != ringingId) continue;
+            a.missed = true;
+            a.snoozeUntil = 0;
+            if (!a.daily) a.enabled = false;
+            break;
+        }
+        ringingId = 0;
+        ringStarted = 0;
+    }
     int firedId = 0;
 
     auto fire = [&](Alarm& a) {
         a.missed = false;
-        a.snoozeUntil = 0;
         if (ringingId == 0) {
+            a.snoozeUntil = 0;
+            if (!a.daily) a.enabled = false;
             ringingId = a.id;
             ringStarted = nowLocalSec;
             firedId = a.id;
-        } else {
-            // Queue behind an active ringing alarm so back-to-back alarms don't vanish silently.
+        } else if (a.snoozeUntil == 0) {
+            // Queue once behind an active ringing alarm so back-to-back alarms keep a bounded grace window.
             a.snoozeUntil = nowLocalSec;
         }
     };

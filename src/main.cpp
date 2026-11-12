@@ -435,6 +435,11 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (app->model->TickAlarms()) {
                 app->model->alarmBellTick = 0;
                 MessageBeep(MB_ICONASTERISK);
+                if (const Alarm* a = app->model->alarms.Ringing()) {
+                    std::wstring alarmText = AlarmStore::FormatTime(a->hour, a->minute);
+                    if (!a->label.empty()) alarmText += L" - " + a->label;
+                    Notify(L"Alarm", alarmText.c_str());
+                }
                 app->drawer->RingAlarm();
             } else if (app->model->alarms.Ringing()) {
                 ++app->model->alarmBellTick;

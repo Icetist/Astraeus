@@ -266,7 +266,7 @@ private:
     int inkTick = 0; // seconds toward its next look
     bool Clear() const { return lookNow == Model::kLookClear; }
     bool Frosted() const { return lookNow == 2 || Clear(); } // drawn on the live blur
-    bool ClearPill() const { return Clear() && islandLook && !peeking && !alarmBanner; } // no body at all: only the ink. a peek brings words to read: glass
+    bool ClearPill() const { return Clear() && islandLook && !peeking && !alarmLook; } // no body at all: only the ink. a peek or alarm brings words to read: glass
     Color Tint(float k) const; // what keeps the ink readable where the page fights it: smoke, or frost, in the tint's color
     float TintFor(float lum) const; // how much of it, over a page this bright
     void SyncWallTone(); // clear: is the wallpaper dark or light
@@ -316,8 +316,8 @@ private:
 
     static constexpr float kPeekH = 66; // peek banner height in dips
     static constexpr float kPeekSide = 300; // peek reach on a side edge, room for its text
-    static constexpr float kAlarmH = 66, kAlarmSide = 300, kAlarmW = 440; // ringing alarm banner geometry in dips
-    float AlarmSpan() const { return Side() ? kAlarmSide : (std::min)(Span(), kAlarmW); }
+    static constexpr float kAlarmH = 66, kAlarmSide = 300, kAlarmW = 440, kAlarmSideSpan = 148; // ringing alarm banner geometry in dips
+    float AlarmSpan() const { return Side() ? (std::min)(Span(), kAlarmSideSpan) : (std::min)(Span(), kAlarmW); }
     static constexpr float kIslandH = 34, kIslandW = 260; // island pill size in dips, width includes the shoulders
     static constexpr float kIslandSide = 240; // on a side edge the song runs along the pill like a book spine
     bool islandHot = false; // mouse over the island: show the expand hint
@@ -328,7 +328,7 @@ private:
     int alarmHot = 0; // 0 none, 1 snooze button, 2 dismiss button
     D2D1_RECT_F alarmSnoozeR{}, alarmDismissR{};
     bool island = false; // island pill is up (or dropping)
-    bool islandLook = false; // draw the narrow island shape, until it has fully retracted
+    bool islandLook = false, alarmLook = false; // draw the narrow island / alarm pill shape, until it has fully retracted
     bool grow = false; // panel is expanding out of the island, width morphs
     bool islandNext = false; // the pending hover should raise the island, not the panel
     float winW = 0; // current window length along the edge in dips

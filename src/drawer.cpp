@@ -208,7 +208,7 @@ float Drawer::DepthOf(D2D1_POINT_2F p) const {
 
 D2D1_RECT_F Drawer::Visible() const { // the window's part of the surface, in dips: the top left corner, as big as the window
     if (pillRgn) { // the island: only the pill's slice of the full-width window, and its bubble
-        float a = alarmBanner ? AlarmSpan() : IslandSpan(), o = (winW - a) / 2, b = !alarmBanner && bubbleNow ? kBubbleGap + kBubble + 2 : 0;
+        float a = alarmLook ? AlarmSpan() : IslandSpan(), o = (winW - a) / 2, b = !alarmLook && bubbleNow ? kBubbleGap + kBubble + 2 : 0;
         return Side() ? D2D1_RECT_F{0, o, winH, o + a + b} : D2D1_RECT_F{o, 0, o + a + b, winH};
     }
     return Side() ? D2D1_RECT_F{0, 0, winH, winW} : D2D1_RECT_F{0, 0, winW, winH};
@@ -252,13 +252,13 @@ void Drawer::Resize(float hDip, bool topmost) {
                  SWP_NOACTIVATE | (topmost ? 0 : SWP_NOZORDER)); // only re-raise z-order when opening
     // a narrower window for the pill would move what's on screen when it grows into the panel: the pill would jump aside for a frame.
     // so the window keeps its width and a region makes everything beside the pill click-through; opening just lifts the region
-    bool pill = (islandLook || (alarmBanner && !Side())) && !opened && !idle;
+    bool pill = (islandLook || alarmLook) && !opened && !idle;
     int inner = edgeNow == 2 ? w - live : 0; // side edges: the live part's inner side; the left edge's window is only that deep anyway
     RECT want = {inner, 0, edgeNow == 0 ? w : inner + live, h}; // the right edge's trim, when nothing narrower is wanted
     if (pill) {
-        int pa = (int)((alarmBanner ? AlarmSpan() : IslandSpan()) * scale + 0.5f);
-        bubbleNow = alarmBanner ? false : Bubble();
-        int extra = !alarmBanner && bubbleNow ? (int)((kBubbleGap + kBubble + 2) * scale + 0.5f) : 0; // the bubble beside it is live too
+        int pa = (int)((alarmLook ? AlarmSpan() : IslandSpan()) * scale + 0.5f);
+        bubbleNow = alarmLook ? false : Bubble();
+        int extra = !alarmLook && bubbleNow ? (int)((kBubbleGap + kBubble + 2) * scale + 0.5f) : 0; // the bubble beside it is live too
         want = edgeNow == 0 ? RECT{(w - pa) / 2, 0, (w + pa) / 2 + extra, h} : RECT{inner, (h - pa) / 2, inner + live, (h + pa) / 2 + extra};
     }
     if (pill || live < d) {
@@ -302,8 +302,8 @@ void Drawer::Open() {
     if (!opened && !pageSet && (!model.rememberPage || !model.HasPage(page)) && page != model.OpenPage()) prevPage = page, page = model.OpenPage(), pageT = 1; // the page picked in settings, or one still shown, without a slide
     pageSet = false;
     if (model.Glassy() && spring.value < 1) SampleBehind(); // read the background before the panel covers it
-    grow = grow || islandLook; // expanding out of the island: width morphs as it drops
-    island = islandLook = false;
+    grow = grow || islandLook || alarmLook; // expanding out of the island/pill: width morphs as it drops
+    island = islandLook = alarmLook = false;
     if (!EnsureDev()) return; // gpu may have been freed while idle
     KillTimer(hwnd, kReleaseTimer); // keep gpu alive
     KillTimer(hwnd, kCloseTimer);
@@ -410,6 +410,8 @@ void Drawer::Close() {
     ++model.pageVisit;
     model.nameFor = -1;
     model.field = Model::kFieldNone;
+    model.fieldEdit.clear();
+    model.alarmEditId = -1;
     model.CloseFace(); // what was typed in a widget is kept
     if (model.shelfField == Model::kShelfNote) model.CommitShelfNote(); // a note half typed is kept, like a city
     model.shelfField = Model::kShelfNone; // the search text stays for next time, the keyboard goes back
@@ -471,6 +473,7 @@ void Drawer::Answer() {
 
 void Drawer::OnSecond() {
     if (alarmBanner && !model.alarms.Ringing()) EndAlarmBanner();
+    else if (!opened && !alarmBanner && model.alarms.Ringing()) RingAlarm();
     if (model.facesDue) {
         model.facesDue = false; // set again only if the page draws again
         Redraw();
@@ -518,6 +521,11 @@ void Drawer::SetPage(int p) {
     model.CloseWifi();
     model.CloseSettings();
     model.CloseCal();
+    model.alarmEditId = -1;
+    if (model.field == Model::kFieldAlarmLabel) {
+        model.field = Model::kFieldNone;
+        model.fieldEdit.clear();
+    }
     prevPage = page;
     page = p;
     pageT = 0;
@@ -556,7 +564,7 @@ void Drawer::RingAlarm() {
     }
     if (!EnsureDev()) return;
     island = islandLook = grow = peeking = false;
-    alarmBanner = true;
+    alarmBanner = alarmLook = true;
     alarmHot = 0;
     alarmSnoozeR = alarmDismissR = {};
     KillTimer(hwnd, kHoverTimer);
@@ -1127,16 +1135,17 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             Redraw();
             return 0;
         }
-        if (model.field != Model::kFieldNone) { // a to-do or a server being typed
+        if (model.field != Model::kFieldNone) { // a to-do, server, or alarm label being typed
             wchar_t ch = (wchar_t)wp;
+            size_t maxLen = model.field == Model::kFieldAlarmLabel ? AlarmStore::kMaxLabelLen : Model::kFieldMax;
             if (ch == 22) { // ctrl+v, the first line
                 for (wchar_t c : sys::ClipText()) {
-                    if (c == L'\n' || c == L'\n') break;
-                    if (c >= 32 && model.fieldEdit.size() < Model::kFieldMax) model.fieldEdit += c;
+                    if (c == L'\r' || c == L'\n') break;
+                    if (c >= 32 && model.fieldEdit.size() < maxLen) model.fieldEdit += c;
                 }
             } else if (ch == 8) {
                 if (!model.fieldEdit.empty()) model.fieldEdit.pop_back();
-            } else if (ch >= 32 && ch != 127 && model.fieldEdit.size() < Model::kFieldMax) {
+            } else if (ch >= 32 && ch != 127 && model.fieldEdit.size() < maxLen) {
                 model.fieldEdit += ch;
             }
             Redraw();
@@ -1362,7 +1371,7 @@ void Drawer::Frame() {
     if (!moving && !dragging) { // spring settled
         grow = false; // expansion finished, or retracted
         if (spring.target <= 0 && winH > kStrip) {
-            islandLook = hand = false; // fully retracted, back to the plain strip and arrow cursor
+            islandLook = alarmLook = hand = false; // fully retracted, back to the plain strip and arrow cursor
             pageT = 1; // a page slide cut short by closing only advances while the body draws: left behind, it kept the closed strip at full frame rate
             Resize(kStrip, false); // shrink window so it can't block clicks
             ui.Forget();
@@ -1448,9 +1457,9 @@ void Drawer::Frame() {
     if (h > 0.5f) {
         float shapeWide = Span();
         if (islandLook) shapeWide = IslandSpan();
-        else if (alarmBanner && !Side()) shapeWide = AlarmSpan();
+        else if (alarmLook) shapeWide = AlarmSpan();
         auto wideAt = [&](float at) { return IslandSpan() + (Span() - IslandSpan()) * anim::Clamp01((at - kIslandH) / (Depth() * 0.3f - kIslandH)); };
-        if (!islandLook && !alarmBanner && grow) shapeWide = wideAt(h); // pill widens into the panel
+        if (!islandLook && !alarmLook && grow) shapeWide = wideAt(h); // pill widens into the panel
         shapeXform = EdgeXform();
         ctx->SetTransform(shapeXform); // turned to the docked edge, centered in the window
         ComPtr<ID2D1Geometry> shape = Shape(h, shapeWide);
@@ -1470,11 +1479,11 @@ void Drawer::Frame() {
             anim::Spring ahead = spring; // where the spring will really be, not a straight line: that overshot the bounce's peak
             ahead.Step(dt * frames);
             float lead = (std::clamp)(ahead.value, 0.0f, Depth() + overshoot);
-            outline = lead > 0.5f ? BuildShape(lead, !islandLook && !alarmBanner && grow ? wideAt(lead) : shapeWide) : nullptr;
+            outline = lead > 0.5f ? BuildShape(lead, !islandLook && !alarmLook && grow ? wideAt(lead) : shapeWide) : nullptr;
         }
         if (ClearPill()) outline = nullptr; // nothing to frost
         ctx->SetTransform(Side() ? D2D1::Matrix3x2F::Identity() : shapeXform);
-        if (alarmBanner) DrawAlarmRing(h);
+        if (alarmBanner || alarmLook) DrawAlarmRing(h);
         else if (peeking) DrawPeek(h);
         else if (islandLook) { // bars bounce only while it shows and music plays
             pillPass = pillCached ? 2 : 0;
