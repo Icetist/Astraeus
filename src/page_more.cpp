@@ -575,6 +575,10 @@ void DrawTools(PageCtx& p) {
     Model& m = p.m;
     const D2D1_RECT_F& a = p.area;
 
+    bool wasBlocked = ui.Blocked();
+    bool alarmPick = m.toolTab == Model::kTabAlarm && AlarmPickerOpen(m, a);
+    if (alarmPick) ui.Block(true);
+
     D2D1_RECT_F power = Rect(a.left, a.top, Width(a), 132); // power row across full width
     w::Card(ui, t, power);
     struct Action { int glyph; const wchar_t* label; const wchar_t* hint; bool hold; void (*run)(); }; // hold = destructive, needs press-and-hold
@@ -659,6 +663,8 @@ void DrawTools(PageCtx& p) {
 
     D2D1_RECT_F quick = tall ? D2D1_RECT_F{a.left, timer.bottom + 12, a.right, a.bottom} : D2D1_RECT_F{timer.right + 12, timer.top, a.right, a.bottom};
     QuickTiles(p, quick);
+    ui.Block(wasBlocked);
+    if (alarmPick) DrawAlarmPickerOverlay(p);
 }
 
 namespace fmt {
