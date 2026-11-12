@@ -164,13 +164,93 @@ bool AlarmStore::HasMissed() const {
     return std::any_of(items.begin(), items.end(), [](const Alarm& a) { return a.missed; });
 }
 
-int AlarmStore::Tick(int64_t nowLocalSec, const SYSTEMTIME&) {
+int AlarmStore::Tick(int64_t nowLocalSec, const SYSTEMTIME& localNow) {
+    if (nowLocalSec <= 0) return 0;
+    if (lastCheck <= 0 || nowLocalSec < lastCheck) {
+        lastCheck = nowLocalSec;
+        return 0;
+    }
+    if (nowLocalSec == lastCheck) return 0;
+    constexpr int64_t kDaySec = 86400;
+    constexpr int64_t kMissedGraceSec = 90;
+
+    int64_t prev = lastCheck;
     lastCheck = nowLocalSec;
-    return 0;
+    int firedId = 0;
+
+    auto fire = [&](Alarm& a) {
+        a.missed = false;
+        a.snoozeUntil = 0;
+        if (ringingId == 0) {
+            ringingId = a.id;
+            ringStarted = nowLocalSec;
+            firedId = a.id;
+        } else {
+            // Queue behind an active ringing alarm so back-to-back alarms don't vanish silently.
+            a.snoozeUntil = nowLocalSec;
+        }
+    };
+
+    for (auto& a : items) {
+        if (!a.enabled || a.id == ringingId) continue;
+
+        if (a.snoozeUntil > 0) {
+            if (a.snoozeUntil <= nowLocalSec) {
+                if (nowLocalSec - a.snoozeUntil > kMissedGraceSec) {
+                    a.snoozeUntil = 0;
+                    a.missed = true;
+                    if (!a.daily) a.enabled = false;
+                } else {
+                    fire(a);
+                }
+            }
+            continue;
+        }
+
+        SYSTEMTIME cand = localNow;
+        cand.wHour = (WORD)ClampHour(a.hour);
+        cand.wMinute = (WORD)ClampMinute(a.minute);
+        cand.wSecond = 0;
+        cand.wMilliseconds = 0;
+        int64_t tToday = LocalEpochSec(cand);
+        int64_t latest = tToday <= nowLocalSec ? tToday : (tToday - kDaySec);
+        if (latest > prev) {
+            if (nowLocalSec - latest > kMissedGraceSec) {
+                a.missed = true;
+                if (!a.daily) a.enabled = false;
+            } else {
+                fire(a);
+            }
+        }
+    }
+    return firedId;
 }
 
-bool AlarmStore::Snooze(int64_t) { return false; }
-bool AlarmStore::Dismiss() { return false; }
+bool AlarmStore::Snooze(int64_t nowLocalSec) {
+    for (auto& a : items) {
+        if (a.id != ringingId) continue;
+        a.snoozeUntil = nowLocalSec + kSnoozeSec;
+        a.missed = false;
+        a.enabled = true;
+        ringingId = 0;
+        ringStarted = 0;
+        return true;
+    }
+    return false;
+}
+
+bool AlarmStore::Dismiss() {
+    for (auto& a : items) {
+        if (a.id != ringingId) continue;
+        a.snoozeUntil = 0;
+        a.missed = false;
+        if (!a.daily) a.enabled = false;
+        ringingId = 0;
+        ringStarted = 0;
+        return true;
+    }
+    return false;
+}
 
 const Alarm* AlarmStore::Ringing() const { return Find(ringingId); }
 
