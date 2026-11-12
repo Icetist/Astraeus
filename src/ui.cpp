@@ -7,6 +7,7 @@
 
 #include "anim.h"
 #include "glyphs.h"
+#include "chrome.h"
 #include "starfall.h"
 
 namespace {
@@ -245,6 +246,7 @@ void Card(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float radius) {
                    t.sheen, t.sheen.Alpha(0));
     c.StrokeV(r, radius, t.hairTop, t.hairBot, 1); // hairline brighter on top, fake bevel
     if (t.stars) starfall::Seam(c, {r.left + radius, r.top + 0.5f}, {r.right - radius, r.top + 0.5f}, t, 0.8f); // starfall: a faint line of light along the top edge
+    else if (t.chrome) chrome::Seam(c, {r.left + radius, r.top + 0.5f}, {r.right - radius, r.top + 0.5f}, 1.2f); // chrome: the bevel catches the light
 }
 
 bool IconBtn(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, float size, int glyph, float iconPx,

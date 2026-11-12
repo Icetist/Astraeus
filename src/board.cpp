@@ -12,6 +12,7 @@
 
 #include "anim.h"
 #include "glyphs.h"
+#include "chrome.h"
 #include "starfall.h"
 
 namespace {
@@ -46,7 +47,7 @@ uint64_t ColorsKey(std::initializer_list<Color> cs) { // a theme worth repaintin
     return h;
 }
 
-uint64_t ShellKey(const Theme& t) { return ColorsKey({t.bg, t.card, t.text, t.textDim, t.accent, t.accentHi}) + t.stars; }
+uint64_t ShellKey(const Theme& t) { return ColorsKey({t.bg, t.card, t.text, t.textDim, t.accent, t.accentHi}) + t.stars + 2ull * t.chrome; }
 
 
 bool FullOn(HMONITOR m) { // a game or a video fills that screen in front: it gets the screen, the dashboard waits
@@ -422,6 +423,8 @@ void Board::Backdrop() { // the look behind the tiles, drawn straight: no screen
     c.Fill(full, 0, base);
     if (t.stars) {
         starfall::Sky(c, full, 0, t, 0, 1);
+    } else if (t.chrome) {
+        chrome::Metal(c, full, 0, 0, 1); // held still: the board is drawn once and kept
     } else { // two pools of the accent's light, far apart and faint: the panel's glow, spread over a room
         c.Glow({W * 0.12f, H * 0.05f}, W * 0.55f, H * 0.6f, t.accent.Alpha(0.10f));
         c.Glow({W * 0.92f, H * 1.0f}, W * 0.5f, H * 0.55f, t.accent.Alpha(0.07f));

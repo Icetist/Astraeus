@@ -4,6 +4,7 @@
 
 #include "anim.h"
 #include "shelf_ui.h"
+#include "chrome.h"
 #include "starfall.h"
 
 namespace shelfui {
@@ -461,6 +462,7 @@ void Preview(PageCtx& p, const D2D1_RECT_F& area, bool live) {
     c.Fill(r, 20, Solid(t));
     c.StrokeV(r, 20, t.hairTop, t.hairBot, 1);
     if (t.stars) starfall::Seam(c, {r.left + 20, r.top + 0.5f}, {r.right - 20, r.top + 0.5f}, t, 0.8f);
+    else if (t.chrome) chrome::Seam(c, {r.left + 20, r.top + 0.5f}, {r.right - 20, r.top + 0.5f}, 1.2f);
     Header(p, Rect(r.left, r.top, Width(r), kHeadH), *it, live);
     if (!v.preview) return; // closed by its own button
     D2D1_RECT_F body = {r.left + 16, r.top + kHeadH + 8, r.right - 16, r.bottom - kBarH - 24};

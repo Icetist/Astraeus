@@ -5,6 +5,7 @@
 
 #include "faces.h"
 #include "glyphs.h"
+#include "chrome.h"
 #include "starfall.h"
 
 #include <dwmapi.h>
@@ -1283,6 +1284,27 @@ void Drawer::PaintShape(ID2D1Geometry* shape, float h) {
             }
         }
     }
+    D2D1_RECT_F metal{};
+    if (shellNow.chrome && SUCCEEDED(shape->GetBounds(nullptr, &metal))) { // chrome: the same passes as the sky, the flowing metal in place of the orb
+        bool alive = opened && !islandLook && !model.reduceMotion; // the metal flows only over the open panel; the pill and calm motion hold still
+        float t = alive ? (float)std::fmod(lastFrame, kSkyWrap) + 0.001f : 0;
+        D2D1_RECT_F r = metal; // the whole shape, its fillets too: the metal's brush must cover every pixel the outline does
+        if (skyPass == 0) {
+            chrome::Metal(*canvas, r, 0, t, body.a, shape);
+        } else if (Width(r) >= 4 && Height(r) >= 4 && body.a >= 0.01f) { // Metal's own guard
+            if (skyPass == 1) {
+                chrome::MetalOver(*canvas, r, 0, body.a, shape);
+            } else { // the metal and its bright ring flow under the still band's layer
+                chrome::MetalUnder(*canvas, r, 0, t, body.a, shape);
+                chrome::MetalShine(*canvas, r, 0, t, body.a, shape);
+                D2D1_MATRIX_3X2_F was;
+                ctx->GetTransform(&was);
+                ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+                ctx->DrawImage(skyLayer.Get());
+                ctx->SetTransform(was);
+            }
+        }
+    }
     if (shellNow.glass && glassShadeNow > 0.01f) canvas->FillGeometry(shape, Tint(glassShadeNow), true); // over a page that fights the ink
     if (shellNow.glass) { // liquid glass: glossy light from above and a bright specular rim
         canvas->FillGeoV(shape, {0, 0, W, (std::min)(h, 90.0f)}, shellNow.sheen, shellNow.sheen.Alpha(0), true);
@@ -1373,7 +1395,7 @@ void Drawer::Frame() {
         shapeXform = EdgeXform();
         pillCached = PillLayer(h, IslandSpan());
     }
-    if (shellNow.stars && opened && !islandLook && !grow && !peeking && !moving && !dragging && !themes && h > 24 && std::fabs(h - spring.target) < 0.01f) { // starfall, the panel at rest
+    if ((shellNow.stars || shellNow.chrome) && opened && !islandLook && !grow && !peeking && !moving && !dragging && !themes && h > 24 && std::fabs(h - spring.target) < 0.01f) { // starfall or chrome, the panel at rest
         shapeXform = EdgeXform();
         skyCached = SkyLayer(h, Span());
     } else if (skyLayer && !opened) {
@@ -1453,7 +1475,7 @@ void Drawer::Frame() {
         Perf(Seconds() - drawT0);
     }
     Govern(fast, gap);
-    bool orb = shellNow.stars && opened && !islandLook && !model.reduceMotion && h > 24; // starfall's orb drifts only while the open panel shows
+    bool orb = (shellNow.stars || shellNow.chrome) && opened && !islandLook && !model.reduceMotion && h > 24; // starfall's orb and chrome's lights drift only while the open panel shows
     UINT orbSync = (UINT)(std::clamp)((int)std::lround(hz / kOrbFps), 1, 4); // ~20 fps; dxgi caps the interval at 4
     UINT calm = islandLook && !opened ? pillSync : orb && !ambient ? (std::max)(ambientSync, orbSync) : ambientSync; // ambient motion at ~30 fps, the orb alone ~20, the resting pill's little bars ~15
     if (glass) { // no swapchain: the frame lands with the blur outline, a timer paces the next one

@@ -174,7 +174,7 @@ Theme theme::ClearInk(const Theme& t, float dark) {
     v.line = ink.Alpha(0.10f);
     v.bg = v.veil = under;
     v.sheen = v.glow = Color{0, 0, 0, 0};
-    v.glass = v.stars = false;
+    v.glass = v.stars = v.chrome = false;
     return v;
 }
 
@@ -278,6 +278,26 @@ Theme Theme::From(Seed seed) {
         t.accentHi = Hsl(h, 0, lightLook ? 0.08f : 0.97f);
         t.onAccent = Hsl(h, 0, lightLook ? 0.98f : 0.07f);
     }
+    if (seed.look == theme::kChrome) { // polished steel: smoked metal cards over the graphite, a bright bevel, silver for anything lit
+        auto steel = [](float l, float a = 1) { return Hsl(222, 0.07f, l, a); }; // the metal's cool neutral, whatever the wallpaper's hue
+        t.bg = steel(0.075f);
+        t.card = steel(0.115f, 0.88f); // smoked almost solid: the metal flows around the words, never right behind them
+        t.cardHi = steel(0.17f, 0.90f);
+        t.track = steel(0.27f, 0.90f);
+        t.accent = steel(0.84f); // silver: chrome has no colour of its own
+        t.accentHi = steel(0.96f);
+        t.onAccent = steel(0.07f);
+        t.text = steel(0.965f);
+        t.textDim = steel(0.70f);
+        t.textLow = steel(0.48f);
+        t.hairTop = Color{1, 1, 1, 0.30f}; // every card's top edge catches the light
+        t.hairBot = Color{1, 1, 1, 0.045f};
+        t.line = Color{1, 1, 1, 0.09f};
+        t.sheen = Color{1, 1, 1, 0.07f};
+        t.veil = t.bg;
+        t.glass = t.stars = false;
+        t.chrome = true;
+    }
     if (seed.look == 3) { // custom: the background the user picked, ink that reads on it, their accent kept legible against it
         Color bg = Color::Rgb((uint32_t)seed.bg);
         bool dark = theme::Luma(bg) < 0.18f; // where white and black ink read equally well
@@ -330,5 +350,6 @@ Theme Theme::Lerp(const Theme& o, float t) const {
     r.veil = veil.Mix(o.veil, t);
     r.glass = t < 0.5f ? glass : o.glass;
     r.stars = t < 0.5f ? stars : o.stars;
+    r.chrome = t < 0.5f ? chrome : o.chrome;
     return r;
 }

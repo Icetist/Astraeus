@@ -7,6 +7,7 @@
 #include "entry.h"
 #include "glyphs.h"
 #include "pages.h"
+#include "chrome.h"
 #include "starfall.h"
 
 namespace {
@@ -218,6 +219,7 @@ bool Drawer::RenewDev() {
     skyLayer.Reset();
     skyKey = 0;
     starfall::Forget(); // its brushes too
+    chrome::Forget();
     backBuf.Reset();
     if (!glass && frameWait) CloseHandle(frameWait), frameWait = nullptr;
     swap.Reset();
@@ -368,6 +370,7 @@ void Drawer::FreeDev() {
     skyLayer.Reset();
     skyKey = 0;
     starfall::Forget(); // the sky's brushes, likewise
+    chrome::Forget(); // and the metal's
     devWide = false;
     swap.Reset();
     ctx.Reset();
@@ -618,6 +621,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
     }
     auto divider = [&](D2D1_POINT_2F a, D2D1_POINT_2F b) { // starfall: a seam of starlight instead of a plain rule
         if (shellNow.stars) starfall::Seam(*canvas, a, b, shellNow);
+        else if (shellNow.chrome) chrome::Seam(*canvas, a, b); // chrome: an engraved line catching the light
         else canvas->Line(a, b, shellNow.line, 1, false);
     };
     if (Tall()) { // sidebar or compact: icons along the top, under them the divider
@@ -1123,6 +1127,7 @@ void Drawer::DrawRailTop(const Theme& t) {
     float hw = (std::min)(kRailHiHalf, step / 2 + 4); // a narrow panel's slot: the highlight never wider than it, so the clip never cuts it
     c.Fill({x - hw, cy - 19, x + hw, cy + 19}, 19, t.accent.Alpha(0.13f * RailFade(x, lo, hi, (float)n)));
     if (t.stars) starfall::Halo(c, {x, cy}, 30, 22, t, RailFade(x, lo, hi, (float)n)); // starfall: the active page glows, with a faint violet reach
+    else if (t.chrome) chrome::Halo(c, {x, cy}, 30, 22, t, RailFade(x, lo, hi, (float)n)); // chrome: a cool sheen around it
     c.Fill({x - 11, kTopRail - 6, x + 11, kTopRail - 3}, 1.5f, t.accent.Alpha(RailFade(x, lo, hi, (float)n))); // accent bar under the active icon
     for (int i = 0; i < n; ++i) {
         int id = model.pages[(size_t)i];
@@ -1194,6 +1199,7 @@ void Drawer::DrawRail(const Theme& t) {
     if (clip) c.PushClip({0, lo - kRailPeek, kRailW, hi + kRailPeek}); // a sliver of the next one peeks, faded
     float pt = railTop - off, pb = railBot - off, pf = RailFade((pt + pb) / 2, lo, hi, (float)n);
     if (t.stars) starfall::Halo(c, {kRailW / 2, (pt + pb) / 2}, 34, 30, t, pf); // starfall: the active page glows, with a faint violet reach
+    else if (t.chrome) chrome::Halo(c, {kRailW / 2, (pt + pb) / 2}, 34, 30, t, pf);
     c.Fill({13, pt, kRailW - 13, pb}, 20, t.accent.Alpha(0.13f * pf));
     c.Fill({5, pt + 10, 8, pb - 10}, 1.5f, t.accent.Alpha(pf)); // thin accent bar on left edge
 
@@ -1233,6 +1239,7 @@ void Drawer::DrawBubble() { // a running timer, stopwatch or focus session: a ri
     if (!t.glass) fill.a *= model.BgOpacity() / 100.0f;
     canvas->Dot(o, r, fill);
     if (t.stars) starfall::Sky(*canvas, {o.x - r, o.y - r, o.x + r, o.y + r}, r, t, 0, fill.a, 0); // starfall: the bubble is a little moon of the same sky
+    else if (t.chrome) chrome::Metal(*canvas, {o.x - r, o.y - r, o.x + r, o.y + r}, r, 0, fill.a); // chrome: a little bead of the same metal, held still
     if (t.glass) canvas->Ring(o, r - 0.5f, Color{1, 1, 1, 0.26f}, 1);
     canvas->Ring(o, r - 3, t.track, 2);
     float f = anim::Clamp01(model.ActivityFrac());

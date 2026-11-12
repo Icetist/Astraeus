@@ -3,6 +3,7 @@
 #include <unordered_map>
 
 #include "shelf_ui.h"
+#include "chrome.h"
 #include "starfall.h"
 
 namespace shelfui {
@@ -420,6 +421,7 @@ void Card(PageCtx& p, const D2D1_RECT_F& r, const sys::ShelfItem& it, float hove
     }
     c.StrokeV(r, kRadius, t.hairTop.Mix(t.accent.Alpha(0.6f), (std::max)(hover, target ? 1.0f : 0.0f)), t.hairBot, 1);
     if (t.stars) starfall::Seam(c, {r.left + kRadius, r.top + 0.5f}, {r.right - kRadius, r.top + 0.5f}, t, 0.8f); // starfall: starlight along the top edge, as its cards have
+    else if (t.chrome) chrome::Seam(c, {r.left + kRadius, r.top + 0.5f}, {r.right - kRadius, r.top + 0.5f}, 1.2f);
     Badges(c, t, r, it, hover, bleed);
 }
 

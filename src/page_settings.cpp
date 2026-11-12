@@ -8,6 +8,7 @@
 #include "glyphs.h"
 #include "page_sheet.h"
 #include "preview.h"
+#include "chrome.h"
 #include "starfall.h"
 #include "version.h"
 
@@ -382,6 +383,7 @@ void Swatch(Canvas& c, const Theme& look, D2D1_RECT_F q, bool glassy, float hue,
     }
     c.FillV(q, 12, look.cardHi, look.bg.Alpha(1));
     if (look.stars) starfall::Sky(c, q, 12, look, 0, 1, 0, nullptr, kSwatchStars); // the real sky, a denser field so a swatch shows it
+    else if (look.chrome) chrome::Metal(c, q, 12, 0, 1); // the real metal, its lights held still
     float u = (std::min)(1.0f, sh / 60); // the little page inside scales with the swatch
     c.Fill(Rect(q.left + 10, q.top + 10 * u, sw * 0.5f, 5), 2.5f, look.text.Alpha(0.85f)); // a line of "text"
     c.Fill(Rect(q.left + 10, q.top + 20 * u, sw * 0.32f, 4), 2, look.textDim.Alpha(0.8f));
@@ -399,15 +401,18 @@ void Material(PageCtx& p, const D2D1_RECT_F& r, bool live) { // six swatches dra
     int picked = m.look == Model::kLookClear ? 2 : m.look; // clear lives under glass, in the card below
     Seed s = Base(m, t);
     constexpr float extra = kSlideH + 6; // room for the blur slider, or the opacity slider on the solid looks
-    float sw = (Width(in) - 2 * kSwatchGap) / kSwatchCols, sh = (std::min)((Height(in) - extra - 2 * 18 - 6) / 2, sw * 0.62f); // three, then the rest, a label under each
-    static const wchar_t* const kNames[] = {L"Dark", L"Light", L"Glass", L"Custom", L"HaloBar", L"Starfall"};
-    int order[Model::kLookStarfall + 1], looks = 0;
-    for (int k = 0; k <= Model::kLookStarfall; ++k)
+    static const wchar_t* const kNames[] = {L"Dark", L"Light", L"Glass", L"Custom", L"HaloBar", L"Starfall", L"Clear", L"Chrome"};
+    int order[Model::kLookChrome + 1], looks = 0;
+    for (int k = 0; k <= Model::kLookChrome; ++k) {
+        if (k == Model::kLookClear) continue; // clear lives under glass, in the card below
         if (k != Model::kLookHalo || !m.halo.FollowsUs() || m.look == Model::kLookHalo) order[looks++] = k; // halobar following us: no swatch to follow it back, unless already picked
+    }
+    int cols = (std::max)(kSwatchCols, (looks + 1) / 2); // always two rows: seven looks go four, then three
+    float sw = (Width(in) - (cols - 1) * kSwatchGap) / cols, sh = (std::min)((Height(in) - extra - 2 * 18 - 6) / 2, sw * 0.62f); // a label under each
     for (int at = 0; at < looks; ++at) {
         int i = order[at];
-        int row = at / kSwatchCols, col = at % kSwatchCols, inRow = (std::min)(kSwatchCols, looks - row * kSwatchCols);
-        float x0 = in.left + (kSwatchCols - inRow) * (sw + kSwatchGap) / 2; // a shorter second row sits centered
+        int row = at / cols, col = at % cols, inRow = (std::min)(cols, looks - row * cols);
+        float x0 = in.left + (cols - inRow) * (sw + kSwatchGap) / 2; // a shorter second row sits centered
         D2D1_RECT_F q = Rect(x0 + col * (sw + kSwatchGap), in.top + 2 + row * (sh + 24), sw, sh);
         uint32_t id = Ui::Id("set.mat", i);
         Ui::Hit h = live ? ui.Button(id, q) : Ui::Hit{};

@@ -264,10 +264,11 @@ public:
     int brightPct = -1; // -1 hides brightness slider
 
     bool awake = false;
-    int look = 0; // appearance picked: 0 dark (default), 1 light, 2 glass, 3 custom, 4 follow halobar, 5 starfall; Look() is what's drawn
+    int look = 0; // appearance picked: 0 dark (default), 1 light, 2 glass, 3 custom, 4 follow halobar, 5 starfall, 6 clear, 7 chrome; Look() is what's drawn
     static constexpr int kLookHalo = 4;
     static constexpr int kLookStarfall = 5; // ours alone: halobar wears it only by following us, and never hands it back
     static constexpr int kLookClear = 6; // picked under glass: the resting pill is only ink, the panel glass on the wallpaper's side
+    static constexpr int kLookChrome = 7; // polished metal; halobar numbers it the same, so following works both ways
     struct Halo { // halobar's own theme, read only while following it
         int look = -1; // -1 it follows us back, else 0..3 or clear, like ours
         int glassTint = -1;

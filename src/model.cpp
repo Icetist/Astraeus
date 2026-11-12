@@ -44,7 +44,7 @@ double GameLen(int sport) { // about how long one lasts, start to finish: for a 
 
 namespace {
 constexpr wchar_t kLookVal[] = L"Appearance";
-constexpr int kLooks = Model::kLookClear + 1; // dark, light, glass, custom, halobar's, starfall, clear
+constexpr int kLooks = Model::kLookChrome + 1; // dark, light, glass, custom, halobar's, starfall, clear, chrome
 constexpr wchar_t kQuietVal[] = L"Quiet"; // do not disturb: halobar reads and writes the same value
 constexpr wchar_t kArtBackVal[] = L"MediaArtBg"; // the album art background, shared with halobar the same way
 constexpr wchar_t kVizAlphaVal[] = L"VizAlpha", kVizGainVal[] = L"VizGain"; // the visualizer's opacity over the art and its sensitivity, shared too
@@ -161,7 +161,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     lyricScale = (std::clamp)(sys::ReadNum(L"LyricScale", 100), kLyricMin, kLyricMax);
     bgOpacity = (std::clamp)(sys::ReadNum(L"BgOpacity", kMaxOpacity), kMinOpacity, kMaxOpacity);
     auto appsNum = [](const wchar_t* key, int fallback) { return sys::ReadNum((std::wstring(key) + L"Apps").c_str(), fallback); }; // never set: the desktop's
-    otherSet = {(std::clamp)(appsNum(kLookVal, look), 0, kLookClear), (std::clamp)(appsNum(L"AccentMode", accentMode), 0, (int)kAccentWindows), appsNum(L"AccentHex", accentHex) & 0xFFFFFF,
+    otherSet = {(std::clamp)(appsNum(kLookVal, look), 0, kLookChrome), (std::clamp)(appsNum(L"AccentMode", accentMode), 0, (int)kAccentWindows), appsNum(L"AccentHex", accentHex) & 0xFFFFFF,
                 appsNum(L"CustomBg", customBg) & 0xFFFFFF, (std::clamp)(appsNum(L"GlassBlur", glassBlur), 0, 100), (std::clamp)(appsNum(L"BgOpacity", bgOpacity), kMinOpacity, kMaxOpacity),
                 (std::clamp)(appsNum(L"GlassTint", glassTint), -1, 0xFFFFFF)};
     appsTheme = sys::ReadNum(L"AppsTheme", 0) != 0 ? 1 : 0;
@@ -1024,7 +1024,7 @@ bool Model::PollShared() {
                 int v = HaloNum(key, name, fallback, lo, hi);
                 return notDesk ? HaloNum(key, (std::wstring(name) + L"Apps").c_str(), v, lo, hi) : v; // never set there: its desktop value
             };
-            now.look = themeNum(L"Look", -1, -1, kLookClear);
+            now.look = themeNum(L"Look", -1, -1, kLookChrome);
             if (now.look == kLookHalo || now.look == kLookStarfall) now.look = -1; // numbers of ours it never writes
             now.glassTint = themeNum(L"GlassTint", -1, -1, 0xFFFFFF);
             now.accent = themeNum(L"Accent", -1, -1, 1);
