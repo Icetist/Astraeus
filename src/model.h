@@ -25,6 +25,7 @@
 #include "shelf.h"
 #include "battery.h"
 #include "accent.h"
+#include "alarms.h"
 
 
 enum : UINT { // posted to ui thread by services/worker
@@ -156,8 +157,8 @@ public:
     float pingMs = -2, jitterMs = 0; // latency to the internet while the network page shows; -1 no answer, -2 not measured
     Hist pingHist{60};
     // stopwatch and focus sessions, on the timer's own once-a-second tick
-    int toolTab = 0; // 0 timer, 1 stopwatch, 2 focus, 3 to-do, 4 servers
-    enum ToolTab { kTabTimer, kTabWatch, kTabFocus, kTabTodo, kTabHosts, kToolTabs };
+    int toolTab = 0; // 0 timer, 1 stopwatch, 2 focus, 3 alarm, 4 to-do, 5 servers
+    enum ToolTab { kTabTimer, kTabWatch, kTabFocus, kTabAlarm, kTabTodo, kTabHosts, kToolTabs };
     struct Todo {
         std::wstring text;
         bool done = false;
@@ -168,7 +169,7 @@ public:
     bool TodoDueOn(int y, int mo, int d) const; // anything not done due that day: the calendar marks it
     std::vector<Todo> todos; // the tools page's to-do list, kept in the registry
     std::vector<std::wstring> hosts; // the servers it watches
-    enum Field { kFieldNone, kFieldTodo, kFieldHost, kFieldTimer };
+    enum Field { kFieldNone, kFieldTodo, kFieldHost, kFieldTimer, kFieldAlarmLabel };
     int field = kFieldNone; // the list field taking keystrokes
     std::wstring fieldEdit;
     static constexpr size_t kFieldMax = 120;
@@ -176,6 +177,20 @@ public:
     void CommitField(); // enter: the typed line joins its list
     void SaveTodos();
     void SaveHosts(); // and the monitor restarts with them
+    AlarmStore alarms;
+    int alarmBellTick = 0, alarmSeenTick = 0;
+    int alarmEditId = -1; // -1 list view, 0 creating new alarm, >0 editing existing alarm
+    int alarmHour = 8, alarmMin = 0;
+    bool alarmDaily = false;
+    std::wstring alarmLabel;
+    void SaveAlarms();
+    void SaveAlarmSeen();
+    void BeginAlarmEdit(int id);
+    void SaveAlarmEditor();
+    void CancelAlarmEditor();
+    bool TickAlarms();
+    bool SnoozeAlarm();
+    bool DismissAlarm();
     sys::Workspaces ws; // a tiling manager's workspaces or windows' desktops, only while a widget or tile shows them
     sys::WsState wsNow;
     sys::extras::Updates updates;

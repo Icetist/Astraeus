@@ -34,6 +34,7 @@ public:
     void Toggle();
     void KeyOpen(); // from the shortcut: open on the screen with the mouse and take the keyboard, or close
     void Peek(const std::wstring& title, const std::wstring& detail, int icon = 0); // brief notification drop, 0 = timer icon
+    void RingAlarm() { Redraw(); }
     void SetFull(bool on); // fullscreen app present, stay out of the way
     void SyncHide();
     void OnSecond();

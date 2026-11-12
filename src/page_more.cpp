@@ -595,7 +595,7 @@ void DrawTools(PageCtx& p) {
     bool tall = Height(a) > Width(a); // sidebar: timer and tiles stack under the power row
     D2D1_RECT_F timer = tall ? Rect(a.left, power.bottom + 12, Width(a), 190) : Rect(a.left, power.bottom + 12, kTimerW, a.bottom - power.bottom - 12);
     w::Card(ui, t, timer);
-    static const wchar_t* kTabs[Model::kToolTabs] = {L"TIMER", L"STOPWATCH", L"FOCUS", L"TO-DO", L"SERVERS"};
+    static const wchar_t* kTabs[Model::kToolTabs] = {L"TIMER", L"STOPWATCH", L"FOCUS", L"ALARM", L"TO-DO", L"SERVERS"};
     float tx = timer.left + 20, tabW = 0, tabGap = 14;
     for (const wchar_t* tab : kTabs) tabW += 13 + 7.4f * std::wcslen(tab);
     if (tabW + tabGap * (Model::kToolTabs - 1) > Width(timer) - 40) tabGap = (std::max)(4.0f, (Width(timer) - 40 - tabW) / (Model::kToolTabs - 1)); // a narrow sidebar: the tabs close up
@@ -613,10 +613,12 @@ void DrawTools(PageCtx& p) {
         TodoList(p, listArea);
     } else if (m.toolTab == Model::kTabHosts) {
         HostList(p, listArea);
-    } else if (m.toolTab == 1) {
+    } else if (m.toolTab == Model::kTabWatch) {
         Stopwatch(p, timer, tall);
-    } else if (m.toolTab == 2) {
+    } else if (m.toolTab == Model::kTabFocus) {
         Focus(p, timer, tall);
+    } else if (m.toolTab == Model::kTabAlarm) {
+        c.Text(L"Alarms", listArea, Weight::Light, 12, t.textDim, Align::Center);
     } else if (!m.timerOn) {
         const int minutes[] = {1, 5, 10, 15, 25, 45, 60};
         int perRow = tall ? 4 : 7; // sidebar: two rows so the labels fit
