@@ -14,21 +14,23 @@ namespace liquid {
 using Microsoft::WRL::ComPtr;
 
 constexpr float kRes = 0.5f; // the noise is made at half size and scaled up: metal has no fine detail to lose
-constexpr float kFreqX = 0.0026f, kFreqY = 0.0095f; // per dip at that size: long bands lying across, like metal poured sideways
-constexpr float kWarpFreq = 0.0040f, kWarp = 80; // the slower noise that bends the first, and how far: what makes it liquid, not a pattern sliding by
+constexpr float kFreqX = 0.0016f, kFreqY = 0.0100f; // per dip at that size: long streaks lying across, light along polished metal rather than blobs
+constexpr float kWarpFreq = 0.0030f, kWarp = 36; // the slower noise that bends the first, and how far: liquid, but bent past this the bands curl into blobs and it reads as trippy
 constexpr float kMargin = 44; // noise made past every edge, at that size: the warp reaches kWarp / 2 in, and must never pull in emptiness
 constexpr int kTable = 128; // tone table steps: enough that a band's edge stays smooth
 constexpr float kLo = 0.27f, kHi = 0.70f; // where the noise lives, as measured through the premultiplied matrix below
-constexpr float kBands = 3.0f; // light-dark bands across that range: a few broad reflections, as the site's metal has
-constexpr float kShift = 0.03f; // red runs ahead and blue behind by this much of a band: the thin colour at its edges
+constexpr float kBands = 2.2f; // light-dark bands across that range: a couple of broad reflections; more stack into rings like a map's contours
+constexpr float kShift = 0.008f; // red runs ahead and blue behind by this much of a band: a hint of colour at its edges, not an oil slick
 constexpr float kDim = 0.36f, kDimLift = 0.03f; // the body under the cards: the same metal, darker, so white words read on it
-constexpr float kFlow[2] = {9, 2.5f}; // dips/s the bands drift, before the sways
+constexpr float kFlow[2] = {4, 1}; // dips/s the bands drift, before the sways: slow, light moving over a still surface
 constexpr float kSwayHz[3] = {0.053f, 0.031f, 0.077f}; // the drifts' slow sways: unrelated, so the motion never repeats visibly
+constexpr float kSway = 0.4f; // how far they sway
+constexpr float kBendLag = 0.8f; // the bend rides along with the bands at this share: shapes change gently instead of churning
 
 // chrome's reflection along one band: a bright sky, a soft fall, a dark horizon, a ground that lifts back to the sky
 inline float Profile(float u) {
     static const float kAt[] = {0.0f, 0.30f, 0.50f, 0.60f, 0.66f, 0.74f, 0.88f, 1.0f};
-    static const float kLum[] = {0.98f, 0.90f, 0.70f, 0.14f, 0.06f, 0.20f, 0.66f, 0.98f}; // mostly bright silver; the dark is a thin line, as on polished chrome
+    static const float kLum[] = {0.98f, 0.90f, 0.72f, 0.34f, 0.24f, 0.36f, 0.70f, 0.98f}; // mostly bright silver; the dark is a soft dip, not a black line that rings every band
     u -= std::floor(u);
     int i = 0;
     while (i < 6 && u > kAt[i + 1]) ++i;
@@ -103,9 +105,9 @@ inline bool Build(Graph& g, ID2D1DeviceContext* dc) {
 // the metal for a w x h dip area at t seconds; t 0 holds it still
 inline void Set(Graph& g, float w, float h, float t) {
     D2D1_VECTOR_2F size = D2D1::Vector2F((std::max)(8.0f, w * kRes + 2) + 2 * kMargin, (std::max)(8.0f, h * kRes + 2) + 2 * kMargin);
-    float sx = 40 * std::sin(t * kSwayHz[0]) + 18 * std::sin(t * kSwayHz[2] + 1.3f), sy = 24 * std::sin(t * kSwayHz[1] + 0.6f);
+    float sx = kSway * (40 * std::sin(t * kSwayHz[0]) + 18 * std::sin(t * kSwayHz[2] + 1.3f)), sy = kSway * 24 * std::sin(t * kSwayHz[1] + 0.6f);
     D2D1_VECTOR_2F a = D2D1::Vector2F(t * kFlow[0] + sx, t * kFlow[1] + sy);
-    D2D1_VECTOR_2F b = D2D1::Vector2F(-t * kFlow[0] * 0.6f + sy * 1.5f, t * kFlow[1] * 1.7f + sx * 0.8f); // the bend drifts its own way: the bands change shape as they go
+    D2D1_VECTOR_2F b = D2D1::Vector2F(a.x * kBendLag + sy, a.y * kBendLag + sx * 0.5f); // the bend mostly travels with the bands: they change shape slowly as they go
     g.noise->SetValue(D2D1_TURBULENCE_PROP_SIZE, size);
     g.noise->SetValue(D2D1_TURBULENCE_PROP_OFFSET, a);
     g.noiseBack->SetValue(D2D1_2DAFFINETRANSFORM_PROP_TRANSFORM_MATRIX, D2D1::Matrix3x2F::Translation(-a.x, -a.y));
