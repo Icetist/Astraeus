@@ -221,6 +221,10 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     }
     for (const auto& line : SplitLines(sys::ReadText(L"Servers")))
         if (!line.empty() && (int)hosts.size() < kMaxHosts) hosts.push_back(line);
+    alarms.Deserialize(sys::ReadText(L"Alarms"));
+    if (std::wstring seen = sys::ReadText(L"AlarmSeen"); !seen.empty()) {
+        try { alarms.lastCheck = std::stoll(seen); } catch (...) {}
+    }
     vizOn = flag(L"Visualizer", cfg.viz ? 1 : 0); // the ini's choice until the switch in settings is used
     artBack = flag(kArtBackVal, 0);
     stageArt = flag(L"StageArtBg", 0);
@@ -253,6 +257,7 @@ void Model::CommitShelfNote() {
 }
 
 Model::~Model() {
+    SaveAlarmSeen();
     {
         std::lock_guard<std::mutex> guard(lock);
         quit = true; // set under lock so worker sees it
@@ -904,9 +909,102 @@ void Model::SaveHosts() {
     if (!hosts.empty()) pinger.Start(notify, WM_APP_PING, hosts);
 }
 
+void Model::SaveAlarms() { sys::SaveText(L"Alarms", alarms.Serialize()); }
+
+void Model::SaveAlarmSeen() {
+    sys::SaveText(L"AlarmSeen", alarms.items.empty() ? L"" : std::to_wstring(alarms.lastCheck));
+}
+
+void Model::BeginAlarmEdit(int id) {
+    alarmEditId = id;
+    if (id > 0) {
+        if (const Alarm* a = alarms.Find(id)) {
+            alarmHour = a->hour;
+            alarmMin = a->minute;
+            alarmDaily = a->daily;
+            alarmLabel = a->label;
+            return;
+        }
+    }
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
+    int total = st.wHour * 60 + st.wMinute + 15;
+    alarmHour = (total / 60) % 24;
+    alarmMin = total % 60;
+    alarmDaily = false;
+    alarmLabel.clear();
+}
+
+void Model::SaveAlarmEditor() {
+    if (field == kFieldAlarmLabel) {
+        alarmLabel = AlarmStore::SanitizeLabel(fieldEdit);
+        field = kFieldNone;
+        fieldEdit.clear();
+    }
+    bool ok = alarmEditId > 0 ? alarms.Update(alarmEditId, alarmHour, alarmMin, alarmDaily, alarmLabel)
+                              : alarms.Add(alarmHour, alarmMin, alarmDaily, alarmLabel) > 0;
+    if (ok) {
+        if (alarms.lastCheck <= 0) {
+            SYSTEMTIME now{};
+            GetLocalTime(&now);
+            alarms.lastCheck = LocalEpochSec(now);
+        }
+        SaveAlarms();
+        SaveAlarmSeen();
+    }
+    alarmEditId = -1;
+}
+
+void Model::CancelAlarmEditor() {
+    if (field == kFieldAlarmLabel) field = kFieldNone, fieldEdit.clear();
+    alarmEditId = -1;
+}
+
+bool Model::TickAlarms() {
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    int64_t nowSec = LocalEpochSec(now);
+    bool wasMissed = alarms.HasMissed();
+    bool wasRinging = alarms.ringingId != 0;
+    int fired = alarms.Tick(nowSec, now);
+    if (fired > 0 || alarms.HasMissed() != wasMissed || (wasRinging && alarms.ringingId == 0)) {
+        SaveAlarms();
+        SaveAlarmSeen();
+        alarmSeenTick = 0;
+    } else if (!alarms.items.empty() && ++alarmSeenTick >= 30) {
+        alarmSeenTick = 0;
+        SaveAlarmSeen();
+    }
+    return fired > 0;
+}
+
+bool Model::SnoozeAlarm() {
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    if (!alarms.Snooze(LocalEpochSec(now))) return false;
+    alarmBellTick = 0;
+    SaveAlarms();
+    SaveAlarmSeen();
+    return true;
+}
+
+bool Model::DismissAlarm() {
+    if (!alarms.Dismiss()) return false;
+    alarmBellTick = 0;
+    SaveAlarms();
+    SaveAlarmSeen();
+    return true;
+}
+
 void Model::CommitField() {
     if (field == kFieldTimer) {
         if (int seconds = duration::Parse(fieldEdit)) StartTimer(seconds), field = kFieldNone, fieldEdit.clear(); // not a time: it stays, to be corrected
+        return;
+    }
+    if (field == kFieldAlarmLabel) {
+        alarmLabel = AlarmStore::SanitizeLabel(fieldEdit);
+        field = kFieldNone;
+        fieldEdit.clear();
         return;
     }
     std::wstring s = fieldEdit;

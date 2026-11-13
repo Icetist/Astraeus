@@ -432,6 +432,20 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 app->drawer->Peek(L"Timer finished", detail); // in-app drop banner
                 Notify(L"Timer finished", detail.c_str()); // plus system toast
             }
+            if (app->model->TickAlarms()) {
+                app->model->alarmBellTick = 0;
+                MessageBeep(MB_ICONASTERISK);
+                if (const Alarm* a = app->model->alarms.Ringing()) {
+                    std::wstring alarmText = AlarmStore::FormatTime(a->hour, a->minute);
+                    if (!a->label.empty()) alarmText += L" - " + a->label;
+                    Notify(L"Alarm", alarmText.c_str());
+                }
+                app->drawer->RingAlarm();
+            } else if (app->model->alarms.Ringing()) {
+                ++app->model->alarmBellTick;
+                if (app->model->alarmBellTick < 120 && app->model->alarmBellTick % 3 == 0)
+                    MessageBeep(MB_ICONASTERISK);
+            }
         }
         return 0;
     case WM_APP_UPDATE:

@@ -575,6 +575,10 @@ void DrawTools(PageCtx& p) {
     Model& m = p.m;
     const D2D1_RECT_F& a = p.area;
 
+    bool wasBlocked = ui.Blocked();
+    bool alarmPick = m.toolTab == Model::kTabAlarm && AlarmPickerOpen(m, a);
+    if (alarmPick) ui.Block(true);
+
     D2D1_RECT_F power = Rect(a.left, a.top, Width(a), 132); // power row across full width
     w::Card(ui, t, power);
     struct Action { int glyph; const wchar_t* label; const wchar_t* hint; bool hold; void (*run)(); }; // hold = destructive, needs press-and-hold
@@ -595,17 +599,31 @@ void DrawTools(PageCtx& p) {
     bool tall = Height(a) > Width(a); // sidebar: timer and tiles stack under the power row
     D2D1_RECT_F timer = tall ? Rect(a.left, power.bottom + 12, Width(a), 190) : Rect(a.left, power.bottom + 12, kTimerW, a.bottom - power.bottom - 12);
     w::Card(ui, t, timer);
-    static const wchar_t* kTabs[Model::kToolTabs] = {L"TIMER", L"STOPWATCH", L"FOCUS", L"TO-DO", L"SERVERS"};
-    float tx = timer.left + 20, tabW = 0, tabGap = 14;
-    for (const wchar_t* tab : kTabs) tabW += 13 + 7.4f * std::wcslen(tab);
-    if (tabW + tabGap * (Model::kToolTabs - 1) > Width(timer) - 40) tabGap = (std::max)(4.0f, (Width(timer) - 40 - tabW) / (Model::kToolTabs - 1)); // a narrow sidebar: the tabs close up
+    static const wchar_t* kTabs[Model::kToolTabs] = {L"TIMER", L"STOPWATCH", L"FOCUS", L"ALARM", L"TO-DO", L"SERVERS"};
+    float avail = Width(timer) - 40, fontSz = 10, sp = 1.4f, tabGap = 14;
+    float widths[Model::kToolTabs]{}, tabW = 0;
+    auto measure = [&]() {
+        tabW = 0;
+        for (int i = 0; i < Model::kToolTabs; ++i) {
+            size_t len = std::wcslen(kTabs[i]);
+            widths[i] = c.Measure(kTabs[i], Weight::Medium, fontSz) + (len > 1 ? (len - 1) * sp : 0.0f);
+            tabW += widths[i];
+        }
+    };
+    measure();
+    if (tabW + tabGap * (Model::kToolTabs - 1) > avail) fontSz = 9.2f, sp = 0.9f, measure();
+    if (tabW + tabGap * (Model::kToolTabs - 1) > avail) tabGap = (std::max)(4.0f, (avail - tabW) / (Model::kToolTabs - 1));
+    float tx = timer.left + 20;
     for (int i = 0; i < Model::kToolTabs; ++i) { // the tools in one card, a slim marker under the one showing
-        float tw = 13 + 7.4f * std::wcslen(kTabs[i]);
+        float tw = widths[i];
         Ui::Hit th = ui.Button(Ui::Id("tl.tab", i), Rect(tx - 4, timer.top + 8, tw + 8, 28));
         float on = ui.Smooth(Ui::Id("tl.tab", 10 + i), m.toolTab == i ? 1.0f : 0, 14);
-        c.TextSp(kTabs[i], Rect(tx, timer.top + 16, tw, 14), Weight::Medium, 10, t.textLow.Mix(t.text, th.hover ? 0.5f : 0).Mix(t.accent, on), 1.4f);
-        if (on > 0.02f) c.Fill(Rect(tx, timer.top + 34, (tw - 13) * on, 2), 1, t.accent);
-        if (th.clicked) m.toolTab = i, m.field = Model::kFieldNone;
+        c.TextSp(kTabs[i], Rect(tx, timer.top + 16, tw + 8, 14), Weight::Medium, fontSz, t.textLow.Mix(t.text, th.hover ? 0.5f : 0).Mix(t.accent, on), sp);
+        if (on > 0.02f) c.Fill(Rect(tx, timer.top + 34, tw * on, 2), 1, t.accent);
+        if (th.clicked) {
+            m.toolTab = i, m.field = Model::kFieldNone, m.fieldEdit.clear();
+            if (i != Model::kTabAlarm) m.alarmEditId = -1;
+        }
         tx += tw + tabGap;
     }
     D2D1_RECT_F listArea = {timer.left + 20, timer.top + 48, timer.right - 20, timer.bottom - 14};
@@ -613,10 +631,12 @@ void DrawTools(PageCtx& p) {
         TodoList(p, listArea);
     } else if (m.toolTab == Model::kTabHosts) {
         HostList(p, listArea);
-    } else if (m.toolTab == 1) {
+    } else if (m.toolTab == Model::kTabWatch) {
         Stopwatch(p, timer, tall);
-    } else if (m.toolTab == 2) {
+    } else if (m.toolTab == Model::kTabFocus) {
         Focus(p, timer, tall);
+    } else if (m.toolTab == Model::kTabAlarm) {
+        AlarmTab(p, listArea);
     } else if (!m.timerOn) {
         const int minutes[] = {1, 5, 10, 15, 25, 45, 60};
         int perRow = tall ? 4 : 7; // sidebar: two rows so the labels fit
@@ -643,6 +663,8 @@ void DrawTools(PageCtx& p) {
 
     D2D1_RECT_F quick = tall ? D2D1_RECT_F{a.left, timer.bottom + 12, a.right, a.bottom} : D2D1_RECT_F{timer.right + 12, timer.top, a.right, a.bottom};
     QuickTiles(p, quick);
+    ui.Block(wasBlocked);
+    if (alarmPick) DrawAlarmPickerOverlay(p);
 }
 
 namespace fmt {

@@ -150,6 +150,7 @@ bool Drawer::Create(HINSTANCE instance) {
 }
 
 void Drawer::ShowIsland() {
+    if (alarmBanner) return;
     if (desk && model.deskApps && !(deskView && !model.LongPill()) && !hidden && !opened && !peeking) { // over apps the long pill takes this call: the small one never drops. the desktop keeps its own form
         longHeld = true;
         SyncDesk();
@@ -158,7 +159,7 @@ void Drawer::ShowIsland() {
     }
     if (model.Glassy()) SampleBehind();
     SampleInk();
-    if (hidden || opened || peeking || !EnsureDev()) return;
+    if (hidden || opened || peeking || alarmBanner || !EnsureDev()) return;
     KillTimer(hwnd, kReleaseTimer); // keep gpu alive
     KillTimer(hwnd, kCloseTimer);
     island = islandLook = true;
@@ -208,7 +209,7 @@ float Drawer::DepthOf(D2D1_POINT_2F p) const {
 
 D2D1_RECT_F Drawer::Visible() const { // the window's part of the surface, in dips: the top left corner, as big as the window
     if (pillRgn) { // the island: only the pill's slice of the full-width window, and its bubble
-        float a = IslandSpan(), o = (winW - a) / 2, b = bubbleNow ? kBubbleGap + kBubble + 2 : 0;
+        float a = alarmLook ? AlarmSpan() : IslandSpan(), o = (winW - a) / 2, b = !alarmLook && bubbleNow ? kBubbleGap + kBubble + 2 : 0;
         return Side() ? D2D1_RECT_F{0, o, winH, o + a + b} : D2D1_RECT_F{o, 0, o + a + b, winH};
     }
     return Side() ? D2D1_RECT_F{0, 0, winH, winW} : D2D1_RECT_F{0, 0, winW, winH};
@@ -222,7 +223,7 @@ D2D1_MATRIX_3X2_F Drawer::EdgeXform() const {
 }
 
 void Drawer::ReleaseLater() {
-    if (!opened && !peeking && spring.value <= 0 && cfg.gpuIdleSec > 0)
+    if (!opened && !peeking && !alarmBanner && spring.value <= 0 && cfg.gpuIdleSec > 0)
         SetTimer(hwnd, kReleaseTimer, (UINT)cfg.gpuIdleSec * 1000, nullptr); // timer handler re-checks state
 }
 
@@ -252,13 +253,13 @@ void Drawer::Resize(float hDip, bool topmost) {
                  SWP_NOACTIVATE | (topmost ? 0 : SWP_NOZORDER)); // only re-raise z-order when opening
     // a narrower window for the pill would move what's on screen when it grows into the panel: the pill would jump aside for a frame.
     // so the window keeps its width and a region makes everything beside the pill click-through; opening just lifts the region
-    bool pill = islandLook && !opened && !idle;
+    bool pill = (islandLook || alarmLook) && !opened && !idle;
     int inner = edgeNow == 2 ? w - live : 0; // side edges: the live part's inner side; the left edge's window is only that deep anyway
     RECT want = {inner, 0, edgeNow == 0 ? w : inner + live, h}; // the right edge's trim, when nothing narrower is wanted
     if (pill) {
-        int pa = (int)(IslandSpan() * scale + 0.5f);
-        bubbleNow = Bubble();
-        int extra = bubbleNow ? (int)((kBubbleGap + kBubble + 2) * scale + 0.5f) : 0; // the bubble beside it is live too
+        int pa = (int)((alarmLook ? AlarmSpan() : IslandSpan()) * scale + 0.5f);
+        bubbleNow = alarmLook ? false : Bubble();
+        int extra = !alarmLook && bubbleNow ? (int)((kBubbleGap + kBubble + 2) * scale + 0.5f) : 0; // the bubble beside it is live too
         want = edgeNow == 0 ? RECT{(w - pa) / 2, 0, (w + pa) / 2 + extra, h} : RECT{inner, (h - pa) / 2, inner + live, (h + pa) / 2 + extra};
     }
     if (pill || live < d) {
@@ -302,13 +303,15 @@ void Drawer::Open() {
     if (!opened && !pageSet && (!model.rememberPage || !model.HasPage(page)) && page != model.OpenPage()) prevPage = page, page = model.OpenPage(), pageT = 1; // the page picked in settings, or one still shown, without a slide
     pageSet = false;
     if (model.Glassy() && spring.value < 1) SampleBehind(); // read the background before the panel covers it
-    grow = grow || islandLook; // expanding out of the island: width morphs as it drops
-    island = islandLook = false;
+    grow = grow || islandLook || alarmLook; // expanding out of the island/pill: width morphs as it drops
+    island = islandLook = alarmLook = false;
     if (!EnsureDev()) return; // gpu may have been freed while idle
     KillTimer(hwnd, kReleaseTimer); // keep gpu alive
     KillTimer(hwnd, kCloseTimer);
     KillTimer(hwnd, kPeekTimer);
     peeking = false; // peek upgrades to full open
+    alarmBanner = false;
+    alarmHot = 0;
     for (sys::Toast t; model.notifyWatch.Pop(t);) {} // the rest of a notification queue would only show stale once it closes
     if (!opened) {
         opened = true;
@@ -399,12 +402,17 @@ void Drawer::Close() {
     KillTimer(hwnd, kCloseTimer);
     KillTimer(hwnd, kPeekTimer);
     peeking = false;
+    alarmBanner = false;
+    alarmHot = 0;
+    alarmSnoozeR = alarmDismissR = {};
     opened = false;
     island = false; // the island retracts with the same spring, its shape stays until it's gone
     model.hexFocus = model.cityFocus = model.faceSearch = false;
     ++model.pageVisit;
     model.nameFor = -1;
     model.field = Model::kFieldNone;
+    model.fieldEdit.clear();
+    model.alarmEditId = -1;
     model.CloseFace(); // what was typed in a widget is kept
     if (model.shelfField == Model::kShelfNote) model.CommitShelfNote(); // a note half typed is kept, like a city
     model.shelfField = Model::kShelfNone; // the search text stays for next time, the keyboard goes back
@@ -445,7 +453,7 @@ void Drawer::SyncStay() {
         return;
     }
     bool always = Stays();
-    if (always && !island && !peeking && !dragging && !hidden && !stage && spring.value <= 0.5f) ShowIsland(); // the pill comes back by itself
+    if (always && !island && !peeking && !alarmBanner && !dragging && !hidden && !stage && spring.value <= 0.5f) ShowIsland(); // the pill comes back by itself
     else if (!always && stayWasAlways && island && !MouseIn()) Close(); // always was just turned off, or an app came under it
     stayWasAlways = always;
 }
@@ -465,12 +473,14 @@ void Drawer::Answer() {
 }
 
 void Drawer::OnSecond() {
+    if (alarmBanner && !model.alarms.Ringing()) EndAlarmBanner();
+    else if (!opened && !alarmBanner && model.alarms.Ringing()) RingAlarm();
     if (model.facesDue) {
         model.facesDue = false; // set again only if the page draws again
         Redraw();
     }
     SyncBoard();
-    if (Pinned() && !overFull && !opened && !hidden && !stage && !dragging && !peeking && !PlaceStale() && spring.value <= 0.5f) Open(); // pinned: back open after fullscreen, a re-dock or the player
+    if (Pinned() && !overFull && !opened && !hidden && !stage && !dragging && !peeking && !alarmBanner && !PlaceStale() && spring.value <= 0.5f) Open(); // pinned: back open after fullscreen, a re-dock or the player
     if (fullApp && !FullOn(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY))) fullApp = false; // the shell's "it's over" can go missing: never stay hidden on its word alone
     SyncHide(); // a fullscreen app on the panel's screen, or gone from it
     if (++shadeTick >= kShadeSecs) shadeTick = 0, SampleShade();
@@ -512,6 +522,11 @@ void Drawer::SetPage(int p) {
     model.CloseWifi();
     model.CloseSettings();
     model.CloseCal();
+    model.alarmEditId = -1;
+    if (model.field == Model::kFieldAlarmLabel) {
+        model.field = Model::kFieldNone;
+        model.fieldEdit.clear();
+    }
     prevPage = page;
     page = p;
     pageT = 0;
@@ -520,7 +535,7 @@ void Drawer::SetPage(int p) {
 }
 
 void Drawer::Peek(const std::wstring& title, const std::wstring& detail, int icon) {
-    if (overFull) return; // over a fullscreen app, only the pill
+    if (overFull || alarmBanner) return; // over a fullscreen app or active alarm, don't override
     peekLevel = -1; // a notice, not the hud's bar
     peekIcon = icon;
     peekTitle = title;
@@ -535,9 +550,46 @@ void Drawer::Peek(const std::wstring& title, const std::wstring& detail, int ico
     float reach = Side() ? kPeekSide : kPeekH; // on a side edge the banner needs room for its text
     Resize(reach + overshoot, true);
     spring.target = reach; // drop only a short banner
-    spring.damp = 0.55f; // extra bouncy to catch the eye
+    spring.damp = model.reduceMotion ? 1.0f : 0.55f; // extra bouncy to catch the eye
     SetTimer(hwnd, kPeekTimer, model.notifyWatch.More() ? 3500 : 6000, nullptr); // auto retract after 6s, quicker when more are waiting
     Redraw();
+}
+
+void Drawer::RingAlarm() {
+    if (!model.alarms.Ringing()) return;
+    SyncHide(); // make sure fullscreen apps don't keep hwnd hidden
+    if (opened) {
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        Redraw();
+        return;
+    }
+    if (!EnsureDev()) return;
+    island = islandLook = grow = peeking = false;
+    alarmBanner = alarmLook = true;
+    alarmHot = 0;
+    alarmSnoozeR = alarmDismissR = {};
+    KillTimer(hwnd, kHoverTimer);
+    KillTimer(hwnd, kCloseTimer);
+    KillTimer(hwnd, kReleaseTimer);
+    KillTimer(hwnd, kPeekTimer);
+    if (model.Glassy()) SampleBehind();
+    SampleInk();
+    float reach = Side() ? kAlarmSide : kAlarmH;
+    Resize(reach + overshoot, true);
+    spring.target = reach;
+    spring.damp = model.reduceMotion ? 1.0f : 0.55f;
+    SyncDesk();
+    Redraw();
+}
+
+void Drawer::EndAlarmBanner() {
+    alarmBanner = false;
+    alarmHot = 0;
+    alarmSnoozeR = alarmDismissR = {};
+    Close();
+    SyncHide();
+    SyncStay();
+    SyncDesk();
 }
 
 void Drawer::StartDrag(float y) {
@@ -676,6 +728,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             MoveDrag(DepthOf(p));
             return 0;
         }
+        if (alarmBanner && !opened) {
+            int nextHot = Inside(alarmSnoozeR, p) ? 1 : Inside(alarmDismissR, p) ? 2 : 0;
+            if (nextHot != alarmHot) alarmHot = nextHot, Redraw();
+            return 0;
+        }
         if (peeking) { // a notification pill: a click opens the panel, hovering only lights it
             TrackLeave();
             return 0;
@@ -708,6 +765,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         KillTimer(hwnd, kHoverTimer);
         armed = false;
         islandHot = false;
+        alarmHot = 0;
         input.mouse = {-1e6f, -1e6f}; // park offscreen to clear hover
         SyncRailKeys(false); // off the panel: the arrows go back at once, not on the next frame
         if ((opened || island) && !dragging && GetCapture() != hwnd && !(opened && Pinned())) { // pinned: it stays open
@@ -791,23 +849,29 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (wp == kHoverTimer) {
             armed = false;
-            if (dragging || GetCapture() == hwnd) {} // a press on the strip already decides: a pill dropping mid-drag would shrink the window under the finger
+            if (dragging || alarmBanner || GetCapture() == hwnd) {} // a press on the strip or active alarm holds priority
             else if (!MouseIn()) ReleaseLater();
             else if (islandNext) ShowIsland(); // an app below: the pill first, a tap opens the panel
             else Open();
         } else if (wp == kCloseTimer) {
-            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && Stays()) && !(opened && Pinned()) && tourStep < 0) Close(); // the tour keeps it open until it's done
+            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && Stays()) && !(opened && Pinned()) && !(alarmBanner && !opened) && tourStep < 0) Close(); // the tour keeps it open until it's done
         } else if (wp == kTrimTimer) {
-            if (island && !opened && !peeking && !dragging && !(devWide && RenewDev())) gfx::GiveBack(); // a resting pill, only its bars move: idle pages go back; after the panel, a fresh device too. d2d's caches stay: cleared under live brushes, the media page's glows came back flat
+            if (island && !opened && !peeking && !alarmBanner && !dragging && !(devWide && RenewDev())) gfx::GiveBack(); // a resting pill, only its bars move: idle pages go back; after the panel, a fresh device too. d2d's caches stay: cleared under live brushes, the media page's glows came back flat
         } else if (wp == kReleaseTimer) {
-            if (!opened && !peeking && spring.value <= 0) FreeDev(); // free gpu after idle
-            else if (!opened && !peeking && !dragging && !(devWide && RenewDev())) TrimDev(); // the pill keeps drawing on a fresh device; if one can't be made, the old one just drops its caches
+            if (!opened && !peeking && !alarmBanner && spring.value <= 0) FreeDev(); // free gpu after idle
+            else if (!opened && !peeking && !alarmBanner && !dragging && !(devWide && RenewDev())) TrimDev(); // the pill keeps drawing on a fresh device; if one can't be made, the old one just drops its caches
         } else if (wp == kPeekTimer) {
             if (peeking) Close();
             if (model.notifyWatch.More()) PostMessageW(hwnd, WM_APP_NOTIFY, 0, 0); // next in line
         }
         return 0;
     case WM_LBUTTONDOWN: {
+        if (alarmBanner && !opened) { // ringing alarm banner buttons always work, even with keyOnly active
+            D2D1_POINT_2F p = ToDip(lp);
+            if (Inside(alarmSnoozeR, p) && model.SnoozeAlarm()) EndAlarmBanner();
+            else if (Inside(alarmDismissR, p) && model.DismissAlarm()) EndAlarmBanner();
+            return 0;
+        }
         if (!opened && model.keyOnly) return 0; // only the shortcut opens it: a click on the strip, the pill or a notification does nothing
         if ((island || peeking) && !opened) { // tap a pill: the full panel grows out of it
             if (island && Bubble() && Inside(BubbleBox(), ToDip(lp))) { // the bubble: straight to the tool that runs
@@ -964,11 +1028,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case kAdoptMsg: { // hovered the strip on another screen
         HMONITOR m = (HMONITOR)wp;
         if (model.keyOnly) return 0; // only the shortcut opens it: another screen's strip brings nothing either
-        if (island && !opened && !dragging && !peeking && !stage && m != mon) { // a resting pill here: after a moment's dwell it goes up and comes down there
+        if (island && !opened && !dragging && !peeking && !alarmBanner && !stage && m != mon) { // a resting pill here: after a moment's dwell it goes up and comes down there
             if (adoptTo != m) adoptTo = m, SetTimer(hwnd, kAdoptTimer, (UINT)cfg.hoverMs, nullptr);
             return 0;
         }
-        if (!opened && !dragging && !peeking && !followTo && spring.value <= 0.5f && m != mon) { // a pill already on its way over moves itself
+        if (!opened && !dragging && !peeking && !alarmBanner && !followTo && spring.value <= 0.5f && m != mon) { // a pill already on its way over moves itself
             mon = m;
             FreeDev(); // other screen, maybe other dpi
             Place();
@@ -987,7 +1051,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_APP_NOTIFY: { // a windows notification arrived and pills are on, ours or handed over by halobar
         sys::Toast toast;
-        if (peeking) return 0; // one is showing: the rest wait their turn
+        if (peeking || alarmBanner) return 0; // one is showing: the rest wait their turn
         if (opened || model.quiet || hidden) { // open panel: don't interrupt; do not disturb or a game: dropped, all of them, never shown stale later
             while (model.notifyWatch.Pop(toast)) {}
             return 0;
@@ -1072,16 +1136,17 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             Redraw();
             return 0;
         }
-        if (model.field != Model::kFieldNone) { // a to-do or a server being typed
+        if (model.field != Model::kFieldNone) { // a to-do, server, or alarm label being typed
             wchar_t ch = (wchar_t)wp;
+            size_t maxLen = model.field == Model::kFieldAlarmLabel ? AlarmStore::kMaxLabelLen : Model::kFieldMax;
             if (ch == 22) { // ctrl+v, the first line
                 for (wchar_t c : sys::ClipText()) {
-                    if (c == L'\n' || c == L'\n') break;
-                    if (c >= 32 && model.fieldEdit.size() < Model::kFieldMax) model.fieldEdit += c;
+                    if (c == L'\r' || c == L'\n') break;
+                    if (c >= 32 && model.fieldEdit.size() < maxLen) model.fieldEdit += c;
                 }
             } else if (ch == 8) {
                 if (!model.fieldEdit.empty()) model.fieldEdit.pop_back();
-            } else if (ch >= 32 && ch != 127 && model.fieldEdit.size() < Model::kFieldMax) {
+            } else if (ch >= 32 && ch != 127 && model.fieldEdit.size() < maxLen) {
                 model.fieldEdit += ch;
             }
             Redraw();
@@ -1328,7 +1393,7 @@ void Drawer::Frame() {
     if (!moving && !dragging) { // spring settled
         grow = false; // expansion finished, or retracted
         if (spring.target <= 0 && winH > kStrip) {
-            islandLook = hand = false; // fully retracted, back to the plain strip and arrow cursor
+            islandLook = alarmLook = hand = false; // fully retracted, back to the plain strip and arrow cursor
             pageT = 1; // a page slide cut short by closing only advances while the body draws: left behind, it kept the closed strip at full frame rate
             Resize(kStrip, false); // shrink window so it can't block clicks
             ui.Forget();
@@ -1414,8 +1479,9 @@ void Drawer::Frame() {
     if (h > 0.5f) {
         float shapeWide = Span();
         if (islandLook) shapeWide = IslandSpan();
+        else if (alarmLook) shapeWide = AlarmSpan();
         auto wideAt = [&](float at) { return IslandSpan() + (Span() - IslandSpan()) * anim::Clamp01((at - kIslandH) / (Depth() * 0.3f - kIslandH)); };
-        if (!islandLook && grow) shapeWide = wideAt(h); // pill widens into the panel
+        if (!islandLook && !alarmLook && grow) shapeWide = wideAt(h); // pill widens into the panel
         shapeXform = EdgeXform();
         ctx->SetTransform(shapeXform); // turned to the docked edge, centered in the window
         ComPtr<ID2D1Geometry> shape = Shape(h, shapeWide);
@@ -1435,11 +1501,12 @@ void Drawer::Frame() {
             anim::Spring ahead = spring; // where the spring will really be, not a straight line: that overshot the bounce's peak
             ahead.Step(dt * frames);
             float lead = (std::clamp)(ahead.value, 0.0f, Depth() + overshoot);
-            outline = lead > 0.5f ? BuildShape(lead, !islandLook && grow ? wideAt(lead) : shapeWide) : nullptr;
+            outline = lead > 0.5f ? BuildShape(lead, !islandLook && !alarmLook && grow ? wideAt(lead) : shapeWide) : nullptr;
         }
         if (ClearPill()) outline = nullptr; // nothing to frost
         ctx->SetTransform(Side() ? D2D1::Matrix3x2F::Identity() : shapeXform);
-        if (peeking) DrawPeek(h);
+        if (alarmBanner || alarmLook) DrawAlarmRing(h);
+        else if (peeking) DrawPeek(h);
         else if (islandLook) { // bars bounce only while it shows and music plays
             pillPass = pillCached ? 2 : 0;
             ambient = DrawPillNow(h, dt, now);
@@ -1497,7 +1564,7 @@ void Drawer::Frame() {
         trimKey = pillKey;
         SetTimer(hwnd, kTrimTimer, kTrimMs, nullptr);
     }
-    if (PlaceStale() && !opened && !dragging && !peeking && (spring.value <= 0.5f || island)) ApplyPlace(); // a pill that always stays would otherwise keep the old edge forever
+    if (PlaceStale() && !opened && !dragging && !peeking && !alarmBanner && (spring.value <= 0.5f || island)) ApplyPlace(); // a pill that always stays would otherwise keep the old edge forever
     if (model.deskEditAsk) model.deskEditAsk = false, PostMessageW(hwnd, kDeskEditMsg, 0, 0); // never inside a frame: it takes the panel away
     if (model.tourAsk) model.tourAsk = false, TourStart(); // asked for in settings: they close for it
     if (model.studioAsk) PostMessageW(hwnd, kDeskEditMsg, model.studioAsk, 0), model.studioAsk = Model::kStudioNone;

@@ -53,6 +53,9 @@ void DrawMedia(PageCtx& p);
 void DrawSys(PageCtx& p);
 void DrawNet(PageCtx& p);
 void DrawTools(PageCtx& p);
+void AlarmTab(PageCtx& p, const D2D1_RECT_F& r);
+bool AlarmPickerOpen(const Model& m, const D2D1_RECT_F& area);
+void DrawAlarmPickerOverlay(PageCtx& p);
 void DrawShelf(PageCtx& p); // files and notes dropped on the island
 void DrawWidgetsPage(PageCtx& p); // the board of widgets
 void DrawWidgetStudio(PageCtx& p); // arranging and adding to it, over the wallpaper; area: the screen. wantClose when it's done
