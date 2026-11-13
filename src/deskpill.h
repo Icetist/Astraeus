@@ -36,6 +36,7 @@ public:
     void Second(); // what it shows may have changed
     void Raise() { if (hwnd) SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); } // over what just went fullscreen
     void Refresh() { if (wantUp || Editing()) Poke(); } // the theme moved: it paints only when told
+    void OnDisplayChange(HMONITOR on = nullptr);
     void SetOverApp(bool v) { // it wears its own body over an app
         if (v == onApp) return;
         onApp = v;

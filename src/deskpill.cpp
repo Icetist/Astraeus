@@ -199,6 +199,16 @@ LRESULT DeskPill::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         Finish();
         return 0;
+    case WM_DPICHANGED:
+    case WM_DISPLAYCHANGE:
+        OnDisplayChange(screen);
+        return 0;
+    case WM_SETTINGCHANGE:
+        if (wp == SPI_SETWORKAREA) {
+            OnDisplayChange(screen);
+            return 0;
+        }
+        break;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -206,11 +216,16 @@ LRESULT DeskPill::Handle(UINT msg, WPARAM wp, LPARAM lp) {
 void DeskPill::Measure(HMONITOR on) {
     screen = on ? on : MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi = {sizeof(mi)};
-    if (!GetMonitorInfoW(screen, &mi)) return;
+    if (!GetMonitorInfoW(screen, &mi)) {
+        screen = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+        if (!GetMonitorInfoW(screen, &mi)) return;
+    }
+    RECT oldMon = monitor, oldWork = work;
+    float oldScale = scale;
     monitor = mi.rcMonitor;
     work = mi.rcWork;
     UINT dx = 96, dy = 96;
-    scale = SUCCEEDED(GetDpiForMonitor(screen, MDT_EFFECTIVE_DPI, &dx, &dy)) ? dx / 96.0f : 1.0f;
+    scale = SUCCEEDED(GetDpiForMonitor(screen, MDT_EFFECTIVE_DPI, &dx, &dy)) ? dx / 96.0f : (hwnd ? GetDpiForWindow(hwnd) / 96.0f : 1.0f);
     MW = (monitor.right - monitor.left) / scale;
     MH = (monitor.bottom - monitor.top) / scale;
     if (!editing) { // the saved values; while editing the working copy is what counts
@@ -221,6 +236,37 @@ void DeskPill::Measure(HMONITOR on) {
         spec.itemsOther = model.deskItemsApps, spec.split = model.deskSplit != 0, itemsCtx = 0;
         spec.mid = model.deskMid, spec.midOther = model.deskSplit ? model.deskMidApps : model.deskMid;
         DropAppItems();
+    }
+    bool hadMonitor = oldMon.right > oldMon.left && oldMon.bottom > oldMon.top;
+    bool changed = hadMonitor && ((oldScale > 0 && oldScale != scale) || !EqualRect(&oldMon, &monitor) || !EqualRect(&oldWork, &work));
+    if (changed && wantUp && !editing) {
+        FreeDev();
+        rest = Goal();
+        FitWindow();
+        SampleInk();
+        inkDark = inkGoal;
+        Poke();
+    }
+}
+
+void DeskPill::OnDisplayChange(HMONITOR on) {
+    HMONITOR tgt = on ? on : screen;
+    if (Editing()) {
+        Measure(tgt);
+        FreeDev();
+        FitWindow();
+        Poke();
+        return;
+    }
+    shapeShift = false;
+    Measure(tgt);
+    FreeDev();
+    rest = Goal();
+    if (wantUp) {
+        FitWindow();
+        SampleInk();
+        inkDark = inkGoal;
+        Poke();
     }
 }
 
