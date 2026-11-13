@@ -953,10 +953,15 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         model.screenList.clear(); // settings re-reads the monitors next frame
         Place();
         BuildStrips(); // screens may have come or gone
+        if (desk) desk->OnDisplayChange(mon);
         Log(msg == WM_DPICHANGED ? L"dpi changed" : L"displays changed");
         return 0;
     case WM_SETTINGCHANGE:
-        if (wp == SPI_SETWORKAREA) Place(), Redraw(); // a taskbar came, went or changed size: the sidebar fits the new room
+        if (wp == SPI_SETWORKAREA) {
+            Place();
+            if (desk) desk->OnDisplayChange(mon);
+            Redraw(); // a taskbar came, went or changed size: the sidebar fits the new room
+        }
         model.ReadAccess(); // high contrast or the text size may be what changed
         if (model.HighContrast() != theme::Contrast() || model.ZoomPct() != zoomNow) Redraw();
         if (wp == SPI_SETDESKWALLPAPER) {
@@ -1306,7 +1311,12 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_WTSSESSION_CHANGE:
         if (wp == WTS_SESSION_LOCK) locked = true;
-        else if (wp == WTS_SESSION_UNLOCK) locked = false, Redraw(); // the bars pick up where the music is
+        else if (wp == WTS_SESSION_UNLOCK) {
+            locked = false;
+            Place();
+            if (desk) desk->OnDisplayChange(mon);
+            Redraw(); // the bars pick up where the music is
+        }
         return 0;
     case WM_POWERBROADCAST:
         if (wp == PBT_POWERSETTINGCHANGE) {
@@ -1314,7 +1324,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             if (s) OnPower(*s); // plugged in or out, battery percent; it ignores the rest
             if (s && s->PowerSetting == kDisplayState && s->DataLength >= sizeof(DWORD)) {
                 screenOff = *reinterpret_cast<const DWORD*>(s->Data) == 0; // 0 off, 1 on, 2 dimmed: dimmed still shows
-                if (!screenOff) Redraw();
+                if (!screenOff) {
+                    Place();
+                    if (desk) desk->OnDisplayChange(mon);
+                    Redraw();
+                }
             }
         }
         break; // the rest are windows' own business
