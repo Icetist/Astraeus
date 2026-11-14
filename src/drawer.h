@@ -94,15 +94,37 @@ private:
 
     struct DropSink; // the island as an ole drop target, feeding the shelf
     DropSink* drop = nullptr;
+    DropSink* dropPill = nullptr; // the same on the desktop's long pill: a carry over it brings the shelf down
+    HWND dropPillWnd = nullptr;
+    void ShelfOnPill(); // once the long pill has its window
+    bool dropHold = false; // a carry opened the shelf from the long pill and is still on its way: the panel waits for it
+    bool HoldForCarry(); // that wait, for as long as the button is held
     bool dragSelf = false; // our own drag out is under way: dropping it back on the panel does nothing
     void StartShelf(); // registers the drop target, ole is up on this thread
     void StopShelf();
     bool DropEnter(); // something droppable came over the island: the panel opens on the shelf
-    void DropLeave();
+    void DropLeave(bool hold = false);
     void DropDone(IDataObject* data);
     void ShelfOut(); // the modal drag of one shelf item to wherever the user lets go
     void ShelfPaste(); // a card onto the clipboard, then ctrl+v into the app that was in front
     void ShelfKey(WPARAM ch); // a character for the shelf's search or note field
+    void CloseOrTray(); // closing by itself: from the shelf page it only shrinks to the tray
+    void ShelfTray(); // the mouse left the shelf page: the panel shrinks to a short tray that still takes a drop, instead of going
+    bool TrayStays() { return TrayLeft() > 0; }
+    ULONGLONG TrayLeft(); // the tray's time still to run, in ms: stopped while a button is held or the mouse is on it, running again after
+    ULONGLONG trayLeft = 0; // as of the last look
+    void DrawTray(float h);
+    void ShelfPasteIn(); // ctrl+v over the shelf: what's on the clipboard becomes a card
+    void SyncShelfKeys(bool allow = true); // takes ctrl+v while the mouse rests on the shelf page or its tray, hands it straight back after
+    bool peekShelf = false; // the banner showing is the shelf's tray
+    bool shelfKeys = false; // ctrl+v is ours
+    ULONGLONG trayUntil = 0; // the tray goes after this tick
+    std::wstring trayNote; // a short word on the tray after a paste
+    ULONGLONG trayNoteAt = 0; // its tick
+    static constexpr int kShelfPasteKey = 0x52A5; // hotkey id, apart from the rail's and the dashboards'
+    static constexpr UINT kTrayLingerMs = 5000, kTrayAppMs = 2000, kTrayGraceMs = 2500, kTrayPollMs = 250; // the tray's time with nothing carried, the same over an app, after a carry, and how often it looks
+    bool trayApp = false; // an app lies under it: it only says it's still there, then gets out of the way; the edge takes a drop as ever
+    static constexpr UINT kTrayNoteMs = 1600;
     HWND pasteTo = nullptr; // where that ctrl+v goes, checked again when it's sent
     HPOWERNOTIFY acNote = nullptr, batNote = nullptr; // plugged in or out, battery percent: laptops only
     int acNow = -1; // -1 until windows' first notice, which only says how things are

@@ -32,6 +32,7 @@ public:
     void Studio(HMONITOR on); // the same stage, the wallpaper filling the screen, for arranging the widgets
     bool Editing() const { return editing || leaving; }
     bool MouseOn() const; // the cursor's on its window
+    HWND Window() const { return hwnd; } // for the shelf: a carry over the pill opens it
     RECT Spot(HMONITOR on); // where it sits, in screen pixels
     void Second(); // what it shows may have changed
     void Raise() { if (hwnd) SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); } // over what just went fullscreen

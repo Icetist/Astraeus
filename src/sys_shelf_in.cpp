@@ -149,6 +149,15 @@ bool Shelf::Add(IDataObject* d) {
     return Land(h);
 }
 
+bool Shelf::AddClip() { // pasted on purpose: the shelf's own copy or a private one lands too
+    ComPtr<IDataObject> d;
+    if (FAILED(OleGetClipboard(&d)) || !d || !Accepts(d.Get())) return false;
+    Haul h;
+    Read(d.Get(), h);
+    d.Reset(); // the clipboard is let go before anything is written
+    return Land(h);
+}
+
 void Shelf::OnClip() {
     clipTries = 0;
     if (clipWnd) SetTimer(clipWnd, shelfio::kClipTimer, kClipDelayMs, nullptr); // a burst of notices is one read

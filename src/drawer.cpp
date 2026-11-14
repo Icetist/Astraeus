@@ -125,6 +125,7 @@ bool Drawer::Create(HINSTANCE instance) {
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     desk = std::make_unique<DeskPill>(model);
     if (desk->Create()) {
+        ShelfOnPill();
         desk->onOpen = [this] { Open(); };
         desk->onEdit = [this] { DeskEdit(); };
         desk->onDone = [this] {
@@ -309,7 +310,7 @@ void Drawer::Open() {
     KillTimer(hwnd, kReleaseTimer); // keep gpu alive
     KillTimer(hwnd, kCloseTimer);
     KillTimer(hwnd, kPeekTimer);
-    peeking = false; // peek upgrades to full open
+    peeking = peekShelf = false; // peek upgrades to full open
     alarmBanner = false;
     alarmHot = 0;
     for (sys::Toast t; model.notifyWatch.Pop(t);) {} // the rest of a notification queue would only show stale once it closes
@@ -401,11 +402,15 @@ void Drawer::Close() {
     if (cfg.gpuIdleSec > 0) SetTimer(hwnd, kReleaseTimer, (UINT)cfg.gpuIdleSec * 1000 + 1000, nullptr); // freed, or trimmed if the pill stays
     KillTimer(hwnd, kCloseTimer);
     KillTimer(hwnd, kPeekTimer);
-    peeking = false;
+    peeking = peekShelf = false;
     alarmBanner = false;
     alarmHot = 0;
     alarmSnoozeR = alarmDismissR = {};
     opened = false;
+    SyncShelfKeys(false); // ctrl+v goes back at once
+    dropHold = false;
+    model.binAsk.clear(); // the bin's question goes unanswered: nothing is recycled
+    model.binAskCard = 0;
     island = false; // the island retracts with the same spring, its shape stays until it's gone
     model.hexFocus = model.cityFocus = model.faceSearch = false;
     ++model.pageVisit;
@@ -547,6 +552,7 @@ void Drawer::Peek(const std::wstring& title, const std::wstring& detail, int ico
     if (hidden || !EnsureDev()) return;
     island = islandLook = grow = false; // a notice replaces the island
     peeking = true;
+    peekShelf = false; // and the shelf's tray
     float reach = Side() ? kPeekSide : kPeekH; // on a side edge the banner needs room for its text
     Resize(reach + overshoot, true);
     spring.target = reach; // drop only a short banner
@@ -564,7 +570,7 @@ void Drawer::RingAlarm() {
         return;
     }
     if (!EnsureDev()) return;
-    island = islandLook = grow = peeking = false;
+    island = islandLook = grow = peeking = peekShelf = false;
     alarmBanner = alarmLook = true;
     alarmHot = 0;
     alarmSnoozeR = alarmDismissR = {};
@@ -724,6 +730,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_MOUSEMOVE: {
         D2D1_POINT_2F p = ToDip(lp);
         TrackLeave();
+        SyncShelfKeys();
         if (dragging) {
             MoveDrag(DepthOf(p));
             return 0;
@@ -735,6 +742,11 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (peeking) { // a notification pill: a click opens the panel, hovering only lights it
             TrackLeave();
+            if (peekShelf && cfg.hoverOpen && !armed) { // the shelf's tray: resting on it brings the shelf back
+                armed = true;
+                islandNext = false;
+                SetTimer(hwnd, kHoverTimer, (UINT)cfg.hoverMs, nullptr);
+            }
             return 0;
         }
         if (!opened && !islandLook && spring.value < 1) { // on the closed strip; the island handles its own hover
@@ -768,6 +780,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         alarmHot = 0;
         input.mouse = {-1e6f, -1e6f}; // park offscreen to clear hover
         SyncRailKeys(false); // off the panel: the arrows go back at once, not on the next frame
+        SyncShelfKeys(false); // and ctrl+v
         if ((opened || island) && !dragging && GetCapture() != hwnd && !(opened && Pinned())) { // pinned: it stays open
             bool pill = island && !opened;
             if (!(pill && Stays())) // always: the pill stays put
@@ -851,16 +864,27 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             armed = false;
             if (dragging || alarmBanner || GetCapture() == hwnd) {} // a press on the strip or active alarm holds priority
             else if (!MouseIn()) ReleaseLater();
+            else if (peeking && peekShelf) pageSet = true, Open(); // the tray: back onto the shelf, not the opening page
             else if (islandNext) ShowIsland(); // an app below: the pill first, a tap opens the panel
             else Open();
         } else if (wp == kCloseTimer) {
-            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && Stays()) && !(opened && Pinned()) && !(alarmBanner && !opened) && tourStep < 0) Close(); // the tour keeps it open until it's done
+            if (HoldForCarry()) { // carried here from the long pill: it stays down until the button lets go
+                SetTimer(hwnd, kCloseTimer, (UINT)cfg.closeMs, nullptr);
+                return 0;
+            }
+            if (!dragging && GetCapture() != hwnd && !MouseIn() && !(island && !opened && Stays()) && !(opened && Pinned()) && !(alarmBanner && !opened) && tourStep < 0 &&
+                !(opened && page == kShelfPage && model.BinAsking())) CloseOrTray(); // the tour keeps it open until it's done, the bin's question until it's answered
         } else if (wp == kTrimTimer) {
             if (island && !opened && !peeking && !alarmBanner && !dragging && !(devWide && RenewDev())) gfx::GiveBack(); // a resting pill, only its bars move: idle pages go back; after the panel, a fresh device too. d2d's caches stay: cleared under live brushes, the media page's glows came back flat
         } else if (wp == kReleaseTimer) {
             if (!opened && !peeking && !alarmBanner && spring.value <= 0) FreeDev(); // free gpu after idle
             else if (!opened && !peeking && !alarmBanner && !dragging && !(devWide && RenewDev())) TrimDev(); // the pill keeps drawing on a fresh device; if one can't be made, the old one just drops its caches
         } else if (wp == kPeekTimer) {
+            if (peeking && peekShelf && TrayStays()) { // the shelf's tray: still wanted, it looks again shortly
+                SetTimer(hwnd, kPeekTimer, kTrayPollMs, nullptr);
+                if (!trayNote.empty()) Redraw(); // its word after a paste fades back
+                return 0;
+            }
             if (peeking) Close();
             if (model.notifyWatch.More()) PostMessageW(hwnd, WM_APP_NOTIFY, 0, 0); // next in line
         }
@@ -872,7 +896,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             else if (Inside(alarmDismissR, p) && model.DismissAlarm()) EndAlarmBanner();
             return 0;
         }
-        if (!opened && model.keyOnly) return 0; // only the shortcut opens it: a click on the strip, the pill or a notification does nothing
+        if (!opened && model.keyOnly && !(peeking && peekShelf)) return 0; // only the shortcut opens it: a click on the strip, the pill or a notification does nothing; the shelf's tray was open a moment ago
         if ((island || peeking) && !opened) { // tap a pill: the full panel grows out of it
             if (island && Bubble() && Inside(BubbleBox(), ToDip(lp))) { // the bubble: straight to the tool that runs
                 int act = model.Activity();
@@ -880,6 +904,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 if (page != Model::kPgTools && model.HasPage(Model::kPgTools)) prevPage = page, page = Model::kPgTools, pageT = 1;
                 pageSet = true;
             }
+            if (peeking && peekShelf) pageSet = true; // the tray: back onto the shelf
             Open();
             return 0;
         }
@@ -1203,7 +1228,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_ACTIVATE:
         if (LOWORD(wp) == WA_INACTIVE && keys && opened && !model.Typing() && !Entry::Get().focus) { // clicked away from a panel opened by the keyboard: it goes too
             keys = false;
-            if (!Pinned()) Close(); // pinned: only the keyboard goes back
+            if (!Pinned()) CloseOrTray(); // pinned: only the keyboard goes back; the shelf keeps its tray
         }
         return 0;
     case WM_SYSKEYDOWN: // alt held: only a fullscreen key being picked in settings wants it
@@ -1219,6 +1244,10 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         if (keys && !model.Typing() && !Entry::Get().focus) { // a panel opened from the shortcut: move with the keys
+            if (wp == 'V' && GetKeyState(VK_CONTROL) < 0 && opened && page == kShelfPage) { // ctrl+v on the shelf: the clipboard becomes a card
+                ShelfPasteIn();
+                return 0;
+            }
             if (KeyNav(wp, lp)) {
                 Redraw();
                 return 0;
@@ -1288,6 +1317,10 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         if ((int)wp == kBoardFocusKey) {
             if (model.a11yKeys) BoardFocus();
+            return 0;
+        }
+        if ((int)wp == kShelfPasteKey) { // ctrl+v with the mouse on the shelf or its tray
+            ShelfPasteIn();
             return 0;
         }
         if ((int)wp != kRailKeyPrev && (int)wp != kRailKeyNext) break;
@@ -1520,6 +1553,14 @@ void Drawer::Frame() {
         if (ClearPill()) outline = nullptr; // nothing to frost
         ctx->SetTransform(Side() ? D2D1::Matrix3x2F::Identity() : shapeXform);
         if (alarmBanner || alarmLook) DrawAlarmRing(h);
+        else if (peeking && peekShelf) { // the shelf's tray: the page fades away under its words while the panel is still on its way up
+            DrawTray(h);
+            ambient = !trayApp; // its ring runs down: calm frames, as for anything that only drifts
+            if (h > (Side() ? kPeekSide : kPeekH) + 2) {
+                DrawBody(h, dt, now);
+                uiBusy = ui.Busy();
+            }
+        }
         else if (peeking) DrawPeek(h);
         else if (islandLook) { // bars bounce only while it shows and music plays
             pillPass = pillCached ? 2 : 0;
@@ -1539,6 +1580,7 @@ void Drawer::Frame() {
     input.pressed = input.released = input.rclick = false;
     input.wheel = 0;
     SyncRailKeys(railHot);
+    SyncShelfKeys();
     if (hr == D2DERR_RECREATE_TARGET) { // device lost, rebuild next frame
         FreeDev();
         needsFrame = true;

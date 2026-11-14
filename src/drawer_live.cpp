@@ -149,7 +149,8 @@ void Drawer::RetryHud() { // once a second while the hud is on: speakers that we
 
 void Drawer::ShowHud(int icon, float level, const wchar_t* title) {
     if (hidden || overFull || stage || dragging) return; // never over a drag in progress; over a fullscreen app, only the pill
-    bool showing = peeking && peekLevel >= 0;
+    bool showing = peeking && peekLevel >= 0 && !peekShelf;
+    peekShelf = false; // the hud takes the shelf tray's place
     peekIcon = icon;
     peekTitle = title;
     peekDetail.clear();

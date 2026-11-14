@@ -288,7 +288,8 @@ void Drawer::SyncHide() {
     if (stayUp && !overFull) { // only as it starts: the app just came up over us
         SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         if (desk) desk->Raise();
-        if (opened) Close(); // the pill, over a fullscreen app: the panel comes back on a click, if that's allowed
+        if (opened && model.pillFullOpen) CloseOrTray(); // the pill, over a fullscreen app: the panel comes back on a click, if that's allowed; the shelf keeps its tray
+        else if (opened) Close();
     }
     overFull = stayUp;
     bool ringing = model.alarms.Ringing() != nullptr;
@@ -345,7 +346,7 @@ void Drawer::Retract() { // the open panel and every hover state gone at once, n
         KillTimer(hwnd, kHoverTimer);
         KillTimer(hwnd, kCloseTimer);
         KillTimer(hwnd, kPeekTimer);
-        armed = peeking = alarmBanner = alarmLook = dragging = island = islandLook = grow = false;
+        armed = peeking = peekShelf = alarmBanner = alarmLook = dragging = island = islandLook = grow = false;
         alarmHot = 0;
         alarmSnoozeR = alarmDismissR = {};
         if (GetCapture() == hwnd) ReleaseCapture(); // mid-drag when the game took over

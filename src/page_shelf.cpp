@@ -14,6 +14,7 @@ using namespace shelfui;
 namespace {
 
 bool RecycleCard(Model& m, uint64_t id);
+void RecycleList(std::wstring list);
 
 constexpr float kRowH = 30; // the search field and the clear button
 constexpr float kChipH = 26;
@@ -196,8 +197,12 @@ void Grid(PageCtx& p, const D2D1_RECT_F& view, bool live) {
     sheet::Fades(c, t, view, off, content);
     if (!alive || v.carrySlot >= 0) return; // one went: the rest moves up next frame; a file carried out of the open stack is the preview's
     const float* z = m.binZone;
-    if (v.carry && ui.In().released && z[2] > z[0] && Inside({z[0], z[1], z[2], z[3]}, ui.In().mouse)) { // let go on the bin: its files are recycled, the card goes
-        Toast(v, ui.Now(), RecycleCard(m, v.carry) ? L"Sent to the Recycle Bin" : L"Taken off the shelf");
+    if (v.carry && ui.In().released && z[2] > z[0] && Inside({z[0], z[1], z[2], z[3]}, ui.In().mouse)) { // let go on the bin: a card with files of the user's asks first, any other just goes
+        const sys::ShelfItem* it = m.shelf.Find(v.carry);
+        bool real = false;
+        for (size_t k = 0; it && k < it->files.size(); ++k) real = real || (!it->files[k].owned && !it->files[k].path.empty());
+        if (real) m.binAskCard = v.carry, m.binAsk.clear();
+        else if (it) RecycleCard(m, v.carry), Toast(v, ui.Now(), L"Taken off the shelf");
         v.carry = 0;
         return;
     }
@@ -236,16 +241,61 @@ bool RecycleCard(Model& m, uint64_t id) { // a card's own files to the recycle b
         if (!f.owned && !f.path.empty()) list += f.path + L'\0'; // the shelf's own copies of pasted images aren't the user's files: they just go with the card
     m.shelf.Remove(id);
     if (list.empty()) return false;
-    std::thread([list = list + L'\0'] { // windows' own engine: its prompts, undo from the bin, never gone for good
+    RecycleList(std::move(list));
+    return true;
+}
+
+void RecycleList(std::wstring list) { // paths, each ended by a null; windows' own engine: undo from the bin, never gone for good
+    std::thread([list = std::move(list) + L'\0'] {
         HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
         SHFILEOPSTRUCTW op = {};
         op.wFunc = FO_DELETE;
         op.pFrom = list.c_str();
-        op.fFlags = FOF_ALLOWUNDO | FOF_WANTNUKEWARNING;
+        op.fFlags = FOF_ALLOWUNDO | FOF_WANTNUKEWARNING | FOF_NOCONFIRMATION; // the page asked already; too big for the bin, windows still asks
         SHFileOperationW(&op);
         if (SUCCEEDED(co)) CoUninitialize();
     }).detach();
-    return true;
+}
+
+void BinAsk(PageCtx& p, const D2D1_RECT_F& grid) { // something was let go over the bin: nothing is recycled before a yes
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    View& v = V();
+    const sys::ShelfItem* card = m.binAskCard ? m.shelf.Find(m.binAskCard) : nullptr;
+    if (m.binAskCard && !card) m.binAskCard = 0; // the card went meanwhile
+    float up = ui.Smooth(Ui::Id("sh.ask"), m.BinAsking() ? 1.0f : 0, 16);
+    if (!m.BinAsking()) return;
+    size_t n = m.binAsk.size();
+    if (card) {
+        n = 0;
+        for (const auto& f : card->files) n += !f.owned && !f.path.empty();
+    }
+    std::wstring ask = n == 1 ? L"Send this item to the Recycle Bin?" : L"Send " + std::to_wstring(n) + L" items to the Recycle Bin?";
+    constexpr float kH = 44, kBtnW = 74, kBtnH = 28, kIn = 14;
+    float w = (std::min)(Width(grid) - 2 * kIn, 44 + c.Measure(ask, Weight::Medium, 12.5f) + 16 + 2 * kBtnW + 6 + 10);
+    D2D1_RECT_F r = Rect(grid.right - kIn - w, grid.bottom - kIn - kH + 8 * (1 - up), w, kH);
+    c.Fill(Inset(r, -2, -2), kH / 2 + 2, Color{0, 0, 0, 0.16f * up});
+    c.Fill(r, kH / 2, t.cardHi.Alpha(up));
+    c.Stroke(r, kH / 2, t.accent.Alpha(0.6f * up), 1);
+    c.Icon(glyph::Delete, {r.left + 22, (r.top + r.bottom) / 2}, 19, t.accentHi.Alpha(up));
+    D2D1_RECT_F yes = Rect(r.right - 8 - kBtnW, r.top + (kH - kBtnH) / 2, kBtnW, kBtnH), no = Rect(yes.left - 6 - kBtnW, yes.top, kBtnW, kBtnH);
+    c.Text(ask, {r.left + 42, r.top, no.left - 8, r.bottom}, Weight::Medium, 12.5f, t.text.Alpha(up));
+    bool go = sheet::Act(ui, t, Ui::Id("sh.ask.yes"), yes, L"Recycle", true, false, true);
+    bool stop = sheet::Act(ui, t, Ui::Id("sh.ask.no"), no, L"Cancel", false, false, true);
+    if (go) {
+        if (card) {
+            RecycleCard(m, m.binAskCard);
+        } else {
+            std::wstring list;
+            for (const auto& f : m.binAsk) list += f + L'\0';
+            RecycleList(std::move(list));
+        }
+        Toast(v, ui.Now(), n == 1 ? L"Sent to the Recycle Bin" : std::to_wstring(n) + L" items sent to the Recycle Bin");
+    }
+    if (go || stop) m.binAsk.clear(), m.binAskCard = 0;
+    ui.KeepAlive();
 }
 
 void Hot(PageCtx& p, const D2D1_RECT_F& grid) { // something is being carried over from outside: the shelf lights up to take it
@@ -257,9 +307,18 @@ void Hot(PageCtx& p, const D2D1_RECT_F& grid) { // something is being carried ov
     bool show = m.shelfHot || card;
     float hot = ui.Smooth(Ui::Id("sh.hot"), show ? 1.0f : 0, 14);
     if (!show) m.binZone[0] = m.binZone[1] = m.binZone[2] = m.binZone[3] = 0, m.binOver = false; // nothing carried: no bin to land in
-    if (hot <= 0.01f) return;
-    constexpr float kBinW = 170, kBinH = 58, kBinIn = 14; // files carried here go to the recycle bin instead
-    D2D1_RECT_F zone = Rect(grid.right - kBinIn - kBinW, grid.bottom - kBinIn - kBinH, kBinW, kBinH);
+    anim::Spring& open = V().bin;
+    if (hot <= 0.01f) {
+        open.value = open.vel = open.target = 0; // out of sight: closed for next time
+        return;
+    }
+    constexpr float kBinD = 46, kBinW = 184, kBinIn = 14; // what's carried here goes to the recycle bin instead: a small round button that opens sideways under it
+    open.target = m.binOver && show ? kBinW - kBinD : 0;
+    open.damp = open.target > 0 ? 0.62f : 0.92f; // as the panel does: out with its little bounce, back without one
+    if (open.Step(ui.Dt())) ui.Wake();
+    float over = anim::Clamp01(open.value / (kBinW - kBinD));
+    float wide = kBinD + (std::max)(0.0f, open.value);
+    D2D1_RECT_F zone = Rect(grid.right - kBinIn - wide, grid.bottom - kBinIn - kBinD, wide, kBinD);
     m.binZone[0] = zone.left, m.binZone[1] = zone.top, m.binZone[2] = zone.right, m.binZone[3] = zone.bottom;
     if (card) m.binOver = Inside(zone, ui.In().mouse);
     bool bin = m.binOver;
@@ -269,13 +328,16 @@ void Hot(PageCtx& p, const D2D1_RECT_F& grid) { // something is being carried ov
         c.PopClip();
         c.Stroke(Inset(grid, 1, 1), 22, t.accent.Alpha((bin ? 0.3f : 0.8f) * hot), 2);
     }
-    float over = ui.Smooth(Ui::Id("sh.bin"), bin ? 1.0f : 0, 18);
-    const Color red = {0.93f, 0.33f, 0.36f, 1};
-    c.Fill(zone, kBinH / 2, t.cardHi.Mix(red.Alpha(0.85f), over).Alpha(hot));
-    c.Stroke(zone, kBinH / 2, red.Alpha((0.45f + 0.55f * over) * hot), 1.5f);
-    c.Icon(glyph::Delete, {zone.left + 30, (zone.top + zone.bottom) / 2}, 22 + 4 * over, (over > 0.5f ? Color{1, 1, 1, 1} : red).Alpha(hot), over > 0.5f);
-    c.Text(bin ? L"Let go to recycle" : L"Recycle Bin", {zone.left + 50, zone.top, zone.right - 10, zone.bottom}, Weight::Medium, 12.5f,
-           (over > 0.5f ? Color{1, 1, 1, 1} : t.text).Alpha(hot));
+    float words = anim::Clamp01((over - 0.6f) / 0.4f); // once it has opened: the words
+    c.Fill(Inset(zone, -2, -2), kBinD / 2 + 2, Color{0, 0, 0, 0.14f * hot});
+    c.Fill(zone, kBinD / 2, t.cardHi.Mix(t.accent, over).Alpha(hot));
+    c.Stroke(zone, kBinD / 2, t.hairTop.Mix(t.accentHi, over).Alpha(hot), 1);
+    c.Icon(glyph::Delete, {zone.left + kBinD / 2, (zone.top + zone.bottom) / 2}, 20, t.textDim.Mix(t.onAccent, over).Alpha(hot), over > 0.5f);
+    if (words > 0.01f) {
+        c.PushClip(zone);
+        c.Text(L"Let go to recycle", {zone.left + kBinD - 2, zone.top, zone.right - 12, zone.bottom}, Weight::Medium, 12.5f, t.onAccent.Alpha(hot * words));
+        c.PopClip();
+    }
 }
 
 void ToastPill(PageCtx& p) {
@@ -286,7 +348,7 @@ void ToastPill(PageCtx& p) {
     Canvas& c = ui.C();
     const Theme& t = p.shell;
     float a = anim::Clamp01((float)(kToastSec - age) / 0.3f) * anim::Clamp01((float)age / 0.12f); // in quickly, out softly
-    float w = c.Measure(v.toast, Weight::Medium, 12) + 40;
+    float w = c.Measure(v.toast, Weight::Medium, 12) + 54; // a little to spare: the last letter was cut
     D2D1_RECT_F r = Rect((p.area.left + p.area.right - w) / 2, p.area.bottom - 40, w, 30);
     c.Fill(r, 15, t.accent.Alpha(a));
     c.Icon(glyph::Check, {r.left + 18, (r.top + r.bottom) / 2}, 15, t.onAccent.Alpha(a), true);
@@ -327,7 +389,7 @@ void DrawShelf(PageCtx& p) {
     if (v.preview && !m.shelf.Find(v.preview)) v.preview = 0;
     if (v.menu && !m.shelf.Find(v.menu)) v.menu = 0;
     bool noting = m.shelfField == Model::kShelfNote;
-    bool live = !v.preview && !v.menu && !v.clearMenu && !noting; // an overlay up: the grid under it is still
+    bool live = !v.preview && !v.menu && !v.clearMenu && !noting && !m.BinAsking(); // an overlay up: the grid under it is still
     const auto& items = m.shelf.Items();
 
     // the head: search, filters, clear. one row on a wide panel, two in the sidebar
@@ -352,12 +414,17 @@ void DrawShelf(PageCtx& p) {
         if (!m.shelfHot) c.Stroke(Inset(grid, 1, 1), 22, t.hairTop, 1);
         sheet::Empty(c, t, grid, m.shelfHot ? glyph::Drop : glyph::Shelf, m.shelfHot ? L"Let go to keep it here" : L"Drop files, links or text here",
                      m.shelfCapture ? L"Everything you copy lands here too" : L"Onto the top of the screen, anytime");
+        if (!m.shelfHot) { // and the other way in, one line further down
+            float cy = (grid.top + grid.bottom) / 2 - 10;
+            c.Text(L"Or press Ctrl+V while the mouse is over the shelf", {grid.left, cy + 42, grid.right, cy + 60}, Weight::Light, 12, t.textLow, Align::Center);
+        }
     } else if (v.pinned.empty() && v.recent.empty()) {
         sheet::Empty(c, t, grid, kSearchGlyph, L"Nothing matches", m.shelfQuery.empty() ? L"Nothing of this kind yet" : L"Try another word, or All");
     } else {
         Grid(p, grid, live);
     }
     Hot(p, grid); // over the cards: the bin must stay in sight
+    BinAsk(p, grid);
     if (v.preview) Preview(p, a, !v.menu && !v.clearMenu && !noting);
     Ghost(p); // over the open card too: a file carried out of it
     if (v.menu || v.clearMenu) Menu(p, a);
