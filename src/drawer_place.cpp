@@ -319,7 +319,7 @@ HMONITOR Drawer::Refuge() const { // every screen mode: a screen with astraeus o
     HMONITOR main = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY), best = nullptr;
     for (HWND s : strips) {
         HMONITOR m = MonitorFromWindow(s, MONITOR_DEFAULTTONULL);
-        if (!m || m == mon || FullOn(m) || (fullApp && m == main)) continue;
+        if (!m || m == mon || Hides(m)) continue; // a game's or a dashboard's: hopping there would only hide again and hop on
         if (m == main) return m;
         if (!best) best = m;
     }
@@ -374,6 +374,11 @@ bool Drawer::Overlay(HWND w) {
     if ((ex & WS_EX_LAYERED) && (ex & WS_EX_TRANSPARENT)) return true; // a click-through layer the size of the screen (geforce, discord, steam)
     BOOL cloaked = FALSE;
     return SUCCEEDED(DwmGetWindowAttribute(w, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked; // there but never drawn: a suspended app, another desktop
+}
+
+bool Drawer::Hides(HMONITOR m) const { // SyncHide's own verdict, asked about a screen before going there
+    bool game = cfg.hideFull && !model.pillFull && (FullOn(m) || (fullApp && m == MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY)));
+    return game || (BoardOn(m) && !stage);
 }
 
 bool Drawer::FullOn(HMONITOR m) const { // the window in front fills that whole screen: a game, a video, a presentation

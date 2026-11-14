@@ -178,7 +178,7 @@ void Drawer::SampleBehind() {
 }
 
 void Drawer::SampleInk() {
-    if (!Clear() || hidden || fullApp || overFull || stage || Unseen()) return; // staying up over a game: no screen reads under it
+    if (!Clear() || hidden || FullHere() || overFull || stage || Unseen()) return; // staying up over a game: no screen reads under it
     constexpr float kToBlack = 0.52f, kToWhite = 0.42f; // apart, so a mid gray page doesn't flip it back and forth
     RECT f = Footprint();
     LONG half = (LONG)(IslandSpan() * scale / 2), deep = (LONG)(kIslandH * scale), band = (LONG)(kShadeBand * scale + 0.5f), gap = (LONG)(kShadeGap * scale + 0.5f);
@@ -192,7 +192,7 @@ void Drawer::SampleInk() {
 }
 
 void Drawer::SampleShade() { // a page can scroll from dark to white without anything moving; a screen read is costly, so only every half minute
-    if (!model.Glassy() || hidden || fullApp || overFull || stage || Unseen() || (!opened && !island)) return; // never while nothing of it shows
+    if (!model.Glassy() || hidden || FullHere() || overFull || stage || Unseen() || (!opened && !island)) return; // never while nothing of it shows
     RECT f = Footprint();
     LONG band = (LONG)(kShadeBand * scale + 0.5f), gap = (LONG)(kShadeGap * scale + 0.5f);
     RECT r = f; // open: a thin band just past the panel, in its middle half, never under it
@@ -336,7 +336,7 @@ void Drawer::Greet() {
 
 void Drawer::OnGreetTimer() {
     if (!greeting) { // first: drop the home page down
-        if (opened || stage || fullApp) return; // the user got there first, or a game has the screen
+        if (opened || stage || FullHere()) return; // the user got there first, or a game has the screen
         if (hidden || !EnsureDev()) {
             if (++greetTries < kGreetTries) SetTimer(hwnd, kGreetTimer, kGreetDelayMs / 3, nullptr);
             return;
@@ -375,7 +375,7 @@ void Drawer::KeyOpen() {
         POINT pt;
         GetCursorPos(&pt);
         HMONITOR m = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-        if (m != mon && !dragging && spring.value <= 0.5f) {
+        if (m != mon && !Hides(m) && !dragging && spring.value <= 0.5f) { // the mouse on a game's screen: it opens where it is
             mon = m;
             FreeDev();
             Place();
@@ -782,7 +782,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             POINT pt;
             GetCursorPos(&pt);
             HMONITOR m = MonitorFromPoint(pt, MONITOR_DEFAULTTONULL);
-            if (opened && !dragging && m && m != mon) {
+            if (opened && !dragging && m && m != mon && !Hides(m)) { // never onto a screen a game has: it would hop straight back, close, and follow again, up and down for as long as the mouse stayed there
                 followTo = m;
                 Close(); // up here, then down there once it's out of sight
             } else if (opened) {
@@ -813,7 +813,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 RECT r;
                 if (GetWindowRect(s, &r) && MonitorFromWindow(s, MONITOR_DEFAULTTONULL) == m && (InflateRect(&r, 2, 2), PtInRect(&r, pt))) there = true; // brushed past and gone: stays put
             }
-            if (there && island && !opened && !dragging && !peeking && !stage) {
+            if (there && !Hides(m) && island && !opened && !dragging && !peeking && !stage) { // a game took that screen during the dwell: it stays
                 followTo = m;
                 followCall = true;
                 Close(); // up on this screen, then it answers on that one
@@ -1033,6 +1033,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case kAdoptMsg: { // hovered the strip on another screen
         HMONITOR m = (HMONITOR)wp;
         if (model.keyOnly) return 0; // only the shortcut opens it: another screen's strip brings nothing either
+        if (Hides(m)) return 0; // a game has that screen: the island stays where it is
         if (island && !opened && !dragging && !peeking && !alarmBanner && !stage && m != mon) { // a resting pill here: after a moment's dwell it goes up and comes down there
             if (adoptTo != m) adoptTo = m, SetTimer(hwnd, kAdoptTimer, (UINT)cfg.hoverMs, nullptr);
             return 0;
@@ -1416,6 +1417,7 @@ void Drawer::Frame() {
                 model.pickPending = false;
                 model.StartPicker();
             }
+            if (followTo && Hides(followTo)) followTo = nullptr, followCall = false; // a game took that screen while it retracted: it stays here, the next second brings its pill back
             if (followTo) { // retracted on the old screen: move over and drop open on the new one
                 mon = followTo;
                 followTo = nullptr;
