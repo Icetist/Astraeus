@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "anim.h"
 #include "glyphs.h"
 #include "page_sheet.h"
 
@@ -37,6 +38,7 @@ struct View { // what the page remembers between frames
     std::wstring toast;
     double toastAt = -10;
     double agedAt = -10;
+    anim::Spring bin; // how far the recycle bin has opened sideways, in dips: the panel's own spring
     uint64_t seenVer = 0; // what the lists below were made from
     int seenFilter = -1;
     std::wstring seenQuery;

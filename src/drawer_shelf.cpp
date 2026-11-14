@@ -8,9 +8,9 @@
 #include <algorithm>
 #include <shobjidl.h>
 
-#include <thread>
 #include <vector>
 
+#include "deskpill.h"
 #include "glyphs.h"
 
 namespace {
@@ -34,24 +34,10 @@ std::vector<std::wstring> Files(IDataObject* data) { // the paths a drag carries
     return out;
 }
 
-void Recycle(std::vector<std::wstring> files) { // into the recycle bin, through windows' own copy engine: its progress, its prompts, undo from the bin
-    std::thread([files = std::move(files)] {
-        HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-        std::wstring list;
-        for (const auto& f : files) list += f + L'\0';
-        list += L'\0'; // the list ends with two nulls
-        SHFILEOPSTRUCTW op = {};
-        op.wFunc = FO_DELETE;
-        op.pFrom = list.c_str();
-        op.fFlags = FOF_ALLOWUNDO | FOF_WANTNUKEWARNING; // the bin, never gone for good: too big for the bin, windows asks first
-        SHFileOperationW(&op);
-        if (SUCCEEDED(co)) CoUninitialize();
-    }).detach();
-}
 }
 
 struct Drawer::DropSink final : IDropTarget {
-    explicit DropSink(Drawer* owner) : d(owner) {
+    explicit DropSink(Drawer* owner, HWND pill = nullptr) : d(owner), at(pill) {
         CoCreateInstance(CLSID_DragDropHelper, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&helper)); // the shell keeps drawing the drag image over us
     }
 
@@ -74,21 +60,19 @@ struct Drawer::DropSink final : IDropTarget {
 
     HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data, DWORD, POINTL pt, DWORD* effect) override {
         ok = d && !d->dragSelf && sys::Shelf::Accepts(data) && d->DropEnter();
-        FORMATETC fmt = {CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-        files = ok && data->QueryGetData(&fmt) == S_OK; // only files can go in the bin
         *effect = ok ? DROPEFFECT_COPY : DROPEFFECT_NONE; // copy: a file is only remembered by its path, the source keeps it
         POINT p = {pt.x, pt.y};
-        if (helper && d) helper->DragEnter(d->hwnd, data, &p, *effect); // d is gone once the drawer is: ole may still call in
+        if (helper && d) helper->DragEnter(at ? at : d->hwnd, data, &p, *effect); // d is gone once the drawer is: ole may still call in
         return S_OK;
     }
     void Track(POINTL pt) { // over the shelf's recycle bin or not: it lights up
-        if (!d || !ok) return;
+        if (!d || !ok || at) return; // over the long pill: the bin is in the panel, not here
         POINT p = {pt.x, pt.y};
         ScreenToClient(d->hwnd, &p);
         D2D1_POINT_2F org = d->BodyOrg((std::clamp)(d->spring.value, 0.0f, d->Depth() + d->overshoot));
         float x = p.x / d->scale - org.x, y = p.y / d->scale - org.y;
         const float* z = d->model.binZone;
-        bool over = files && z[2] > z[0] && x >= z[0] && x < z[2] && y >= z[1] && y < z[3];
+        bool over = z[2] > z[0] && x >= z[0] && x < z[2] && y >= z[1] && y < z[3];
         if (over != d->model.binOver) d->model.binOver = over, d->Redraw();
     }
     HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL pt, DWORD* effect) override {
@@ -100,7 +84,7 @@ struct Drawer::DropSink final : IDropTarget {
     }
     HRESULT STDMETHODCALLTYPE DragLeave() override {
         if (helper) helper->DragLeave();
-        if (ok && d) d->DropLeave();
+        if (ok && d) d->DropLeave(at != nullptr);
         ok = false;
         return S_OK;
     }
@@ -114,9 +98,9 @@ struct Drawer::DropSink final : IDropTarget {
     }
 
     Drawer* d; // cleared before the drawer goes, ole may still hold a reference
+    HWND at; // the long pill's window, or null on the island's own
     LONG refs = 1;
     bool ok = false; // this drag carries something the shelf takes
-    bool files = false; // and it's files
     ComPtr<IDropTargetHelper> helper;
 };
 
@@ -130,7 +114,34 @@ void Drawer::StartShelf() {
     }
 }
 
+void Drawer::ShelfOnPill() {
+    HWND w = desk ? desk->Window() : nullptr;
+    if (!w || dropPill) return;
+    dropPill = new DropSink(this, w);
+    if (FAILED(RegisterDragDrop(w, dropPill))) {
+        dropPill->d = nullptr;
+        dropPill->Release();
+        dropPill = nullptr;
+        return;
+    }
+    dropPillWnd = w;
+}
+
+bool Drawer::HoldForCarry() {
+    bool held = (GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
+    if (dropHold && opened && held) return true;
+    dropHold = false;
+    return false;
+}
+
 void Drawer::StopShelf() {
+    SyncShelfKeys(false);
+    if (dropPill) {
+        RevokeDragDrop(dropPillWnd);
+        dropPill->d = nullptr;
+        dropPill->Release();
+        dropPill = nullptr;
+    }
     if (!drop) return;
     RevokeDragDrop(hwnd);
     drop->d = nullptr;
@@ -139,7 +150,7 @@ void Drawer::StopShelf() {
 }
 
 bool Drawer::DropEnter() {
-    if (hidden || stage || !model.HasPage(kShelfPage)) return false; // a game has the screen, the fullscreen player is up, or the shelf page was taken off
+    if (hidden || stage || !model.HasPage(kShelfPage) || (desk && desk->Editing())) return false; // a game has the screen, the fullscreen player is up, the shelf page was taken off, or the long pill is being arranged
     KillTimer(hwnd, kHoverTimer);
     KillTimer(hwnd, kCloseTimer);
     armed = false;
@@ -155,22 +166,21 @@ bool Drawer::DropEnter() {
     return opened;
 }
 
-void Drawer::DropLeave() {
+void Drawer::DropLeave(bool hold) {
     model.shelfHot = false;
+    if (hold && opened) dropHold = true; // off the long pill, which made way: the panel is where it's headed
     if (opened && !MouseIn()) SetTimer(hwnd, kCloseTimer, (UINT)cfg.closeMs, nullptr); // carried past it: it goes again
     Redraw();
 }
 
 void Drawer::DropDone(IDataObject* data) {
     model.shelfHot = false;
-    if (model.binOver) { // let go over the bin: recycled, not kept
+    dropHold = false;
+    if (model.binOver) { // let go over the bin: not kept; files are recycled once the page's question is answered
         model.binOver = false;
-        std::vector<std::wstring> files = Files(data);
-        if (!files.empty()) {
-            size_t n = files.size();
-            Recycle(std::move(files));
-            ShelfToast(n == 1 ? L"Sent to the Recycle Bin" : (std::to_wstring(n) + L" items sent to the Recycle Bin").c_str());
-        }
+        model.binAskCard = 0;
+        model.binAsk = Files(data);
+        if (model.binAsk.empty()) ShelfToast(L"Not kept");
     } else {
         model.shelf.Add(data);
     }
@@ -189,6 +199,51 @@ void Drawer::ShelfOut() {
     model.shelfPicks.clear();
     dragSelf = false;
     if (!MouseIn()) SetTimer(hwnd, kCloseTimer, (UINT)cfg.closeMs, nullptr);
+    Redraw();
+}
+
+void Drawer::CloseOrTray() {
+    bool tray = opened && page == kShelfPage && !Pinned() && !stage && !hidden && (!overFull || model.pillFullOpen) && model.HasPage(kShelfPage);
+    if (tray) ShelfTray(); // left the shelf, maybe to fetch something: a tray stays to drop it on
+    else Close();
+}
+
+void Drawer::ShelfTray() {
+    Close(); // the keyboard, the fields and the live polling go as with any close
+    if (hidden || !EnsureDev()) return; // no tray: it just closed
+    island = islandLook = grow = false;
+    peeking = peekShelf = true;
+    peekLevel = -1;
+    trayNote.clear();
+    float reach = Side() ? kPeekSide : kPeekH;
+    Resize(reach + overshoot, true);
+    spring.target = reach; // retracts only as far as the tray
+    spring.damp = 0.92f;
+    trayApp = AppBelow(); // one look as it shrinks, nothing polls
+    trayLeft = trayApp ? kTrayAppMs : kTrayLingerMs;
+    trayUntil = GetTickCount64() + trayLeft;
+    SetTimer(hwnd, kPeekTimer, kTrayPollMs, nullptr);
+    Redraw();
+}
+
+ULONGLONG Drawer::TrayLeft() {
+    ULONGLONG now = GetTickCount64();
+    bool held = !trayApp && (GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0; // something may be on its way here; over an app a held button is mostly that app's own business
+    if (held || MouseIn()) trayUntil = now + trayLeft; // its clock stands still: nothing runs down or starts over while something is carried
+    else trayLeft = trayUntil > now ? trayUntil - now : 0;
+    return trayLeft;
+}
+
+void Drawer::ShelfPasteIn() {
+    bool ok = model.shelf.AddClip();
+    const wchar_t* word = ok ? L"Pasted onto the shelf" : L"Nothing to paste";
+    if (opened) ShelfToast(word);
+    else if (peeking && peekShelf) { // on the tray: said there, it stays a moment longer
+        trayNote = word;
+        trayNoteAt = GetTickCount64();
+        trayLeft = (std::max)(TrayLeft(), (ULONGLONG)kTrayGraceMs);
+        trayUntil = GetTickCount64() + trayLeft;
+    }
     Redraw();
 }
 

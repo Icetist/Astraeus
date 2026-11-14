@@ -593,6 +593,10 @@ void Drawer::DrawBody(float h, float dt, double now) {
     canvas->PushClip(edgeNow == 0 ? D2D1_RECT_F{0, H - h, panelW, H} : edgeNow == 1 ? D2D1_RECT_F{panelW - h, 0, panelW, panelH} : D2D1_RECT_F{0, 0, h, panelH});
     float reach = Depth();
     float reveal = anim::Clamp01((h - reach * 0.25f) / (reach * 0.55f)); // fade content in from 25% to 80% of the way out
+    if (peeking && peekShelf) { // shrinking to the shelf's tray: gone by the time it gets there, not cut off
+        float rest = Side() ? kPeekSide : kPeekH;
+        reveal = anim::Clamp01((h - rest - 2) / ((reach - rest) * 0.6f));
+    }
     bool layered = reveal < 0.999f; // skip costly layer once fully shown
     if (layered) ctx->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
                                                        D2D1::IdentityMatrix(), reveal), nullptr);
@@ -873,6 +877,33 @@ void Drawer::DrawPeek(float h) {
     }
     canvas->Text(peekTitle, Rect(cx - 84, cy - 20, 240, 22), Weight::Medium, 15, t.text.Alpha(a));
     canvas->Text(peekDetail, Rect(cx - 84, cy + 1, 240, 18), Weight::Light, 12.5f, t.textDim.Alpha(a));
+}
+
+void Drawer::DrawTray(float h) { // the shelf's tray: the peek banner's place, saying it still takes a drop
+    const Theme& t = shellNow;
+    float rest = Side() ? kPeekSide : kPeekH;
+    float a = anim::Clamp01((h - 26) / 30) * (1 - anim::Clamp01((h - rest - 2) / ((Depth() - rest) * 0.4f))); // its words come as the page above them has nearly faded
+    if (a <= 0) return;
+    D2D1_RECT_F area = edgeNow == 0 ? Rect(0, 0, W, rest) : edgeNow == 1 ? Rect(0, cfg.fillet, rest, CH()) : Rect(winH - rest, cfg.fillet, rest, CH()); // where it comes to rest
+    if (edgeNow == 0) area.top += h - rest, area.bottom += h - rest; // the top edge: riding the panel's lower end on the way up
+    bool said = !trayNote.empty() && GetTickCount64() - trayNoteAt < kTrayNoteMs;
+    size_t n = model.shelf.Items().size();
+    std::wstring title = said ? trayNote : trayApp ? L"The shelf is still here" : L"Drop here to keep";
+    std::wstring detail = n == 0 ? L"Or Ctrl+V while the mouse is here" : std::to_wstring(n) + (n == 1 ? L" item" : L" items") + (Tall() ? L" on the shelf" : L" on the shelf  \u00B7  Ctrl+V pastes");
+    if (trayApp) detail = L"Drag onto the top edge anytime"; // over an app: no waiting box, only a word that it still takes a drop
+    float tw = (std::max)(canvas->Measure(title, Weight::Medium, 15), canvas->Measure(detail, Weight::Light, 12.5f)) + 8; // as wide as its words: nothing cut
+    float room = Width(area) - 2 * cfg.fillet - 24;
+    float group = (std::min)(46 + tw, room), left = (area.left + area.right - group) / 2;
+    float cy = Tall() ? area.top + 70 : (area.top + area.bottom) / 2 + 2; // sidebar: near the top
+    canvas->Dot({left + 17, cy}, 17, t.accent.Alpha(0.18f * a));
+    if (!trayApp) { // the desktop: a ring that runs down with its time, the system page's gauge made small
+        float f = anim::Clamp01((float)TrayLeft() / kTrayLingerMs); // looked at each frame: it stops the moment something is picked up
+        canvas->Ring({left + 17, cy}, 17, t.track.Alpha(a), 2);
+        if (f > 0.005f) canvas->Arc({left + 17, cy}, 17, -3.14159265f / 2, f * 2 * 3.14159265f, t.accent.Alpha(a), 2);
+    }
+    canvas->Icon(said ? glyph::Check : glyph::Shelf, {left + 17, cy}, 21, t.accentHi.Alpha(a), true);
+    canvas->Text(title, Rect(left + 46, cy - 20, group - 46, 22), Weight::Medium, 15, t.text.Alpha(a));
+    canvas->Text(detail, Rect(left + 46, cy + 1, group - 46, 18), Weight::Light, 12.5f, t.textDim.Alpha(a));
 }
 
 void Drawer::DrawAlarmRing(float h) {
@@ -1194,6 +1225,15 @@ void Drawer::SyncRailKeys(bool want) {
     bool prev = RegisterHotKey(hwnd, kRailKeyPrev, 0, Tall() ? VK_LEFT : VK_UP) != FALSE; // the panel never takes focus: a hotkey reaches it anyway, only while hovered
     bool next = RegisterHotKey(hwnd, kRailKeyNext, 0, Tall() ? VK_RIGHT : VK_DOWN) != FALSE;
     if (!prev && !next) railKeys = false; // another app holds them: hovering just doesn't add keys
+}
+
+void Drawer::SyncShelfKeys(bool allow) {
+    bool on = (opened && page == kShelfPage) || (peeking && peekShelf);
+    bool want = allow && on && !hidden && !model.Typing() && !Entry::Get().focus && !StagePrefs::Get().capture && MouseIn(); // a field of ours typing: ctrl+v is its own
+    if (want == shelfKeys) return;
+    shelfKeys = want;
+    if (!want) UnregisterHotKey(hwnd, kShelfPasteKey);
+    else if (!RegisterHotKey(hwnd, kShelfPasteKey, MOD_CONTROL | MOD_NOREPEAT, 'V')) shelfKeys = false; // the panel never takes focus: a hotkey reaches it anyway, only while hovered
 }
 
 float Drawer::RailFade(float pos, float lo, float hi, float n) const { // pos and the view's ends along the rail; n pages

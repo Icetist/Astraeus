@@ -85,6 +85,7 @@ public:
     void Start(HWND notify, UINT msg); // loads a kept shelf; msg is posted when a preview or a stored image is ready
     void Configure(const Opts& o); // starts or stops listening to the clipboard, trims to the limit
     static bool Accepts(IDataObject* data); // files, text, links or images
+    bool AddClip(); // what's on the clipboard right now, asked for by the user: true when something landed
     bool Add(IDataObject* data); // true when something landed
     void OnWork(); // ui thread: previews and stored images the worker finished
     void Age(); // the auto-delete pass; cheap, also run on a timer

@@ -535,6 +535,9 @@ public:
 
     float binZone[4] = {}; // the shelf's recycle bin while something is dragged over the panel, panel space: left top right bottom
     bool binOver = false; // the drag is over it
+    std::vector<std::wstring> binAsk; // files let go over the bin from outside, waiting for a yes
+    uint64_t binAskCard = 0; // or a shelf card carried there
+    bool BinAsking() const { return binAskCard != 0 || !binAsk.empty(); }
 
 private:
     bool panelLive = false, panelProcs = false, panelPing = false; // what the open panel asked for; the dashboard adds its own
