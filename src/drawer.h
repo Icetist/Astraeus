@@ -232,6 +232,8 @@ private:
     void Perf(double drawSec);
     void Log(const wchar_t* what) const; // with perflog on: one line about where the panel is, for multi screen reports
     bool FullOn(HMONITOR m) const; // another app fills that screen
+    bool Hides(HMONITOR m) const; // the island would hide there, for a game or a dashboard: nothing follows the mouse onto that screen, nothing takes refuge on it
+    bool FullHere() const { return fullApp && mon == MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY); } // the shell's notice is about the main screen only: on another one it says nothing
     HMONITOR Refuge() const; // every screen mode: where the pill goes when a game takes its screen
     void Hop(HMONITOR to); // move there now
     void Retract(); // panel and hover state dropped instantly
