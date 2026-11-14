@@ -300,7 +300,8 @@ bool Drawer::MouseIn() const {
 
 void Drawer::Open() {
     if (hidden || (overFull && !model.pillFullOpen)) return; // over a fullscreen app, the panel only if that's allowed
-    if (!opened && !pageSet && (!model.rememberPage || !model.HasPage(page)) && page != model.OpenPage()) prevPage = page, page = model.OpenPage(), pageT = 1; // the page picked in settings, or one still shown, without a slide
+    if (!opened && !pageSet && (!model.rememberPage || !model.HasPage(page) || pageAuto) && page != model.OpenPage()) prevPage = page, page = model.OpenPage(), pageT = 1; // the page picked in settings, or one still shown, without a slide
+    if (!opened && !pageSet) pageAuto = false; // back on the user's own page
     pageSet = false;
     if (model.Glassy() && spring.value < 1) SampleBehind(); // read the background before the panel covers it
     grow = grow || islandLook || alarmLook; // expanding out of the island/pill: width morphs as it drops
@@ -341,7 +342,7 @@ void Drawer::OnGreetTimer() {
             if (++greetTries < kGreetTries) SetTimer(hwnd, kGreetTimer, kGreetDelayMs / 3, nullptr);
             return;
         }
-        if (model.HasPage(Model::kPgHome) && page != Model::kPgHome) SetPage(Model::kPgHome);
+        AutoPage(Model::kPgHome);
         pageSet = true; // home, even with another opening page picked in settings
         Open();
         if (!opened) return;
@@ -421,7 +422,7 @@ void Drawer::Close() {
     StagePrefs::Get().capture = 0; // a fullscreen key half picked is dropped with the panel
     model.CancelPass();
     SyncTyping(); // hand the keyboard back right away
-    if (model.rememberPage && page != model.lastPage) model.SetPref(model.lastPage, L"LastPage", page); // the next launch opens here too
+    if (model.rememberPage && !pageAuto && page != model.lastPage) model.SetPref(model.lastPage, L"LastPage", page); // the next launch opens here too
     model.CloseBt(); // menus die with the panel
     model.CloseWifi();
     model.CloseSettings();
@@ -517,6 +518,7 @@ void Drawer::OnSecond() {
 }
 
 void Drawer::SetPage(int p) {
+    pageAuto = false; // picked by hand, AutoPage marks its own after
     if (p == page || !model.HasPage(p)) return; // a page taken off the rail can't be gone to
     model.CloseBt();
     model.CloseWifi();
@@ -541,7 +543,7 @@ void Drawer::Peek(const std::wstring& title, const std::wstring& detail, int ico
     peekTitle = title;
     peekDetail = detail;
     if (opened) {
-        if (!Pinned()) SetPage(Model::kPgTools); // already open, jump to notice page; pinned, it would yank the page from under you all day
+        if (!Pinned()) AutoPage(Model::kPgTools); // already open, jump to notice page; pinned, it would yank the page from under you all day
         return;
     }
     if (hidden || !EnsureDev()) return;
@@ -877,7 +879,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             if (island && Bubble() && Inside(BubbleBox(), ToDip(lp))) { // the bubble: straight to the tool that runs
                 int act = model.Activity();
                 model.toolTab = act == Model::kActWatch ? 1 : act == Model::kActFocus ? 2 : 0;
-                if (page != Model::kPgTools && model.HasPage(Model::kPgTools)) prevPage = page, page = Model::kPgTools, pageT = 1;
+                if (page != Model::kPgTools && model.HasPage(Model::kPgTools)) prevPage = page, page = Model::kPgTools, pageT = 1, pageAuto = true;
                 pageSet = true;
             }
             Open();

@@ -144,11 +144,11 @@ bool Drawer::DropEnter() {
     KillTimer(hwnd, kCloseTimer);
     armed = false;
     if (!opened) { // closed: it drops open straight onto the shelf, no slide from another page
-        if (page != kShelfPage) prevPage = page, page = kShelfPage, pageT = 1;
+        if (page != kShelfPage) prevPage = page, page = kShelfPage, pageT = 1, pageAuto = true;
         pageSet = true; // a fixed opening page picked in settings mustn't take the drop's place
         Open();
     } else {
-        SetPage(kShelfPage);
+        AutoPage(kShelfPage);
     }
     model.shelfHot = opened; // lit only if the panel really came down
     Redraw();

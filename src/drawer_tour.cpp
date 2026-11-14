@@ -52,7 +52,7 @@ void Drawer::TourGo(int from, int dir) {
         if (!TourShows(i)) continue;
         tourStep = i;
         ++tourNth;
-        if (kSteps[i].page >= 0) SetPage(kSteps[i].page);
+        if (kSteps[i].page >= 0) AutoPage(kSteps[i].page);
         Redraw();
         return;
     }

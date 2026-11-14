@@ -827,7 +827,7 @@ void Drawer::StageFrame() {
         if (stageHalo) {
             if (HWND halo = FindWindowW(L"HaloBar", nullptr)) PostMessageW(halo, WM_COMMAND, kHaloPlayer, 0); // where it came from: halobar's player panel
         } else if (!stageAway) {
-            if (page != Model::kPgMedia) SetPage(Model::kPgMedia); // the media page
+            AutoPage(Model::kPgMedia); // the media page
             pageSet = true; // even with a fixed opening page picked in settings
             Open();
         }

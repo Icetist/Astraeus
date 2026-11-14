@@ -117,6 +117,8 @@ private:
     std::wstring PillSig() const; // what a still pill shows, to redraw only when that changes
     std::wstring pillSig;
     bool pageSet = false; // whoever opens the panel already chose its page
+    bool pageAuto = false; // astraeus went to this page itself (a notice, the bubble, a drop, the greeting, the tour): never the one remembered
+    void AutoPage(int p) { if (p != page && model.HasPage(p)) SetPage(p), pageAuto = true; }
     ULONGLONG wheelAt = 0; // last page step from the wheel, a swipe moves one page
     float railWheel = 0; // wheel notches over the rail or pill, a page per whole notch
     void WheelPages(float notches); // the rail or the closed pill: next or previous page
