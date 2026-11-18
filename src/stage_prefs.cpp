@@ -12,7 +12,8 @@ constexpr wchar_t kShapeVal[] = L"StageShape";
 constexpr float kSaved = 1000; // kept as whole thousandths
 using Fields = StagePrefs::Shape;
 constexpr float Fields::*kFields[] = {&Fields::coverS, &Fields::coverX, &Fields::coverY, &Fields::textS, &Fields::textX, &Fields::textY, &Fields::lyrX, &Fields::lyrY, &Fields::lyrW, &Fields::lyrH, // new ones go last: a shorter saved list still means what it did
-                                      &Fields::coverRound, &Fields::coverGlow, &Fields::clockOn, &Fields::clockS, &Fields::clockX, &Fields::clockY, &Fields::clockA, &Fields::appOn, &Fields::albumOn, &Fields::extrasOn, &Fields::timesOn, &Fields::dim, &Fields::lyrAlign, &Fields::lyrDim, &Fields::lyrHaze, &Fields::lyrAnchor};
+                                      &Fields::coverRound, &Fields::coverGlow, &Fields::clockOn, &Fields::clockS, &Fields::clockX, &Fields::clockY, &Fields::clockA, &Fields::appOn, &Fields::albumOn, &Fields::extrasOn, &Fields::timesOn, &Fields::dim, &Fields::lyrAlign, &Fields::lyrDim, &Fields::lyrHaze, &Fields::lyrAnchor,
+                                      &Fields::ctlS, &Fields::ctlX, &Fields::ctlY};
 
 void LoadShape(StagePrefs& p) { // what's missing keeps its default, and what was hand-edited off the screen comes back on
     std::wstring text = sys::ReadText(kShapeVal);
@@ -40,7 +41,8 @@ void LoadShape(StagePrefs& p) { // what's missing keeps its default, and what wa
         s.lyrDim = (std::clamp)(s.lyrDim, StagePrefs::kLyrDimLo, StagePrefs::kLyrDimHi);
         s.lyrHaze = (std::clamp)(s.lyrHaze, 0.0f, StagePrefs::kHazeHi);
         s.lyrAnchor = (std::clamp)(s.lyrAnchor, StagePrefs::kAnchorLo, StagePrefs::kAnchorHi);
-        for (float* off : {&s.coverX, &s.coverY, &s.textX, &s.textY, &s.lyrX, &s.lyrY, &s.clockX, &s.clockY}) *off = (std::clamp)(*off, -1.0f, 1.0f);
+        s.ctlS = (std::clamp)(s.ctlS, StagePrefs::kCtlLo, StagePrefs::kCtlHi);
+        for (float* off : {&s.coverX, &s.coverY, &s.textX, &s.textY, &s.lyrX, &s.lyrY, &s.clockX, &s.clockY, &s.ctlX, &s.ctlY}) *off = (std::clamp)(*off, -1.0f, 1.0f);
     }
 }
 }
@@ -76,6 +78,13 @@ StagePrefs& StagePrefs::Get() {
 void StagePrefs::Flip(int& field, const wchar_t* key) {
     field = field ? 0 : 1;
     sys::SaveNum(key, field);
+}
+
+bool StagePrefs::Free(UINT combo, int which) const {
+    if (combo == (which == 1 ? keySwap : keySplit)) return false; // the other one's: one key, two jobs
+    if (combo & (kCtrl | kAlt | kShift)) return true; // fullscreen's own keys are all plain ones
+    static constexpr UINT kTaken[] = {VK_ESCAPE, 'F', VK_F11, VK_SPACE, VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_OEM_4, VK_OEM_6, 'V', 'C'}; // leave, play, skip, the lyrics' nudge and versions, the vinyl buttons
+    return std::find(std::begin(kTaken), std::end(kTaken), combo & 0xFF) == std::end(kTaken);
 }
 
 void StagePrefs::SetKey(UINT& field, const wchar_t* key, UINT combo) {

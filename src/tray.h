@@ -7,9 +7,9 @@
 namespace tray {
 
 enum Cmd : UINT { kOpen = 100, kConfig, kStartup, kRestart, kExit, kUpdate, kSettings }; // sent to owner as WM_COMMAND
-enum Outside : UINT { kWake = 109, kPlayFull = 110 }; // WM_COMMAND from other processes: a second launch, halobar's cover. fixed numbers, others rely on them
+enum Outside : UINT { kWake = 109, kPlayFull = 110, kSnooze = 111, kDismiss = 112, kAgain = 113, kOpenPanel = 114 }; // WM_COMMAND from other processes: a second launch, halobar's cover, a notification's buttons. fixed numbers, others rely on them
 enum Backup : UINT { kExport = 120, kImport, kReset }; // from the settings sheet: dialogs and the restart run on the host
-enum class Upd { Idle, Checking, Downloading, Current, Failed, Installed, Updated }; // Updated: first run after a swap // what the update row says
+enum class Upd { Idle, Checking, Downloading, Current, Failed, Installed, Updated, Offline, Unverified }; // Updated: first run after a swap // what the update row says
 
 void Show(HWND owner, const Theme& t, bool startup); // themed menu at the cursor, built on demand, freed on close
 void SetAccess(float zoom, bool reader); // the text size and whether screen readers see them, for what opens next

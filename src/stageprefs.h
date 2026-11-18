@@ -10,6 +10,8 @@ struct StagePrefs {
     int swap = 0; // which of the two shows what: 0 the song on the screen it opened on
     UINT keySplit = 'S', keySwap = 'W'; // free in fullscreen: esc, f, f11, space, the arrows and [ ] are taken
     int capture = 0; // settings is waiting for a key: 1 the split's, 2 the swap's; never saved
+    bool clash = false; // the last key pressed for it was taken: fullscreen's own, or the other one's
+    bool Free(UINT combo, int which) const; // a key for that one: not the other's, nor one fullscreen already answers
 
     struct Shape { // one version of the layout as it was arranged: scales, and offsets in shares of the screen
         float coverS = 1, coverX = 0, coverY = 0, textS = 1, textX = 0, textY = 0, lyrX = 0, lyrY = 0, lyrW = 1, lyrH = 1;
@@ -18,7 +20,9 @@ struct StagePrefs {
         float appOn = 1, albumOn = 1, extrasOn = 1, timesOn = 1; // the song's smaller pieces
         float dim = 0; // the room, darker
         float lyrAlign = 0, lyrDim = 0.34f, lyrHaze = 1, lyrAnchor = 0.30f; // 0 left, 1 center, 2 right; the lines out of turn; where the sung line rests
+        float ctlS = 1, ctlX = 0, ctlY = 0; // the vinyl room's buttons, a part of their own there
     };
+    static constexpr float kCtlLo = 0.6f, kCtlHi = 1.6f;
     Shape shape[2]; // 0 a song without lyrics, 1 with them
     static constexpr float kCoverLo = 0.5f, kCoverHi = 1.6f, kTextLo = 0.6f, kTextHi = 1.5f, kLyrWLo = 0.5f, kLyrWHi = 1.3f, kLyrHLo = 0.4f, kLyrHHi = 1.2f;
     static constexpr float kRoundHi = 0.5f, kGlowHi = 1.6f, kClockLo = 0.6f, kClockHi = 3, kClockALo = 0.1f, kDimHi = 0.7f, kLyrDimLo = 0.08f, kLyrDimHi = 0.8f, kHazeHi = 1.5f, kAnchorLo = 0.12f, kAnchorHi = 0.6f;

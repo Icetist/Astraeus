@@ -4,6 +4,8 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <shobjidl.h>
+#include <propkey.h>
+#include <propvarutil.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -16,12 +18,17 @@
 #include "gfx.h"
 #include "model.h"
 #include "glyphs.h"
+#include "sys_sound.h"
+#include "sys_toast.h"
 #include "tray.h"
 #include "version.h"
+
+#pragma comment(lib, "propsys.lib")
 
 namespace {
 
 constexpr UINT kTrayId = 1;
+constexpr int kAlarmRingTicks = 120, kAlarmBellEvery = 3; // a ringing alarm's bell: every 3 s for two minutes, then it waits quietly
 constexpr int kHotId = 1; // the open-the-panel shortcut
 constexpr UINT_PTR kSecTimer = 1;
 constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"; // per-user autostart
@@ -183,17 +190,30 @@ void StartShortcut() { // a shortcut in the start menu, so astraeus can be found
     CoTaskMemFree(programs);
     std::wstring target = app->exePath, inst = InstallDir() + L"\\Astraeus.exe";
     if (_wcsicmp(BootExe().c_str(), inst.c_str()) == 0 && GetFileAttributesW(inst.c_str()) != INVALID_FILE_ATTRIBUTES) target = inst; // the copy that starts with windows and gets updated
+    toast::Register(target); // a notification's buttons open this same copy
     Microsoft::WRL::ComPtr<IShellLinkW> link;
     Microsoft::WRL::ComPtr<IPersistFile> file;
+    Microsoft::WRL::ComPtr<IPropertyStore> props;
     if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) || FAILED(link.As(&file))) return;
     wchar_t now[MAX_PATH] = {};
-    if (SUCCEEDED(file->Load(lnk.c_str(), STGM_READ)) && SUCCEEDED(link->GetPath(now, MAX_PATH, nullptr, SLGP_RAWPATH)) && _wcsicmp(now, target.c_str()) == 0)
-        return; // already right: nothing written
+    bool same = SUCCEEDED(file->Load(lnk.c_str(), STGM_READWRITE)) && SUCCEEDED(link->GetPath(now, MAX_PATH, nullptr, SLGP_RAWPATH)) && _wcsicmp(now, target.c_str()) == 0; // read and write: loaded read only, its properties can't be set
+    if (FAILED(link.As(&props))) return; // only after the load: the store is the loaded shortcut's own
+    PROPVARIANT had;
+    PropVariantInit(&had);
+    bool tagged = same && SUCCEEDED(props->GetValue(PKEY_AppUserModel_ID, &had)) && had.vt == VT_LPWSTR && had.pwszVal && !wcscmp(had.pwszVal, toast::kAppId); // windows finds our notifications' name and icon through this
+    PropVariantClear(&had);
+    if (same && tagged) return; // already right: nothing written
     std::wstring dir = target.substr(0, target.find_last_of(L'\\'));
     link->SetPath(target.c_str());
     link->SetWorkingDirectory(dir.c_str());
     link->SetDescription(L"Astraeus");
     link->SetIconLocation(target.c_str(), 0);
+    PROPVARIANT id;
+    if (SUCCEEDED(InitPropVariantFromString(toast::kAppId, &id))) {
+        props->SetValue(PKEY_AppUserModel_ID, id);
+        props->Commit();
+        PropVariantClear(&id);
+    }
     file->Save(lnk.c_str(), TRUE);
 }
 
@@ -321,12 +341,13 @@ void RemoveTray() {
     Shell_NotifyIconW(NIM_DELETE, &nid);
 }
 
-void Notify(const wchar_t* title, const wchar_t* text) {
-    NOTIFYICONDATAW nid = {sizeof(nid)};
+void Notify(const wchar_t* title, const wchar_t* text, const std::vector<toast::Button>& buttons = {}, bool stay = false) {
+    if (toast::Show(title, text, buttons, stay)) return; // windows' own notification: our name and icon, and buttons that act
+    NOTIFYICONDATAW nid = {sizeof(nid)}; // notifications off for us, or no shortcut yet: the tray's notice still says it
     nid.hWnd = app->host;
     nid.uID = kTrayId;
     nid.uFlags = NIF_INFO;
-    nid.dwInfoFlags = NIIF_INFO | NIIF_NOSOUND; // silent, we beep ourselves
+    nid.dwInfoFlags = NIIF_INFO | NIIF_NOSOUND; // silent, our own sound plays
     wcscpy_s(nid.szInfoTitle, title);
     wcscpy_s(nid.szInfo, text);
     Shell_NotifyIconW(NIM_MODIFY, &nid);
@@ -422,29 +443,28 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 const wchar_t* title = ev == 1 ? L"Focus done" : L"Break's over";
                 std::wstring detail = ev == 1 ? std::to_wstring(app->model->breakMin) + L" min break, then round " + std::to_wstring(app->model->focusRound + 1)
                                               : L"Round " + std::to_wstring(app->model->focusRound) + L", " + std::to_wstring(app->model->focusMin) + L" min";
-                MessageBeep(MB_ICONASTERISK);
+                sound::Play(ev == 1 ? sound::Cue::FocusDone : sound::Cue::BreakDone); // falling to ease off, rising to begin again
                 app->drawer->Peek(title, detail);
                 Notify(title, detail.c_str());
             }
             if (app->model->TimerDone()) { // countdown just hit zero
                 std::wstring detail = app->model->TimerName() + L" timer is up";
-                MessageBeep(MB_ICONASTERISK);
+                sound::Play(sound::Cue::Timer);
                 app->drawer->Peek(L"Timer finished", detail); // in-app drop banner
-                Notify(L"Timer finished", detail.c_str()); // plus system toast
+                Notify(L"Timer finished", detail.c_str(), {{L"Start again", L"again"}}); // plus windows' own, with the same timer one press away
             }
             if (app->model->TickAlarms()) {
                 app->model->alarmBellTick = 0;
-                MessageBeep(MB_ICONASTERISK);
+                sound::Play(sound::Cue::Alarm);
                 if (const Alarm* a = app->model->alarms.Ringing()) {
                     std::wstring alarmText = AlarmStore::FormatTime(a->hour, a->minute);
                     if (!a->label.empty()) alarmText += L" - " + a->label;
-                    Notify(L"Alarm", alarmText.c_str());
+                    Notify(L"Alarm", alarmText.c_str(), {{L"Snooze 5 min", L"snooze"}, {L"Dismiss", L"dismiss"}}, true); // stays until it's answered, as an alarm should
                 }
                 app->drawer->RingAlarm();
             } else if (app->model->alarms.Ringing()) {
                 ++app->model->alarmBellTick;
-                if (app->model->alarmBellTick < 120 && app->model->alarmBellTick % 3 == 0)
-                    MessageBeep(MB_ICONASTERISK);
+                if (app->model->alarmBellTick < kAlarmRingTicks && app->model->alarmBellTick % kAlarmBellEvery == 0) sound::Play(sound::Cue::Alarm);
             }
         }
         return 0;
@@ -456,6 +476,8 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         case sys::Updater::kDownloading: tray::SetUpdate(tray::Upd::Downloading, app->updater.Applied()); break;
         case sys::Updater::kCurrent: tray::SetUpdate(tray::Upd::Current); break;
+        case sys::Updater::kOffline: tray::SetUpdate(tray::Upd::Offline); break;
+        case sys::Updater::kUnverified: tray::SetUpdate(tray::Upd::Unverified); break;
         default: tray::SetUpdate(tray::Upd::Failed); break;
         }
         return 0;
@@ -487,6 +509,12 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (!app->trayOn) AddTray();
             break;
         case kPlayFull: app->drawer->PlayFull(); break; // halobar's album cover
+        case kSnooze: app->model->SnoozeAlarm(); break; // a notification's buttons, through an astraeus: link; the banner follows on the next second
+        case kDismiss: app->model->DismissAlarm(); break;
+        case kAgain:
+            if (int s = app->model->TimerSeconds(); s > 0) app->model->StartTimer(s);
+            break;
+        case kOpenPanel: app->drawer->KeyOpen(); break;
         case kExport: // from settings: windows' own dialogs, owned by the host so the panel can go
             SetForegroundWindow(hwnd); // we were just clicked: the dialog may come to the front
             if (backup::Export(hwnd, app->cfgPath)) Notify(L"Settings exported", L"Import the file on any PC to bring them back");
@@ -524,7 +552,7 @@ bool CreateHost(HINSTANCE instance) {
     if (!app->trayOn || !app->appbar) Log(L"Shell not ready at start, retrying");
     SetCoalescableTimer(app->host, kSecTimer, 1000, nullptr, 250); // 1s tick drives model
     if (app->cfg.hotKey && !RegisterHotKey(app->host, kHotId, app->cfg.hotMods | MOD_NOREPEAT, app->cfg.hotKey)) // windows tells us when it's pressed, nothing polls
-        Log(L"The shortcut is taken by another app; set another with hotkey = in astraeus.ini");
+        Log(L"The shortcut is taken by another app");
     return true;
 }
 
@@ -617,6 +645,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         Sleep(kTaskGoneMs);
         return 0;
     }
+    if (std::wstring act = toast::Action(line); !act.empty()) { // a notification's button: the copy that's running does it
+        UINT cmd = act == L"snooze" ? tray::kSnooze : act == L"dismiss" ? tray::kDismiss : act == L"again" ? tray::kAgain : tray::kOpenPanel;
+        if (HWND running = FindWindowW(L"AstraeusHost", nullptr)) {
+            AllowSetForegroundWindow(ASFW_ANY); // the panel may come forward
+            PostMessageW(running, WM_COMMAND, cmd, 0);
+            return 0;
+        }
+        if (cmd != tray::kOpenPanel) return 0; // nothing running to snooze or start again: nothing to do
+    }
+    SetCurrentProcessExplicitAppUserModelID(toast::kAppId); // our notifications carry the start menu shortcut's name and icon
     HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\Astraeus.Native");
     if (!mutex || WaitForSingleObject(mutex, boot ? 0 : 3000) == WAIT_TIMEOUT) { // wait for old instance on restart, else bail; the second of the logon task and the startup entry just leaves, at once
         if (HWND running = boot ? nullptr : FindWindowW(L"AstraeusHost", nullptr)) PostMessageW(running, WM_COMMAND, tray::kWake, 0); // opened by hand while it runs: that one shows itself
@@ -660,7 +698,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     SyncLogon();
     if (boot) state.drawer->Greet(); // started with windows: the home page says hello until the mouse moves
     StartShortcut(); // after the boot copy is settled, so the shortcut points at it
-    if (sys::FinishUpdate()) { // first run after a swap
+    bool updated = sys::FinishUpdate();
+    state.model->LoadNews(updated); // what's new: a card in the panel until it's put away
+    if (updated) { // first run after a swap
         if (!state.model->quiet) state.drawer->Peek(L"Astraeus updated", L"Now on version " APP_VER_W, glyph::Sparkle); // do not disturb: the tray still says so
         tray::SetUpdate(tray::Upd::Updated); // the tray says so too until the next check
     }

@@ -26,13 +26,13 @@ float Overlap(const D2D1_RECT_F& a, const D2D1_RECT_F& b) {
     return w > 0 && h > 0 ? w * h : 0;
 }
 
-float PageH(int page, int tab) {
+float PageH(int page, int tab, int songChips, bool vinyl) {
     switch (page) {
-    case kPageCover: return 3 * kSlideRow;
-    case kPageSong: return kSlideRow + (tab ? 1 : 2) * kChipRow;
+    case kPageCover: return (vinyl ? 2 : 1) * kChipRow + 3 * kSlideRow; // vinyl adds its color row, and trades the corners for its spin speed
+    case kPageSong: return kSlideRow + (songChips + 1) / 2 * kChipRow; // two to a row
     case kPageLyrics: return kChipRow + 4 * kSlideRow;
     case kPageClock: return kChipRow + 2 * kSlideRow;
-    case kPageScene: return 3 * kChipRow + 3 * kSlideRow;
+    case kPageScene: return 4 * kChipRow + 3 * kSlideRow;
     default: return 2 * (kKeyH + kChipGap) + kNoteH;
     }
 }
@@ -41,31 +41,33 @@ float PageH(int page, int tab) {
 
 namespace {
 constexpr size_t kShapeFloats = sizeof(StagePrefs::Shape) / sizeof(float);
+constexpr size_t kScenePrefs = 13;
+constexpr int kSpinStep = 5; // the spin speed slider's steps, in percent // the switches and numbers after the two layouts in a snapshot: EditSnap and EditLoad keep the same order
 static_assert(sizeof(StagePrefs::Shape) == kShapeFloats * sizeof(float), "a layout is floats only: it goes into a snapshot as they are");
 }
 
 History::Snap Stage::EditSnap() const { // both versions, then the scene's own switches and numbers
     const StagePrefs& sp = StagePrefs::Get();
     History::Snap s;
-    s.reserve(2 * kShapeFloats + 8);
+    s.reserve(2 * kShapeFloats + kScenePrefs);
     for (const StagePrefs::Shape& sh : sp.shape) {
         const float* f = reinterpret_cast<const float*>(&sh);
         s.insert(s.end(), f, f + kShapeFloats);
     }
-    for (int v : {model.stageArt, model.stageThump, model.stageHide, model.vizOn, model.vizWave, model.vizFull, model.vizGain, model.vizAlpha}) s.push_back((float)v);
+    for (int v : {model.stageArt, model.stageThump, model.stageHide, model.vizOn, model.vizWave, model.vizFull, model.vizGain, model.vizAlpha, model.stageVinyl, model.stageVinylCtl, model.stageVinylSpeed, model.stageVinylSound, model.stageVinylLabel}) s.push_back((float)v);
     return s;
 }
 
 void Stage::EditLoad(const History::Snap& s) {
     StagePrefs& sp = StagePrefs::Get();
-    if (s.size() != 2 * kShapeFloats + 8) return;
+    if (s.size() != 2 * kShapeFloats + kScenePrefs) return;
     for (int i = 0; i < 2; ++i) std::copy(s.begin() + i * kShapeFloats, s.begin() + (i + 1) * kShapeFloats, reinterpret_cast<float*>(&sp.shape[i]));
     sp.SaveShape();
     struct Pref {
         int* field;
         const wchar_t* key;
     } prefs[] = {{&model.stageArt, L"StageArtBg"}, {&model.stageThump, L"StageThump"}, {&model.stageHide, L"StageHide"}, {&model.vizOn, L"Visualizer"},
-                 {&model.vizWave, L"VizWave"}, {&model.vizFull, L"VizFull"}, {&model.vizGain, L"VizGain"}, {&model.vizAlpha, L"VizAlpha"}};
+                 {&model.vizWave, L"VizWave"}, {&model.vizFull, L"VizFull"}, {&model.vizGain, L"VizGain"}, {&model.vizAlpha, L"VizAlpha"}, {&model.stageVinyl, L"StageVinyl"}, {&model.stageVinylCtl, L"StageVinylCtl"}, {&model.stageVinylSpeed, L"StageVinylSpeed"}, {&model.stageVinylSound, L"StageVinylSound"}, {&model.stageVinylLabel, L"StageVinylLabel"}};
     size_t at = 2 * kShapeFloats;
     for (const Pref& p : prefs) {
         int v = (int)s[at++];
@@ -98,15 +100,18 @@ void Stage::EditNudge(int dx, int dy, bool big) {
     if (editPart == kPartCover) s.coverX += ox, s.coverY += oy;
     else if (editPart == kPartText) s.textX += ox, s.textY += oy;
     else if (editPart == kPartLyrics) s.lyrX += ox, s.lyrY += oy;
+    else if (editPart == kPartCtl) s.ctlX += ox, s.ctlY += oy;
     else s.clockX += ox, s.clockY += oy;
     StagePrefs::Get().SaveShape();
 }
 
 D2D1_RECT_F Stage::BarRect(float show) {
-    float want = (std::min)(kPanelChrome + PageH(editPage, editTab), H - 2 * kEdge);
+    bool extras = !model.stageVinyl || model.stageVinylCtl; // as the song page lays its switches out
+    int songChips = (model.stageVinyl ? 1 : 0) + (extras ? 2 : 0) + (editTab == 0 ? 2 : 0);
+    float want = (std::min)(kPanelChrome + PageH(editPage, editTab, songChips, model.stageVinyl != 0), H - 2 * kEdge);
     float h = ui.Smooth(Ui::Id("st.ed.h"), want, 16), w = (std::min)(kPanelW, W - 2 * kEdge);
     if (barAuto) { // it keeps out of the way of what's picked, on its own, until it's been put somewhere by hand
-        D2D1_RECT_F parts[kEditParts] = {partClock, partLyrics, partText, partCover};
+        D2D1_RECT_F parts[kEditParts] = {partClock, partCtl, partLyrics, partText, partCover};
         const D2D1_RECT_F& part = parts[editPart];
         D2D1_RECT_F right = Rect(W - w - kEdge, (H - h) / 2, w, h), left = Rect(kEdge, (H - h) / 2, w, h);
         float onRight = Overlap(right, part), onLeft = Overlap(left, part);
@@ -122,14 +127,14 @@ void Stage::EditParts(const D2D1_RECT_F& bar, float show) {
     const Input& in = ui.In();
     StagePrefs& sp = StagePrefs::Get();
     StagePrefs::Shape& s = sp.shape[editTab];
-    const D2D1_RECT_F parts[kEditParts] = {partClock, partLyrics, partText, partCover};
-    static const wchar_t* const kNames[kEditParts] = {L"Clock", L"Lyrics", L"Song", L"Cover"};
-    static const int kPageOf[kEditParts] = {kPageClock, kPageLyrics, kPageSong, kPageCover};
-    bool has[kEditParts] = {s.clockOn > 0.5f, editTab == 1, true, true}; // what's in this version
+    const D2D1_RECT_F parts[kEditParts] = {partClock, partCtl, partLyrics, partText, partCover};
+    static const wchar_t* const kNames[kEditParts] = {L"Clock", L"Controls", L"Lyrics", L"Song", L"Cover"};
+    static const int kPageOf[kEditParts] = {kPageClock, kPageSong, kPageLyrics, kPageSong, kPageCover}; // the buttons' switches live with the song's
+    bool has[kEditParts] = {s.clockOn > 0.5f, model.stageVinyl && model.stageVinylCtl && editTab == 0, editTab == 1, true, true}; // what's in this version
     if (!has[editPart]) editPart = kPartCover;
     D2D1_RECT_F boxes[kEditParts];
     for (int i = 0; i < kEditParts; ++i) boxes[i] = Inset(parts[i], -kOutset, -kOutset);
-    float rads[kEditParts] = {kPartRad, kPartRad, kPartRad, Width(partCover) * shapeNow[editTab].coverRound + kOutset};
+    float rads[kEditParts] = {kPartRad, kPartRad, kPartRad, kPartRad, (model.stageVinyl ? kPartRad : Width(partCover) * shapeNow[editTab].coverRound + kOutset)}; // vinyl: the sleeve and its record together, a plain box
     bool free = editDrag >= 0 || (!barHeld && !Inside(bar, in.down ? in.pressPos : in.mouse));
     auto grip = [&](int i) { return D2D1_POINT_2F{boxes[i].right - kGripInset, boxes[i].bottom - kGripInset}; };
     Ui::Hit sizes[kEditParts] = {}, moves[kEditParts] = {};
@@ -208,6 +213,7 @@ void Stage::EditParts(const D2D1_RECT_F& bar, float show) {
         if (part == kPartCover) s.coverS = Clamped(editFrom.coverS * k, StagePrefs::kCoverLo, StagePrefs::kCoverHi);
         else if (part == kPartText) s.textS = Clamped(editFrom.textS * k, StagePrefs::kTextLo, StagePrefs::kTextHi);
         else if (part == kPartClock) s.clockS = Clamped(editFrom.clockS * k, StagePrefs::kClockLo, StagePrefs::kClockHi);
+        else if (part == kPartCtl) s.ctlS = Clamped(editFrom.ctlS * k, StagePrefs::kCtlLo, StagePrefs::kCtlHi);
         else {
             s.lyrW = Clamped(editFrom.lyrW * (1 + 2 * dx / editSize.width), StagePrefs::kLyrWLo, StagePrefs::kLyrWHi);
             s.lyrH = Clamped(editFrom.lyrH * (1 + 2 * dy / editSize.height), StagePrefs::kLyrHLo, StagePrefs::kLyrHHi);
@@ -223,6 +229,7 @@ void Stage::EditParts(const D2D1_RECT_F& bar, float show) {
     if (part == kPartCover) s.coverX = editFrom.coverX + ox, s.coverY = editFrom.coverY + oy;
     else if (part == kPartText) s.textX = editFrom.textX + ox, s.textY = editFrom.textY + oy;
     else if (part == kPartClock) s.clockX = editFrom.clockX + ox, s.clockY = editFrom.clockY + oy;
+    else if (part == kPartCtl) s.ctlX = editFrom.ctlX + ox, s.ctlY = editFrom.ctlY + oy;
     else s.lyrX = editFrom.lyrX + ox, s.lyrY = editFrom.lyrY + oy;
 }
 
@@ -260,14 +267,26 @@ void Stage::EditPage(const D2D1_RECT_F& body, bool live) { // the picked page's 
     auto pref = [&](int& f, const wchar_t* key) { model.SetPref(f, key, f ? 0 : 1); };
     switch (editPage) {
     case kPageCover:
+        if (chip("st.ed.cover.vinyl", L"Vinyl", model.stageVinyl != 0)) pref(model.stageVinyl, L"StageVinyl"); // the cover as a record on a turntable
+        if (model.stageVinyl) { // beside it: the arm's sound, then the finer touches
+            if (chip("st.ed.cover.sound", L"Needle sound", model.stageVinylSound != 0)) pref(model.stageVinylSound, L"StageVinylSound");
+            if (chip("st.ed.cover.label", L"Label details", model.stageVinylLabel != 0)) pref(model.stageVinylLabel, L"StageVinylLabel");
+            y += kChipRow, col = 0;
+        } else {
+            y += kChipRow, col = 0;
+        }
+        if (model.stageVinyl) setting("st.ed.cover.spin", L"Spin speed", model.stageVinylSpeed, L"StageVinylSpeed", Model::kVinylSpeedMin, Model::kVinylSpeedMax, kSpinStep); // 100%: a real 33 1/3
         percent("st.ed.cover.size", L"Size", s.coverS, StagePrefs::kCoverLo, StagePrefs::kCoverHi, 100);
-        percent("st.ed.cover.round", L"Corners", s.coverRound, 0, StagePrefs::kRoundHi, 200); // 100%: a circle
+        if (!model.stageVinyl) percent("st.ed.cover.round", L"Corners", s.coverRound, 0, StagePrefs::kRoundHi, 200); // 100%: a circle; the sleeve and record have their own shapes
         percent("st.ed.cover.glow", L"Glow", s.coverGlow, 0, StagePrefs::kGlowHi, 100);
         break;
     case kPageSong:
         percent("st.ed.song.size", L"Size", s.textS, StagePrefs::kTextLo, StagePrefs::kTextHi, 100);
-        if (chip("st.ed.song.extras", L"Shuffle and repeat", s.extrasOn > 0.5f)) flip(s.extrasOn);
-        if (chip("st.ed.song.times", L"Times", s.timesOn > 0.5f)) flip(s.timesOn);
+        if (model.stageVinyl && chip("st.ed.song.ctl", L"Controls  (C)", model.stageVinylCtl != 0)) pref(model.stageVinylCtl, L"StageVinylCtl"); // off: the record is the control
+        if (!model.stageVinyl || model.stageVinylCtl) { // with the vinyl room's buttons off there's neither to show
+            if (chip("st.ed.song.extras", L"Shuffle and repeat", s.extrasOn > 0.5f)) flip(s.extrasOn);
+            if (chip("st.ed.song.times", L"Times", s.timesOn > 0.5f)) flip(s.timesOn);
+        }
         if (editTab == 0) { // the layout with lyrics has no room for these anyway
             if (chip("st.ed.song.app", L"App name", s.appOn > 0.5f)) flip(s.appOn);
             if (chip("st.ed.song.album", L"Album name", s.albumOn > 0.5f)) flip(s.albumOn);
@@ -298,6 +317,8 @@ void Stage::EditPage(const D2D1_RECT_F& body, bool live) { // the picked page's 
         if (chip("st.ed.sc.viz", L"Visualizer", model.vizOn != 0)) pref(model.vizOn, L"Visualizer");
         if (chip("st.ed.sc.wave", L"Waveform", model.vizWave != 0)) pref(model.vizWave, L"VizWave");
         if (chip("st.ed.sc.full", L"Any volume", model.vizFull != 0)) pref(model.vizFull, L"VizFull");
+        if (chip("st.ed.sc.lyrics", L"Lyrics", model.fullLyrics != 0)) pref(model.fullLyrics, L"FullLyrics"); // always here: the lyrics page shows only while there are lyrics, so off there was off for good
+        if (col) y += kChipRow, col = 0;
         setting("st.ed.sc.gain", L"Visualizer strength", model.vizGain, L"VizGain", Model::kVizGainMin, Model::kVizGainMax, Model::kSlideStep);
         setting("st.ed.sc.alpha", L"Visualizer opacity", model.vizAlpha, L"VizAlpha", Model::kVizAlphaMin, 100, Model::kSlideStep);
         percent("st.ed.sc.dim", L"Darken the background", s.dim, 0, StagePrefs::kDimHi, 100);
@@ -308,11 +329,11 @@ void Stage::EditPage(const D2D1_RECT_F& body, bool live) { // the picked page's 
         for (int i = 0; i < 2; ++i) { // the same two as in settings: click it, then press the new one
             bool waiting = sp.capture == i + 1;
             c.Text(kLabels[i], Rect(x, y, wide - kKeyW - 8, kKeyH), Weight::Regular, 12, look.text);
-            if (w::Chip(ui, look, Ui::Id("st.ed.key", i), Rect(x + wide - kKeyW, y + 2, kKeyW, kKeyH - 4), waiting ? std::wstring(L"Press a key") : StagePrefs::Name(keys[i]), waiting) && live) sp.capture = waiting ? 0 : i + 1;
+            if (w::Chip(ui, look, Ui::Id("st.ed.key", i), Rect(x + wide - kKeyW, y + 2, kKeyW, kKeyH - 4), waiting ? std::wstring(L"Press a key") : StagePrefs::Name(keys[i]), waiting) && live) sp.capture = waiting ? 0 : i + 1, sp.clash = false;
             y += kKeyH + kChipGap;
         }
         if (sp.capture && in.pressed && !Inside({x + wide - kKeyW, body.top, x + wide, y}, in.mouse)) sp.capture = 0; // clicked away: the key stays as it was
-        c.Text(sp.capture ? L"Esc keeps the key it had" : L"With a second screen", Rect(x, y, wide, kNoteH), Weight::Light, 11, look.textDim);
+        c.Text(sp.capture ? (sp.clash ? L"That key is already used in fullscreen" : L"Esc keeps the key it had") : L"With a second screen", Rect(x, y, wide, kNoteH), Weight::Light, 11, look.textDim);
         break;
     }
     }
@@ -392,7 +413,7 @@ void Stage::EditPanel(const D2D1_RECT_F& bar, bool canWith, bool covered) {
 void Stage::EditLayer(bool canWith, float show) {
     D2D1_RECT_F bar = BarRect(show);
     EditParts(bar, show);
-    const D2D1_RECT_F parts[kEditParts] = {partClock, partLyrics, partText, partCover};
+    const D2D1_RECT_F parts[kEditParts] = {partClock, partCtl, partLyrics, partText, partCover};
     bool covered = editDrag >= 0 && Overlap(bar, parts[editDrag / 2]) > 0;
     bool layer = show < 0.999f;
     if (layer) ctx->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), show), nullptr);

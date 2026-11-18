@@ -10,6 +10,7 @@
 
 #include "feeds.h"
 #include "glyphs.h"
+#include "sys_sound.h"
 
 #pragma comment(lib, "uuid.lib")
 
@@ -160,7 +161,7 @@ void TimerReset() { timerEnd = 0, timerHeld = -1; }
 void TimerCheck() {
     if (timerEnd > 0 && Tick() >= timerEnd) {
         timerEnd = 0, timerHeld = -1;
-        MessageBeep(MB_ICONASTERISK);
+        sound::Play(sound::Cue::Timer); // the same bell as the tools page's timer
     }
 }
 

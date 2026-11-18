@@ -77,8 +77,9 @@ void HttpCancel(std::atomic<bool>& stop, std::atomic<void*>& slot) {
     if (void* h = slot.exchange(nullptr)) WinHttpCloseHandle(static_cast<HINTERNET>(h));  // cancel closes handle to unblock read
 }
 
-bool HttpGet(const wchar_t* url, std::string& body, std::atomic<bool>& stop, std::atomic<void*>& slot, size_t maxBytes) {
+bool HttpGet(const wchar_t* url, std::string& body, std::atomic<bool>& stop, std::atomic<void*>& slot, size_t maxBytes, std::wstring* redirect) {
     body.clear();
+    if (redirect) redirect->clear();
     if (!url || stop.load()) return false;
 
     wchar_t host[256] = {};
@@ -116,6 +117,10 @@ bool HttpGet(const wchar_t* url, std::string& body, std::atomic<bool>& stop, std
     if (!req) return false;
     LiveReq active(req, stop, slot);  // owns req; closes it on scope exit
     if (active.Cancelled()) return false;  // cancel may have raced before slot was set
+    if (redirect) {
+        DWORD off = WINHTTP_DISABLE_REDIRECTS;  // the caller wants where it points, not what's there
+        WinHttpSetOption(req, WINHTTP_OPTION_DISABLE_FEATURE, &off, sizeof(off));
+    }
 
     if (!WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
         active.Cancelled() || !WinHttpReceiveResponse(req, nullptr) || active.Cancelled()) {  // recheck after each blocking call
@@ -125,8 +130,18 @@ bool HttpGet(const wchar_t* url, std::string& body, std::atomic<bool>& stop, std
     DWORD status = 0;
     DWORD size = sizeof(status);
     if (!WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,  // status as dword, not text
-                             WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX) ||
-        status != 200) {
+                             WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX)) {
+        LogHttp(L"status", status);
+        return false;
+    }
+    if (redirect && status >= 300 && status < 400) {
+        wchar_t where[2048] = {};
+        DWORD bytes = sizeof(where);
+        if (!WinHttpQueryHeaders(req, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX, where, &bytes, WINHTTP_NO_HEADER_INDEX)) return false;
+        *redirect = where;
+        return !redirect->empty();
+    }
+    if (status != 200) {
         LogHttp(L"status", status);
         return false;
     }
@@ -142,6 +157,18 @@ constexpr ULONGLONG kWanMs = 10 * 60 * 1000;  // public ip refresh, 10 min
 constexpr ULONGLONG kWanRetry = 60 * 1000;  // backoff after failed lookup
 constexpr ULONG kProbe = 0x08080808;  // 8.8.8.8, same bytes either endian
 constexpr wchar_t kWanUrl[] = L"https://api.ipify.org";  // returns bare ip as text
+
+}
+
+bool Online() {  // a way out to the internet at all: a route table lookup, nothing sent
+    SOCKADDR_INET dest{}, source{};
+    dest.Ipv4.sin_family = AF_INET;
+    dest.Ipv4.sin_addr.S_un.S_addr = kProbe;
+    MIB_IPFORWARD_ROW2 route{};
+    return GetBestRoute2(nullptr, 0, nullptr, &dest, 0, &route, &source) == NO_ERROR;
+}
+
+namespace {
 
 std::wstring Ipv4Str(const SOCKADDR* sa) {
     if (!sa || sa->sa_family != AF_INET) return {};  // ipv4 only

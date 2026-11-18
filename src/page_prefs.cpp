@@ -338,10 +338,10 @@ void Fullscreen(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the keys that 
         bool waiting = sp.capture == i + 1;
         c.Text(labels[i], {row.left, row.top, row.right - kKeyW - 8, row.bottom}, Weight::Regular, 11.5f, t.text);
         D2D1_RECT_F chip = {row.right - kKeyW, row.top + 1, row.right, row.bottom - 1};
-        if (w::Chip(ui, t, Ui::Id("set.fullkey", i), chip, waiting ? std::wstring(L"Press a key") : StagePrefs::Name(keys[i]), waiting) && live) sp.capture = waiting ? 0 : i + 1;
+        if (w::Chip(ui, t, Ui::Id("set.fullkey", i), chip, waiting ? std::wstring(L"Press a key") : StagePrefs::Name(keys[i]), waiting) && live) sp.capture = waiting ? 0 : i + 1, sp.clash = false;
     }
     if (sp.capture && ui.In().pressed && !Inside({in.right - kKeyW, in.top, in.right, in.top + 2 * (kRowH + 4)}, ui.In().mouse)) sp.capture = 0; // clicked away: the key stays as it was
-    Note(c, t, in, in.top + 2 * (kRowH + 4) + 2, sp.capture ? L"Esc keeps the key it had" : L"While fullscreen is open, with a second screen");
+    Note(c, t, in, in.top + 2 * (kRowH + 4) + 2, sp.capture ? (sp.clash ? L"That key is already used in fullscreen" : L"Esc keeps the key it had") : L"While fullscreen is open, with a second screen");
 }
 
 void Display(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how big everything is

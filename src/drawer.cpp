@@ -1216,8 +1216,14 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         if (int which = StagePrefs::Get().capture) { // settings is waiting for a fullscreen key: the next real key is it, esc keeps the old one
             StagePrefs& sp = StagePrefs::Get();
             if (wp == VK_SHIFT || wp == VK_CONTROL || wp == VK_MENU || wp == VK_LWIN || wp == VK_RWIN) return 0; // a modifier alone: wait for the key with it
-            if (wp != VK_ESCAPE) sp.SetKey(which == 1 ? sp.keySplit : sp.keySwap, which == 1 ? L"StageSplitKey" : L"StageSwapKey", StagePrefs::Combo((UINT)wp));
-            sp.capture = 0;
+            UINT combo = StagePrefs::Combo((UINT)wp);
+            if (wp != VK_ESCAPE && !sp.Free(combo, which)) { // taken: it keeps waiting for another, and the note says why
+                sp.clash = true;
+                Redraw();
+                return 0;
+            }
+            if (wp != VK_ESCAPE) sp.SetKey(which == 1 ? sp.keySplit : sp.keySwap, which == 1 ? L"StageSplitKey" : L"StageSwapKey", combo);
+            sp.capture = 0, sp.clash = false;
             Redraw();
             return 0;
         }

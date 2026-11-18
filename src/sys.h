@@ -179,9 +179,10 @@ void SignOut();
 
 namespace detail { // winhttp get shared by weather, wan ip, updater
 bool HttpGet(const wchar_t* url, std::string& body, std::atomic<bool>& stop, std::atomic<void*>& slot,
-             size_t maxBytes = 256 * 1024);
+             size_t maxBytes = 256 * 1024, std::wstring* redirect = nullptr); // redirect: not followed, where it points lands here
 void HttpCancel(std::atomic<bool>& stop, std::atomic<void*>& slot);
 }
+bool Online(); // any way out to the internet: a route lookup, nothing sent
 
 class Updater { // checks github releases, swaps in a newer exe
 public:
@@ -189,7 +190,7 @@ public:
     ~Updater();
     Updater(const Updater&) = delete;
     Updater& operator=(const Updater&) = delete;
-    enum Result : WPARAM { kInstalled, kCurrent, kFailed, kDownloading }; // wparam of msg; downloading only for manual checks
+    enum Result : WPARAM { kInstalled, kCurrent, kFailed, kDownloading, kOffline, kUnverified }; // wparam of msg; downloading only for manual checks. failed: github didn't answer; offline: no network at all; unverified: the download wasn't the release's own
     void Check(HWND notify, UINT msg, bool manual = false); // background; posts kInstalled once the new exe is in place, a manual check also posts the other outcomes
     std::wstring Applied() const; // tag that was installed, or being fetched
 private:

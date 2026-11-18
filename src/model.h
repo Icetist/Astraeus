@@ -225,6 +225,13 @@ public:
     void StartTimer(int seconds);
     void StopTimer();
     void TimerPause(bool on);
+    int TimerSeconds() const { return (int)(timerTotal / 1000); } // the last timer's length, for its notification's "start again"
+    struct News {
+        std::wstring title, text; // a release note's headline and the rest of its line
+    };
+    std::vector<News> news; // what this version brought: a card in the panel after an update, until it's put away
+    void LoadNews(bool justUpdated); // from the notes built into the exe
+    void DropNews(); // seen: not again for this version
     bool timerPaused = false;
     ULONGLONG timerHeld = 0; // what's left while paused
     bool TimerDone();
@@ -420,6 +427,12 @@ public:
     static int TileGlyph(int id);
     int stageHide = 1; // the fullscreen player's controls fade while the mouse rests (on by default)
     int stageThump = 1; // the fullscreen cover thumps with the beat
+    int stageVinyl = 0; // the fullscreen player as a record on a turntable
+    int stageVinylCtl = 0; // and the buttons and seek line under its song; off, the record itself is the control
+    int stageVinylSpeed = 50; // how fast the record turns: percent of a real one's 33 1/3, which reads hurried on a screen
+    static constexpr int kVinylSpeedMin = 10, kVinylSpeedMax = 150;
+    int stageVinylSound = 0; // a soft needle drop and crackle as the arm lands
+    int stageVinylLabel = 0; // the song's name pressed around the label, the sheen's sway and the sleeve's card shading
     int stageLyrBtn = 1, stageEditBtn = 1; // the fullscreen player's corner: wrong lyrics, and its editor
     int uiScale = 100; // percent, 80..130, folded into the dpi scale
     enum { kContrastAuto, kContrastOn, kContrastOff };

@@ -156,6 +156,9 @@ void DoAct(Model& m, faces::Act act, int kind) {
     case faces::Act::kPanel:
         m.OpenFace(kind);
         break;
+    case faces::Act::kCalendar:
+        m.OpenCal(); // the same sheet as the home page's
+        break;
     case faces::Act::kPlay:
         m.media.TogglePlay();
         break;

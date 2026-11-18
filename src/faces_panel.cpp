@@ -831,6 +831,7 @@ Act Click(int kind, bool right, const Host& h) {
         return Act::kNone;
     }
     if (key == "sys.tray") return Act::kTray;
+    if (key == "clock.today" || key == "clock.date" || key == "clock.daynum" || key == "clock.week") return Act::kCalendar; // a date: the calendar it belongs to
     if (key == "sys.cpu" || key == "sys.ram" || key == "sys.temp") {
         Open(L"taskmgr.exe");
         return Act::kNone;

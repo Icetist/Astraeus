@@ -12,6 +12,7 @@
 206 RCDATA "fonts\\SymbolsOutline.ttf"
 207 RCDATA "fonts\\SymbolsFilled.ttf"
 208 RCDATA "fonts\\Nunito-800.ttf"
+209 RCDATA ".github\\release-notes.md" // this version's notes: what's new, shown once after an update
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION APP_VER_MAJOR,APP_VER_MINOR,APP_VER_PATCH,0

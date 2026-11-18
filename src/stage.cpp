@@ -32,6 +32,7 @@ constexpr float kWordsAt = 0.42f; // the lyrics half: the sung line rests a litt
 constexpr float kWordsW = 0.64f; // and the words take this much of the screen's width
 constexpr float kSwapSec = 0.45f; // the pair trading halves dips through dark this long
 constexpr double kHintSec = 1.6; // a key's word stays this long, then fades
+constexpr UINT kVinylCtlKey = 'C'; // the vinyl room's buttons, shown or not
 
 constexpr double kFastFps = 60, kAmbientFps = 30, kQuietFps = 20; // ui motion and glides, music-driven light only, paused drift
 constexpr UINT kMaxSync = 4; // dxgi's longest present interval
@@ -299,7 +300,12 @@ LRESULT Stage::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == VK_SPACE) model.media.TogglePlay();
         else if (wp == VK_RIGHT) model.media.Next();
         else if (wp == VK_LEFT) model.media.Previous();
-        else if (wp == VK_OEM_4 || wp == VK_OEM_6) { // [ and ]: lyrics a touch earlier or later, remembered
+        else if (wp == kVinylCtlKey && model.stageVinyl && role == kWhole && StagePrefs::Combo(kVinylCtlKey) == kVinylCtlKey &&
+                 kVinylCtlKey != StagePrefs::Get().keySplit && kVinylCtlKey != StagePrefs::Get().keySwap) { // the vinyl room's buttons, in and out; never over a two screen key picked as c
+            model.SetPref(model.stageVinylCtl, L"StageVinylCtl", model.stageVinylCtl ? 0 : 1);
+            hint = model.stageVinylCtl ? L"Controls on" : L"Controls off";
+            hintAt = Seconds();
+        } else if (wp == VK_OEM_4 || wp == VK_OEM_6) { // [ and ]: lyrics a touch earlier or later, remembered
             model.lyricOffsetMs = (std::clamp)(model.lyricOffsetMs + (wp == VK_OEM_6 ? 100 : -100), -3000, 3000);
             if (!lyrKey.empty()) model.lyrics.SetOffset(lyrKey, model.lyricOffsetMs); // this song's own, kept for next time
             nudgeAt = Seconds();
@@ -348,8 +354,10 @@ bool Stage::TakeKey(UINT vk) {
     StagePrefs& sp = StagePrefs::Get();
     if (!sp.capture) return false;
     if (vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU || vk == VK_LWIN || vk == VK_RWIN) return true; // a modifier alone: wait for the key with it
-    if (vk != VK_ESCAPE) sp.SetKey(sp.capture == 1 ? sp.keySplit : sp.keySwap, sp.capture == 1 ? L"StageSplitKey" : L"StageSwapKey", StagePrefs::Combo(vk));
-    sp.capture = 0;
+    UINT combo = StagePrefs::Combo(vk);
+    if (vk != VK_ESCAPE && !sp.Free(combo, sp.capture)) return sp.clash = true; // taken: it keeps waiting for another, and says why
+    if (vk != VK_ESCAPE) sp.SetKey(sp.capture == 1 ? sp.keySplit : sp.keySwap, sp.capture == 1 ? L"StageSplitKey" : L"StageSwapKey", combo);
+    sp.capture = 0, sp.clash = false;
     return true;
 }
 
@@ -880,7 +888,7 @@ void Stage::Frame(const Theme& media) {
 
     SyncLyrics(now);
     bool lyrOn = lyrDoc && !lyrDoc->lines.empty();
-    if (editing && !lyrOn) editTab = 0; // no words for this song: only the version without
+    if (editing && (!lyrOn || model.stageVinyl)) editTab = 0; // no words for this song, or the vinyl room's single line: only the version without
     bool waiting = !lyrDoc && !lyrKey.empty() && now - lyrKeyAt < kLyrWaitSec && (lyrMix > 0.5f || role == kLyrics); // next song's lyrics on their way: the layout holds still
     if (role != styled) { // the lyrics half sets its words its own way; the full player's are as they always were
         styled = role;
@@ -898,7 +906,7 @@ void Stage::Frame(const Theme& media) {
     else if (waiting) lyrics.Sync(ctx.Get(), nullptr, lyrLaidW, LyricSize()); // the old song's lines go, dots wait in their place
     else if (lyrMix < 0.001f) lyrics.Sync(ctx.Get(), nullptr, 0, 0);
     lyrics.Prepare(ctx.Get()); // bakes a few lines' blur, never inside the frame
-    bool lyrMoving = anim::Approach(lyrMix, (editing ? editTab == 1 : lyrOn || waiting) ? 1.0f : 0, editing ? kTabRate : kLyrRate, dt, 0.001f);
+    bool lyrMoving = anim::Approach(lyrMix, (editing ? editTab == 1 : (lyrOn || waiting) && !model.stageVinyl) ? 1.0f : 0, editing ? kTabRate : kLyrRate, dt, 0.001f); // the record keeps its place: only the sung line shows under it
     bool idle = now - lastMove >= kIdleSec && !ui.Captured();
     if (idle && !cursorGone) { // resting: the cursor goes too, not only when it next moves
         POINT p;
@@ -924,7 +932,22 @@ void Stage::Frame(const Theme& media) {
     bool menuUp = lyrMenu && !lyrKey.empty();
     if (menuUp || editing) ui.Block(true); // a click on the list never reaches the lines under it: a line seeks the song. in the editor it's all there to be moved, not pressed
     if (role == kLyrics) Words();
-    else Player(show, role == kCover ? 1.0f : lyrMix); // the song's half of a pair: the stacked layout, on its own
+    else { // the song's half of a pair: the stacked layout, on its own; the vinyl room only on a single screen
+        float vin = role == kWhole ? ui.Smooth(Ui::Id("st.vinyl"), model.stageVinyl ? 1.0f : 0, 6) : 0; // the two rooms trade places softly
+        auto room = [&](float a, auto draw) {
+            if (a <= 0.001f) return;
+            bool fade = a < 0.999f;
+            if (fade) ctx->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), a), nullptr);
+            bool quiet = a < 0.5f && !ui.Blocked(); // the one on its way out is only a picture
+            if (quiet) ui.Block(true);
+            draw();
+            if (quiet) ui.Block(false);
+            if (fade) ctx->PopLayer();
+        };
+        room(1 - vin, [&] { Player(show, role == kCover ? 1.0f : lyrMix); });
+        room(vin, [&] { VinylPlayer(show); });
+        if (vin <= 0.001f && !model.stageVinyl) vinylSlide = vinylSpin = vinylArm = 0; // the next time it's picked, the record comes out of its sleeve afresh
+    }
     ui.Block(false);
     float editShow = ui.Smooth(Ui::Id("st.ed.show"), editing ? 1.0f : 0, 12); // it comes and goes softly
     if (!editing) {
@@ -933,7 +956,7 @@ void Stage::Frame(const Theme& media) {
     }
     if (editShow > 0.01f) {
         if (!editing) ui.Block(true); // on its way out: only a picture
-        EditLayer(lyrOn, editShow);
+        EditLayer(lyrOn && !model.stageVinyl, editShow); // vinyl has no lyrics column to arrange
         ui.Block(false);
     }
     if (lyrMenu) LyricsMenu();
@@ -977,7 +1000,7 @@ void Stage::Frame(const Theme& media) {
     input.pressed = input.released = input.rclick = false;
     input.wheel = 0;
     bool fast = editing || ui.Busy() || ui.Captured() || (show > 0.01f && show < 0.99f) || tip > 0.001f || lyrMoving || lyrics.Busy() || swapDim > 0.001f;
-    bool ambient = left + right > 0.03f || beat > 0.02f; // only the music-driven light moves
+    bool ambient = left + right > 0.03f || beat > 0.02f || (model.stageVinyl && (vinylSpin > 0 || (vinylArm > 0.002f && vinylArm < 0.998f) || (vinylSlide > 0.002f && vinylSlide < 0.998f))); // the music-driven light, and a record turning or its arm on the move
     double hz = RefreshOf(screen);
     bool game = GameNow(now); // a game in front elsewhere: nothing needs more than the ambient rate
     UINT sync = editing && (editDrag >= 0 || barHeld) ? 1 : SyncFor(hz, fast && !game ? kFastFps : fast || ambient ? kAmbientFps : kQuietFps); // capped at 60 on fast screens; the slow drift needs far less. a hand on something in the editor: every refresh the screen has

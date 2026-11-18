@@ -15,7 +15,10 @@
 namespace sys {
 namespace {
 
-constexpr wchar_t kLatest[] = L"https://api.github.com/repos/Icetist/Astraeus/releases/latest"; // public api, no token needed
+constexpr wchar_t kLatest[] = L"https://api.github.com/repos/Icetist/Astraeus/releases/latest"; // public api, no token needed; only when the page below fails
+constexpr wchar_t kLatestPage[] = L"https://github.com/Icetist/Astraeus/releases/latest"; // redirects to .../releases/tag/vX.Y.Z
+constexpr wchar_t kTagPath[] = L"/releases/tag/";
+constexpr size_t kPageMax = 256 * 1024; // a redirect has no real body; a page served instead stays bounded
 constexpr char kAsset[] = "/Astraeus.exe"; // release asset the workflow uploads
 constexpr char kHashAsset[] = "/Astraeus.exe.sha256"; // sha-256 of that exe, uploaded by the same workflow
 constexpr size_t kMaxHashFile = 1024; // 64 hex chars plus maybe a filename
@@ -190,24 +193,43 @@ struct Updater::Impl {
         for (DWORD t = 0; t < ms && !stop.load(); t += 100) ::Sleep(100);
     }
 
-    bool Get(const wchar_t* url, std::string& out, size_t max) { // retried get
+    bool Get(const wchar_t* url, std::string& out, size_t max, std::wstring* redirect = nullptr) { // retried get
         const bool quick = manual.load();
         for (int i = 0; i < (quick ? 2 : kTries) && !stop.load(); ++i) {
             if (i) Wait(quick ? 1500 : kRetryMs);
-            if (detail::HttpGet(url, out, stop, req, max)) return true;
+            if (detail::HttpGet(url, out, stop, req, max, redirect)) return true;
         }
         return false;
     }
 
+    std::string PageTag() { // the newest tag, from where the latest-release page points: no api, so no 60-an-hour limit shared by everyone behind one address
+        std::string page;
+        std::wstring where;
+        if (!Get(kLatestPage, page, kPageMax, &where)) return {};
+        size_t p = where.find(kTagPath);
+        if (p == std::wstring::npos) return {};
+        std::string t;
+        for (wchar_t ch : where.substr(p + wcslen(kTagPath))) {
+            if (!(iswalnum(ch) || ch == L'.' || ch == L'-' || ch == L'_')) return {}; // a tag is plain; anything else isn't one to put in a url
+            t += (char)ch;
+        }
+        return t;
+    }
+
     Updater::Result Fetch(HWND notify, UINT msg) {
-        std::string body;
-        if (!Get(kLatest, body, 256 * 1024)) return Updater::kFailed; // still offline, next scheduled check retries
-        size_t k = body.find("\"tag_name\"");
-        std::string t = k == std::string::npos ? "" : JsonStr(body, k);
-        if (t.empty()) return Updater::kFailed;
+        std::string t = PageTag(), url, hashUrl, body;
+        if (!t.empty()) {
+            url = kTrusted + t + kAsset;
+            hashUrl = kTrusted + t + kHashAsset;
+        } else { // the page didn't answer: the api, as before
+            if (!Get(kLatest, body, 256 * 1024)) return Online() ? Updater::kFailed : Updater::kOffline; // github out of reach, or no network at all: the next scheduled check retries
+            size_t k = body.find("\"tag_name\"");
+            t = k == std::string::npos ? "" : JsonStr(body, k);
+            if (t.empty()) return Updater::kFailed;
+            url = AssetUrl(body, kAsset), hashUrl = AssetUrl(body, kHashAsset);
+        }
         if (!Newer(t)) return Updater::kCurrent;
         if (!manual.load() && Widen(t) == Done()) return Updater::kFailed; // this tag was already tried on its own; a press tries again
-        const std::string url = AssetUrl(body, kAsset), hashUrl = AssetUrl(body, kHashAsset);
         if (url.empty() || hashUrl.empty()) return Updater::kCurrent; // still building, or a release without a published hash: never install unverified
         if (url.rfind(kTrusted, 0) != 0 || hashUrl.rfind(kTrusted, 0) != 0) return Updater::kFailed; // https, this repo only
         tag = Widen(t); // the menu can say what it's fetching
@@ -215,13 +237,13 @@ struct Updater::Impl {
         std::string sum;
         if (!Get(Widen(hashUrl).c_str(), sum, kMaxHashFile)) return Updater::kFailed;
         const std::string want = ParseHash(sum);
-        if (want.empty()) return Updater::kFailed;
+        if (want.empty()) return Updater::kUnverified;
         std::string exe;
-        if (!Get(Widen(url).c_str(), exe, kMaxExe) || exe.size() < kMinExe || exe[0] != 'M' || exe[1] != 'Z')
-            return Updater::kFailed; // must look like a windows exe
+        if (!Get(Widen(url).c_str(), exe, kMaxExe)) return Online() ? Updater::kFailed : Updater::kOffline;
+        if (exe.size() < kMinExe || exe[0] != 'M' || exe[1] != 'Z') return Updater::kUnverified; // must look like a windows exe
         if (Sha256Hex(exe) != want) { // corrupted or tampered download: not marked done, so the next check retries
             OutputDebugStringW(L"[sys] update rejected: sha-256 mismatch\n");
-            return Updater::kFailed;
+            return Updater::kUnverified;
         }
         MarkDone(Widen(t)); // once only, even if the swap fails
         if (!Swap(exe)) return Updater::kFailed;

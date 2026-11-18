@@ -9,6 +9,7 @@
 #include "duration.h"
 #include "pages.h"
 #include "picker.h"
+#include "version.h"
 #include <shellapi.h>
 
 #include <algorithm>
@@ -151,6 +152,11 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     stageEditBtn = flag(L"StageEditButton", 1);
     tourNext = flag(L"TourNext", 1);
     stageThump = flag(L"StageThump", 1);
+    stageVinyl = flag(L"StageVinyl", 0);
+    stageVinylCtl = flag(L"StageVinylCtl", 0);
+    stageVinylSpeed = (std::clamp)(sys::ReadNum(L"StageVinylSpeed", 50), kVinylSpeedMin, kVinylSpeedMax);
+    stageVinylSound = flag(L"StageVinylSound", 0);
+    stageVinylLabel = flag(L"StageVinylLabel", 0);
     uiScale = (std::clamp)(sys::ReadNum(L"UiScale", 100), 80, 130);
     a11yContrast = (std::clamp)(sys::ReadNum(L"A11yContrast", kContrastAuto), (int)kContrastAuto, (int)kContrastOff);
     a11yFollow = flag(L"A11yFollowText", 1);
@@ -1700,4 +1706,53 @@ std::wstring Model::PillWidget(int which, int& icon) const {
     }
     default: return L"";
     }
+}
+
+namespace {
+constexpr int kNotesRes = 209; // the release notes, built into the exe
+constexpr size_t kNewsMost = 4; // the card names this many; the rest are a click away
+constexpr wchar_t kNewsFor[] = L"NewsFor"; // the version whose notes are still unread
+}
+
+void Model::LoadNews(bool justUpdated) {
+    news.clear();
+    if (justUpdated) sys::SaveText(kNewsFor, APP_VER_W); // shown until it's put away, a restart or two included
+    if (sys::ReadText(kNewsFor) != APP_VER_W) return;
+    HMODULE self = GetModuleHandleW(nullptr);
+    HRSRC res = FindResourceW(self, MAKEINTRESOURCEW(kNotesRes), RT_RCDATA);
+    HGLOBAL data = res ? LoadResource(self, res) : nullptr;
+    const char* text = data ? static_cast<const char*>(LockResource(data)) : nullptr;
+    if (!text) return;
+    int n = MultiByteToWideChar(CP_UTF8, 0, text, (int)SizeofResource(self, res), nullptr, 0);
+    std::wstring all(n, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text, (int)SizeofResource(self, res), all.data(), n);
+    auto plain = [](std::wstring s) { // the notes are markdown: bold and code marks go, the words stay
+        for (const wchar_t* mark : {L"**", L"`"})
+            for (size_t at; (at = s.find(mark)) != std::wstring::npos;) s.erase(at, wcslen(mark));
+        return s;
+    };
+    for (size_t at = 0; at < all.size() && news.size() < kNewsMost;) {
+        size_t end = all.find(L'\n', at);
+        std::wstring line = all.substr(at, end == std::wstring::npos ? std::wstring::npos : end - at);
+        at = end == std::wstring::npos ? all.size() : end + 1;
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        if (line.rfind(L"- ", 0) != 0) continue; // only the notes themselves, not the headings
+        News item;
+        if (line.rfind(L"- **", 0) == 0) { // "- **Headline.** the rest"
+            size_t close = line.find(L"**", 4);
+            if (close == std::wstring::npos) continue;
+            item.title = plain(line.substr(4, close - 4));
+            item.text = plain(line.substr(close + 2));
+            while (!item.text.empty() && item.text.front() == L' ') item.text.erase(0, 1);
+        } else {
+            item.title = plain(line.substr(2));
+        }
+        while (!item.title.empty() && (item.title.back() == L'.' || item.title.back() == L' ')) item.title.pop_back();
+        news.push_back(std::move(item));
+    }
+}
+
+void Model::DropNews() {
+    news.clear();
+    sys::SaveText(kNewsFor, L"");
 }

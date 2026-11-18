@@ -58,7 +58,7 @@ struct Host { // what the host already reads; faces never start a source of thei
     void* ctx = nullptr;
 };
 
-enum class Act { kNone, kPanel, kPlay, kNext, kPrev, kTray };
+enum class Act { kNone, kPanel, kPlay, kNext, kPrev, kTray, kCalendar }; // calendar: the host's own calendar, as its home page opens it
 
 // size: 0 small, 1 medium, 2 large; the rectangle's shape decides how much it says
 void Draw(Canvas& c, const Theme& t, int kind, int size, const D2D1_RECT_F& r, const Host& h);

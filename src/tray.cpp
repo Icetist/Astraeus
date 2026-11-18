@@ -28,7 +28,6 @@ struct Item {
     const wchar_t* label;
 };
 const Item kItems[] = {{kSettings, glyph::Settings, L"Settings"}, // reachable whatever pages and tiles are kept
-                       {kConfig, glyph::Edit, L"Edit config"}, // no "open": clicking the icon does that
                        {kStartup, glyph::Rocket, L"Start with Windows"},
                        {kUpdate, 0, L"Check for updates"},
                        {kSepCmd, 0, nullptr},
@@ -56,6 +55,7 @@ Upd upd = Upd::Idle; // outlives the menu: reopening it mid-check still shows th
 std::wstring updTag;
 
 bool UpdBusy() { return upd == Upd::Checking || upd == Upd::Downloading || upd == Upd::Installed; }
+bool UpdMissed() { return upd == Upd::Failed || upd == Upd::Offline || upd == Upd::Unverified; } // a check that didn't get there
 
 std::wstring UpdLabel() {
     switch (upd) {
@@ -64,7 +64,9 @@ std::wstring UpdLabel() {
     case Upd::Installed: return L"Updating to " + updTag + L"\u2026";
     case Upd::Current: return L"Up to date";
     case Upd::Updated: return L"Updated";
-    case Upd::Failed: return L"Couldn't reach GitHub";
+    case Upd::Failed: return L"Couldn't check · tries again later"; // github busy or out of reach: the next scheduled check tries again on its own
+    case Upd::Offline: return L"Offline · tries again later";
+    case Upd::Unverified: return L"Download didn't verify · tries again";
     default: return L"Check for updates";
     }
 }
@@ -179,7 +181,7 @@ void Paint() {
         if (it.cmd == kUpdate) UpdIcon(c, {r.left + 22, cy}, icon);
         else c.Icon(it.glyph, {r.left + 22, cy}, 19, icon, hot);
         bool upRow = it.cmd == kUpdate;
-        if (upRow && upd == Upd::Failed) ink = hot ? kDanger : t.textDim;
+        if (upRow && UpdMissed()) ink = hot ? kDanger : t.textDim;
         c.Text(upRow ? UpdLabel() : it.label, {r.left + 44, r.top, r.right - 56, r.bottom}, Weight::Regular, 13, ink);
         if (it.cmd == kStartup) Switch(c, t, {r.right - 30, cy}, g->knob);
         if (upRow) UpdRow(c, t, r, cy);
@@ -335,7 +337,7 @@ void Show(HWND owner, const Theme& t, bool startup) {
     MONITORINFO mi = {sizeof(mi)};
     GetMonitorInfoW(MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST), &mi);
 
-    if (upd == Upd::Current || upd == Upd::Failed) upd = Upd::Idle; // last answer is old news
+    if (upd == Upd::Current || UpdMissed()) upd = Upd::Idle; // last answer is old news
     g = new Menu();
     g->owner = owner;
     g->t = t;

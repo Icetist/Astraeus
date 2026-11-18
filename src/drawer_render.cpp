@@ -9,6 +9,7 @@
 #include "pages.h"
 #include "chrome.h"
 #include "starfall.h"
+#include "version.h"
 
 namespace {
 
@@ -655,6 +656,28 @@ void Drawer::DrawBody(float h, float dt, double now) {
         canvas->Fill(dismissR, Height(dismissR) / 2, shellNow.accent.Mix(shellNow.accentHi, dhov));
         canvas->Text(L"Dismiss", dismissR, Weight::Medium, 11.5f, shellNow.onAccent, Align::Center);
         if (dh.clicked) model.DismissAlarm(), SyncHide();
+    }
+    if (!model.news.empty() && !model.alarms.Ringing()) { // just updated: what's new, at the top until it's put away
+        constexpr float kHead = 34, kRow = 20, kPad = 10, kGotW = 64, kAllW = 84, kChipH = 24;
+        size_t rows = model.news.size();
+        D2D1_RECT_F card = {area.left, area.top, area.right, area.top + kHead + (float)rows * kRow + kPad};
+        area.top = card.bottom + 6;
+        canvas->Fill(card, 12, shellNow.cardHi.Alpha(0.85f));
+        canvas->Stroke(card, 12, shellNow.accent.Alpha(0.35f), 1);
+        float hy = card.top + kHead / 2;
+        canvas->Icon(glyph::Sparkle, {card.left + 18, hy}, 14, shellNow.accentHi, true);
+        D2D1_RECT_F got = {card.right - 8 - kGotW, hy - kChipH / 2, card.right - 8, hy + kChipH / 2}, all = {got.left - 6 - kAllW, got.top, got.left - 6, got.bottom};
+        canvas->Text(L"New in " APP_VER_W, {card.left + 34, card.top, all.left - 8, card.top + kHead}, Weight::Semi, 12.5f, shellNow.text);
+        if (w::Chip(ui, shellNow, Ui::Id("news.all"), all, L"All notes", false)) sys::OpenUri(L"https://github.com/Icetist/Astraeus/releases/tag/v" APP_VER_W);
+        if (w::Chip(ui, shellNow, Ui::Id("news.got"), got, L"Got it", true)) model.DropNews();
+        for (size_t i = 0; i < rows && i < model.news.size(); ++i) {
+            const Model::News& n = model.news[i];
+            float y = card.top + kHead + (float)i * kRow, tx = card.left + 30;
+            canvas->Dot({card.left + 19, y + kRow / 2}, 2, shellNow.accent);
+            float tw = (std::min)(canvas->Measure(n.title, Weight::Medium, 11.5f), card.right - 12 - tx);
+            canvas->Text(n.title, {tx, y, tx + tw + 1, y + kRow}, Weight::Medium, 11.5f, shellNow.text);
+            if (!n.text.empty() && tx + tw + 12 < card.right - 12) canvas->Text(n.text, {tx + tw + 8, y, card.right - 12, y + kRow}, Weight::Regular, 11.5f, shellNow.textDim); // the rest of the line, as much as fits
+        }
     }
 
     if (pageT < 1) pageT = (std::min)(1.0f, pageT + dt / 0.38f); // 380ms page switch

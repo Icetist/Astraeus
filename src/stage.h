@@ -51,8 +51,24 @@ private:
     void SyncTheme(const Theme& media, float dt);
     void Backdrop(double now);
     void Clock(float y, float k);
-    enum EditPart { kPartClock, kPartLyrics, kPartText, kPartCover, kEditParts }; // the topmost first
+    enum EditPart { kPartClock, kPartCtl, kPartLyrics, kPartText, kPartCover, kEditParts }; // the topmost first; ctl: the vinyl room's buttons
     void Player(float show, float lyr);
+    void VinylPlayer(float show); // the vinyl room: the cover as a sleeve, its record sliding out to play: stage_vinyl.cpp
+    void VinylStep(); // the record's motion for this frame
+    void VinylDisc(D2D1_POINT_2F mid, float side, float k); // the record, its label the cover, turning
+    void VinylArm(D2D1_POINT_2F mid, float side, float k); // and the arm over it
+    void VinylLine(float cx, float y, float w, float k); // the sung line alone, small
+    double vinylAngle = 0; // degrees the record has turned
+    float vinylSlide = 0, vinylSpin = 0, vinylArm = 0; // the record 0 in its sleeve .. 1 out; 0 still .. 1 at speed; the arm 0 resting .. 1 on the record
+    bool vinylScrub = false, vinylScrubbed = false; // the record held and turned by hand; and that press was a turn, so its release isn't a click
+    double vinylScrubAt = 0; // seconds into the song the hand has turned it to
+    double vinylScrubEnd = -10; // when the hand let go: the arm keeps that place while the player catches up
+    float vinylScrubLast = 0; // the hand's last angle about the record's middle, radians
+    bool vinylLanded = false; // the needle's on the record: its sound plays once a landing
+    void VinylScrub(const D2D1_RECT_F& discR, D2D1_POINT_2F disc, uint32_t id); // the hand on the record: turning it seeks, letting go plays from there
+    void VinylLabelText(D2D1_POINT_2F mid, float radius, float k); // the song's name pressed around the label, turning with it
+    int vinylLine = -1; // the sung line shown, and when it came
+    double vinylLineAt = 0;
     void SyncLyrics(double now);
     D2D1_RECT_F LyricRect() const; // the column the lyrics scroll in, right of the cover
     float LyricSize() const;
@@ -91,7 +107,7 @@ private:
     D2D1_POINT_2F editMid{}, barAt{-1, -1}, barGrab{};
     D2D1_SIZE_F editSize{};
     bool barHeld = false;
-    D2D1_RECT_F partCover{}, partText{}, partLyrics{}, partClock{}; // where they landed this frame
+    D2D1_RECT_F partCover{}, partText{}, partLyrics{}, partClock{}, partCtl{}; // where they landed this frame
     void StartEdit();
     void EndEdit();
     void EditNudge(int dx, int dy, bool big); // the arrows: the picked part, a little
