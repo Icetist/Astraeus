@@ -376,6 +376,38 @@ bool Drawer::Overlay(HWND w) {
     return SUCCEEDED(DwmGetWindowAttribute(w, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked; // there but never drawn: a suspended app, another desktop
 }
 
+namespace {
+bool Passing(HWND w) { // a shell flyout, a menu, a tooltip or an app's own popup: over us for a moment, never pushed under
+    wchar_t cls[48] = {};
+    GetClassNameW(w, cls, 48);
+    for (const wchar_t* c : {L"#32768", L"tooltips_class32", L"Windows.UI.Core.CoreWindow", L"XamlExplorerHostIslandWindow", L"MultitaskingViewFrame", L"ForegroundStaging",
+                             L"TopLevelWindowForOverflowXamlIsland", L"NotifyIconOverflowWindow", L"Shell_InputSwitchTopLevelWindow", L"Xaml_WindowedPopupClass", L"HaloBar", L"Astraeus"})
+        if (!wcsncmp(cls, c, wcslen(c))) return true;
+    return GetWindow(w, GW_OWNER) != nullptr;
+}
+}
+
+void Drawer::StayOnTop() { // at sign-in the shell starts after us and its windows land over the strip: the mouse never reaches it until something lifts it
+    if (hidden || stage || opened || dragging) return;
+    RECT me{};
+    if (!GetWindowRect(hwnd, &me)) return;
+    for (HWND w = GetWindow(hwnd, GW_HWNDPREV); w; w = GetWindow(w, GW_HWNDPREV)) {
+        if (!IsWindowVisible(w) || IsIconic(w)) continue;
+        LONG ex = GetWindowLongW(w, GWL_EXSTYLE);
+        if ((ex & WS_EX_LAYERED) && (ex & WS_EX_TRANSPARENT)) continue; // the mouse goes through it
+        BOOL cloaked = FALSE;
+        if (SUCCEEDED(DwmGetWindowAttribute(w, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked) continue;
+        RECT r{}, both{};
+        if (!GetWindowRect(w, &r) || !IntersectRect(&both, &r, &me) || Passing(w)) continue;
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        for (HWND s : strips) SetWindowPos(s, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        wchar_t cls[48] = {};
+        GetClassNameW(w, cls, 48);
+        if (coverCls != cls) coverCls = cls, Log((L"back over " + coverCls).c_str());
+        return;
+    }
+}
+
 bool Drawer::FullOn(HMONITOR m) const { // the window in front fills that whole screen: a game, a video, a presentation
     HWND fg = GetForegroundWindow();
     if (!fg || MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) != m || Overlay(fg)) return false;

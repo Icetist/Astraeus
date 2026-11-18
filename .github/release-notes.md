@@ -1,14 +1,14 @@
-## Astraeus 2.6.6
+## Astraeus 2.6.7
 
 ### New
-- **Alarms.** A new Alarm tab beside Timer, Stopwatch and Focus. Pick a time on the wheel, give it a label, and set it once or every day. When it rings, a banner drops from the pill with Snooze (five more minutes) and Dismiss, and an alarm that went off while the PC was asleep shows up as missed. Thanks to @jorjanion (#12).
-
-### Changed
-- **Chrome is calmer.** The bands now stretch into long, slow streaks like light on brushed metal, instead of bending into rings and blobs, and the rainbow edge is gone.
+- **Pause the timer and focus.** Click the ring to pause, and click it again to carry on from where it stopped.
 
 ### Fixed
-- **The pill on the desktop** no longer comes back cut in half or floating below the top edge after switching Windows users, waking the PC, or changing displays or scaling. Thanks to @jorjanion (#15).
-- Long saved values, like a big list of alarms or to-dos, no longer read back empty.
+- **Astraeus no longer asks Windows for your location over and over.** It was reading the Wi-Fi network's name every few seconds, and Windows counts that as a location read. Now it reads the name once per connection, and checks the signal only while the Network page is open.
+- **The pill is reachable right after startup.** After a fresh boot, a window could end up over the top edge, so hovering there did nothing until the shortcut was used. The pill now moves back over it on its own.
+- **The waveform visualizer keeps moving** for as long as music plays, instead of freezing after a quiet moment until the mouse passed over the pill.
+- **The panel opens on the page you left.** A notification or the pill's bubble no longer makes it open on Tools every time afterwards.
+- A custom timer longer than a day now says "24h at most" instead of "Not a time".
 
 > [!NOTE]
 > The executable is not code-signed yet, so Windows SmartScreen may show an "unknown publisher" warning the first time. Click **More info → Run anyway**.

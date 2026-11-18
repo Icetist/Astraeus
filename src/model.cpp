@@ -407,7 +407,7 @@ void Model::OnStats() {
 }
 
 void Model::Tick() {
-    if (timerOn && GetTickCount64() >= timerEnd) { // timer checked at tick granularity
+    if (timerOn && !timerPaused && GetTickCount64() >= timerEnd) { // timer checked at tick granularity
         timerOn = false;
         timerDone = true; // ui consumes via TimerDone()
     }
@@ -415,7 +415,7 @@ void Model::Tick() {
     SyncExtras();
     if ((fullLyrics || mediaLyrics || PillLyrics()) && hasTrack && track.music && track.duration > 0) // the song's lyrics, fetched while it plays: ready long before fullscreen opens; a cache check once known
         lyrics.Want(track.title, track.artist, track.album, track.duration / 1e7);
-    if (focusOn && GetTickCount64() >= focusEnd) { // a block ends: focus hands over to a break, a break to the next round
+    if (focusOn && !focusPaused && GetTickCount64() >= focusEnd) { // a block ends: focus hands over to a break, a break to the next round
         focusEvent = focusBreak ? 2 : 1;
         if (focusBreak) ++focusRound;
         focusBreak = !focusBreak;
@@ -443,7 +443,7 @@ void Model::Sample(int seconds) {
     if (GlobalMemoryStatusEx(&m))
         for (int k = 0; k < seconds; ++k) ramHist.Push(m.dwMemoryLoad / 100.0f); // percent -> 0..1
     static int netInfo = 0; // the adapter and the wi-fi name: every second while the panel shows them, else every ten
-    net = netSrc.Sample(panelLive || ++netInfo % 10 == 0); // rates are averaged over the gap by the sampler's own clock
+    net = netSrc.Sample(panelLive || ++netInfo % 10 == 0, panelPing); // the wi-fi name once per connection, its signal only while the network page shows it; rates are averaged over the gap by the sampler's own clock
     for (int k = 0; k < seconds; ++k) {
         upHist.Push((float)net.upBps);
         downHist.Push((float)net.downBps);
@@ -759,15 +759,27 @@ void Model::StartFocus(int focus, int rest) {
     focusRound = 1;
     focusLen = (ULONGLONG)focus * 60000;
     focusEnd = GetTickCount64() + focusLen;
+    focusPaused = false;
 }
 
-void Model::StopFocus() { focusOn = false; }
+void Model::StopFocus() { focusOn = focusPaused = false; }
 
 void Model::SkipFocus() {
-    if (focusOn) focusEnd = GetTickCount64(); // the next tick moves on
+    if (focusOn) focusPaused = false, focusEnd = GetTickCount64(); // the next tick moves on
 }
 
-double Model::FocusLeft() const { return focusOn ? (std::max)(0.0, (double)(long long)(focusEnd - GetTickCount64()) / 1000.0) : 0; }
+void Model::FocusPause(bool on) { // what's left is kept while paused, the end moves on when it resumes
+    if (!focusOn || on == focusPaused) return;
+    ULONGLONG now = GetTickCount64();
+    if (on) focusHeld = now >= focusEnd ? 0 : focusEnd - now;
+    else focusEnd = now + focusHeld;
+    focusPaused = on;
+}
+
+double Model::FocusLeft() const {
+    if (focusOn && focusPaused) return focusHeld / 1000.0;
+    return focusOn ? (std::max)(0.0, (double)(long long)(focusEnd - GetTickCount64()) / 1000.0) : 0;
+}
 
 double Model::FocusFrac() const { return focusOn && focusLen ? 1 - FocusLeft() * 1000.0 / focusLen : 0; }
 
@@ -1334,10 +1346,19 @@ void Model::StartTimer(int seconds) {
     timerEnd = GetTickCount64() + timerTotal; // monotonic, unaffected by clock changes
     timerOn = true;
     timerDone = false;
+    timerPaused = false;
 }
 
 void Model::StopTimer() {
-    timerOn = false;
+    timerOn = timerPaused = false;
+}
+
+void Model::TimerPause(bool on) { // what's left is kept while paused, the end moves on when it resumes
+    if (!timerOn || on == timerPaused) return;
+    ULONGLONG now = GetTickCount64();
+    if (on) timerHeld = now >= timerEnd ? 0 : timerEnd - now;
+    else timerEnd = now + timerHeld;
+    timerPaused = on;
 }
 
 bool Model::TimerDone() {
@@ -1353,6 +1374,7 @@ std::wstring Model::TimerName() const {
 
 double Model::TimerLeft() const {
     if (!timerOn) return 0;
+    if (timerPaused) return timerHeld / 1000.0;
     ULONGLONG now = GetTickCount64();
     return now >= timerEnd ? 0 : (timerEnd - now) / 1000.0; // clamp, avoid unsigned underflow
 }

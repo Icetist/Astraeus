@@ -44,7 +44,7 @@ public:
     ~NetSrc();
     NetSrc(const NetSrc&) = delete;
     NetSrc& operator=(const NetSrc&) = delete;
-    Net Sample(bool refreshInfo = true);  // false: reuse last nic/ssid, skips the wlan service call
+    Net Sample(bool refreshInfo = true, bool wlanNow = false);  // false: reuse last nic/ssid; wlanNow: the network page shows the signal, ask wi-fi again
     void FetchWan(HWND notify, UINT msg);  // background lookup, posts msg when done
 private:
     struct Impl;

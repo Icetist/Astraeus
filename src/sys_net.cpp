@@ -205,19 +205,27 @@ struct NetSrc::Impl {
         if (wlan) WlanCloseHandle(wlan, nullptr);
     }
 
-    void UpdInfo() {
+    void UpdInfo(bool wlanNow) {
         const ULONGLONG now = GetTickCount64();
-        if (haveInfo && now - infoTick < kInfoMs) return;  // throttle, nic lookup is costly
+        if (haveInfo && now - infoTick < kInfoMs) return;  // throttle, nic lookup is costly; the network page's signal moves every 10s too
         infoTick = now;
         haveInfo = true;
 
         const NET_LUID oldLuid = luid;
+        const bool wasOnline = online;
         PickNic();
         if (oldLuid.Value != luid.Value) haveCnt = false;  // nic changed, old counters meaningless
+        const bool joined = oldLuid.Value != luid.Value || online != wasOnline;  // a switch of network drops the link for a moment, so it lands here too
 
+        if (!online || ifType != IF_TYPE_IEEE80211) {  // 802.11 = wifi
+            ssid.clear();
+            signal = -1;
+            return;
+        }
+        if (!joined && !wlanNow) return;  // windows counts each wi-fi query as a location read: once per connection, not on a timer
         ssid.clear();
         signal = -1;
-        if (online && ifType == IF_TYPE_IEEE80211) QueryWlan();  // 802.11 = wifi
+        QueryWlan();
     }
 
     void PickNic() {
@@ -357,11 +365,11 @@ NetSrc::NetSrc() {
 
 NetSrc::~NetSrc() = default;
 
-Net NetSrc::Sample(bool refreshInfo) {
+Net NetSrc::Sample(bool refreshInfo, bool wlanNow) {
     Net n;
     try {
         if (!impl) return n;
-        if (refreshInfo || !impl->haveInfo) impl->UpdInfo();
+        if (refreshInfo || !impl->haveInfo || wlanNow) impl->UpdInfo(wlanNow);
         impl->ReadIO(n);
         n.online = impl->online;
         n.adapter = impl->adapter;

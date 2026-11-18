@@ -9,7 +9,7 @@ constexpr size_t kMaxChars = 24;
 
 inline bool Digit(wchar_t c) { return c >= L'0' && c <= L'9'; }
 
-inline int FromClock(const std::wstring& s) { // m:ss or h:mm:ss, read the way the countdown shows them
+inline long long FromClock(const std::wstring& s) { // m:ss or h:mm:ss, read the way the countdown shows them; no cap, Parse applies it
     long long total = 0;
     int parts = 0, digits = 0, part = 0;
     for (size_t i = 0; i <= s.size(); ++i) {
@@ -23,7 +23,7 @@ inline int FromClock(const std::wstring& s) { // m:ss or h:mm:ss, read the way t
         total = total * 60 + part;
         ++parts, digits = 0, part = 0;
     }
-    return parts >= 2 && parts <= 3 && total <= kMaxSec ? (int)total : 0;
+    return parts >= 2 && parts <= 3 ? total : 0;
 }
 
 inline int UnitOf(const std::wstring& w) { // seconds in a unit word, 0 when it isn't one
@@ -33,7 +33,7 @@ inline int UnitOf(const std::wstring& w) { // seconds in a unit word, 0 when it 
     return 0;
 }
 
-inline int Parse(const std::wstring& typed) { // seconds, 0 when it isn't a time
+inline long long Seconds(const std::wstring& typed) { // what was typed, in seconds with no cap; 0 when it isn't a time
     if (typed.size() > kMaxChars) return 0;
     std::wstring s;
     for (wchar_t c : typed) s += c >= L'A' && c <= L'Z' ? (wchar_t)(c + 32) : c;
@@ -59,7 +59,15 @@ inline int Parse(const std::wstring& typed) { // seconds, 0 when it isn't a time
         total += v * unit, last = unit;
     }
     total += 0.5; // the nearest second
-    return total >= 1 && total < kMaxSec + 1 ? (int)total : 0;
+    constexpr double kHuge = 1e12; // 24 typed digits overflow a long long; anything past a day is only "too long"
+    return total < 1 ? 0 : total > kHuge ? (long long)kHuge : (long long)total;
 }
+
+inline int Parse(const std::wstring& typed) { // seconds, 0 when it isn't a time or runs past a day
+    long long s = Seconds(typed);
+    return s <= kMaxSec ? (int)s : 0;
+}
+
+inline bool TooLong(const std::wstring& typed) { return Seconds(typed) > kMaxSec; } // a real time, just longer than a countdown goes
 
 }

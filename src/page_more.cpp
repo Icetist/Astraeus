@@ -20,6 +20,7 @@ void TimerField(PageCtx& p, const D2D1_RECT_F& r);
 namespace {
 
 constexpr float kTimerW = 400; // the timer card; the quick tiles take the rest
+constexpr float kRingR = 40; // the timer and focus rings: their whole face pauses and resumes
 constexpr size_t kClockChars = 7; // 9:59:59; ten hours and up take the smaller size, clear of the stop button
 constexpr float kClockLong = 38;
 constexpr float kQuickGap = 10;
@@ -248,10 +249,12 @@ void Focus(PageCtx& p, const D2D1_RECT_F& r, bool tall) {
     }
     D2D1_POINT_2F rc = {r.left + 72, (r.top + r.bottom) / 2 + 6};
     w::Gauge(ui, t, Ui::Id("tl.focus.ring"), rc, 40, 5, (float)m.FocusFrac());
-    c.Icon(m.focusBreak ? glyph::Coffee : glyph::Timer, rc, 22, t.accent);
-    c.TextSp(m.focusBreak ? std::wstring(L"BREAK") : L"FOCUS  \u00B7  ROUND " + std::to_wstring(m.focusRound), Rect(r.left + 134, rc.y - 40, 240, 14), Weight::Medium, 10,
-             m.focusBreak ? t.textDim : t.accentHi, 1.4f);
-    c.Text(fmt::Clock(std::ceil(m.FocusLeft())), Rect(r.left + 134, rc.y - 26, 220, 64), Weight::Thin, 50, t.text);
+    Ui::Hit ring = ui.Button(Ui::Id("tl.focus.pause"), Rect(rc.x - kRingR, rc.y - kRingR, 2 * kRingR, 2 * kRingR)); // the ring is the pause button
+    if (ring.clicked) m.FocusPause(!m.focusPaused);
+    c.Icon(m.focusPaused ? glyph::Play : ring.hover ? glyph::Pause : m.focusBreak ? glyph::Coffee : glyph::Timer, rc, 22, t.accent);
+    std::wstring head = m.focusBreak ? std::wstring(L"BREAK") : L"FOCUS  \u00B7  ROUND " + std::to_wstring(m.focusRound);
+    c.TextSp(m.focusPaused ? head + L"  \u00B7  PAUSED" : head, Rect(r.left + 134, rc.y - 40, 240, 14), Weight::Medium, 10, m.focusBreak || m.focusPaused ? t.textDim : t.accentHi, 1.4f);
+    c.Text(fmt::Clock(std::ceil(m.FocusLeft())), Rect(r.left + 134, rc.y - 26, 220, 64), Weight::Thin, 50, m.focusPaused ? t.textDim : t.text);
     if (w::IconBtn(ui, t, Ui::Id("tl.focus.skip"), {r.right - 92, rc.y}, 44, glyph::Next, 24)) m.SkipFocus();
     if (w::IconBtn(ui, t, Ui::Id("tl.focus.stop"), {r.right - 44, rc.y}, 44, glyph::Stop, 26, true, true)) m.StopFocus();
 }
@@ -655,9 +658,11 @@ void DrawTools(PageCtx& p) {
         if (m.field == Model::kFieldTimer) m.field = Model::kFieldNone, m.fieldEdit.clear(); // started another way: its field is gone, so it can't keep the keyboard
         D2D1_POINT_2F rc = {timer.left + 72, (timer.top + timer.bottom) / 2 + 6}; // ring left, countdown right
         w::Gauge(ui, t, Ui::Id("tl.ring"), rc, 40, 5, (float)m.TimerFrac());
-        c.Icon(glyph::Timer, rc, 22, t.accent);
+        Ui::Hit ring = ui.Button(Ui::Id("tl.pause"), Rect(rc.x - kRingR, rc.y - kRingR, 2 * kRingR, 2 * kRingR)); // the ring is the pause button
+        if (ring.clicked) m.TimerPause(!m.timerPaused);
+        c.Icon(m.timerPaused ? glyph::Play : ring.hover ? glyph::Pause : glyph::Timer, rc, 22, t.accent);
         std::wstring left = fmt::Clock(std::ceil(m.TimerLeft())); // ceil so 0:00 shows only at end
-        c.Text(left, Rect(timer.left + 134, rc.y - 34, 220, 64), Weight::Thin, left.size() > kClockChars ? kClockLong : 50, t.text);
+        c.Text(left, Rect(timer.left + 134, rc.y - 34, 220, 64), Weight::Thin, left.size() > kClockChars ? kClockLong : 50, m.timerPaused ? t.textDim : t.text);
         if (w::IconBtn(ui, t, Ui::Id("tl.stop"), {timer.right - 44, rc.y}, 44, glyph::Stop, 26, true, true)) m.StopTimer();
     }
 

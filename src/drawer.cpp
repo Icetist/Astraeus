@@ -484,6 +484,7 @@ void Drawer::OnSecond() {
     if (Pinned() && !overFull && !opened && !hidden && !stage && !dragging && !peeking && !alarmBanner && !PlaceStale() && spring.value <= 0.5f) Open(); // pinned: back open after fullscreen, a re-dock or the player
     if (fullApp && !FullOn(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY))) fullApp = false; // the shell's "it's over" can go missing: never stay hidden on its word alone
     SyncHide(); // a fullscreen app on the panel's screen, or gone from it
+    StayOnTop();
     if (++shadeTick >= kShadeSecs) shadeTick = 0, SampleShade();
     if (Clear() && island && !opened && ++inkTick >= kInkSecs) inkTick = 0, SampleInk();
     model.IdleSpectrum();

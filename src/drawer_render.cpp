@@ -996,7 +996,7 @@ bool Drawer::DrawIsland(float h, float dt, double now) {
         static Waveform pillWave;
         bool alive = StepWave(pillWave, model, dt, model.track.playing);
         if (alive) DrawWave(*canvas, pillWave, Rect(x0 - 6, cy - 13, inner + 12, 26), mt, 0.6f * a);
-        moving = alive && !Unseen();
+        moving = (alive || (model.hasTrack && model.track.playing)) && !Unseen(); // a quiet moment drops every bar: keep asking for bands while it plays, or the loop idles and the capture is let go
     }
     if (still) {
         if (cover) {

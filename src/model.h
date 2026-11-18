@@ -211,16 +211,22 @@ public:
     bool focusOn = false, focusBreak = false;
     int focusRound = 1, focusMin = 25, breakMin = 5;
     ULONGLONG focusEnd = 0, focusLen = 0;
+    bool focusPaused = false;
+    ULONGLONG focusHeld = 0; // what's left of the block while paused
     int focusEvent = 0; // 1 a focus block ended, 2 a break ended; main shows it
     void StartFocus(int focus, int rest);
     void StopFocus();
     void SkipFocus(); // to the next block now
+    void FocusPause(bool on);
     double FocusLeft() const;
     double FocusFrac() const;
     void StartPicker(); // the screen color picker
     bool pickPending = false; // asked for: starts once the panel has gone up, so it's not in the way
     void StartTimer(int seconds);
     void StopTimer();
+    void TimerPause(bool on);
+    bool timerPaused = false;
+    ULONGLONG timerHeld = 0; // what's left while paused
     bool TimerDone();
     double TimerLeft() const;
     double TimerFrac() const;

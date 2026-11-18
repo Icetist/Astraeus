@@ -29,7 +29,7 @@ void Field(PageCtx& p, const D2D1_RECT_F& r, int kind, const wchar_t* hint) { //
     if (typing) {
         if (isTimer && !m.fieldEdit.empty()) { // what enter would start, so 1:30 is never a guess
             int seconds = duration::Parse(m.fieldEdit);
-            c.Text(seconds ? fmt::Clock(seconds) : L"Not a time", {r.right - 14 - kReadW, r.top, r.right - 14, r.bottom}, Weight::Medium, 12, seconds ? t.accentHi : kDown, Align::Right);
+            c.Text(seconds ? fmt::Clock(seconds) : duration::TooLong(m.fieldEdit) ? L"24h at most" : L"Not a time", {r.right - 14 - kReadW, r.top, r.right - 14, r.bottom}, Weight::Medium, 12, seconds ? t.accentHi : kDown, Align::Right);
         }
         bool caret = (int)(ui.Now() * 2) % 2 == 0;
         c.Text(m.fieldEdit + (caret ? L"|" : L""), text, Weight::Regular, 12.5f, t.text);

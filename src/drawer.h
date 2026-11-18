@@ -234,6 +234,8 @@ private:
     void Perf(double drawSec);
     void Log(const wchar_t* what) const; // with perflog on: one line about where the panel is, for multi screen reports
     bool FullOn(HMONITOR m) const; // another app fills that screen
+    void StayOnTop(); // a window that came up over the edge strip after us: back over it, as the shortcut does
+    std::wstring coverCls; // the last one that did, logged once
     HMONITOR Refuge() const; // every screen mode: where the pill goes when a game takes its screen
     void Hop(HMONITOR to); // move there now
     void Retract(); // panel and hover state dropped instantly
