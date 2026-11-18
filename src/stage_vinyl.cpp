@@ -26,7 +26,8 @@ constexpr float kCtlRise = 0.04f, kCtlShrink = 0.08f; // with the buttons on: hi
 constexpr float kDisc = 0.94f; // the record a little smaller than its sleeve, as they are
 constexpr float kOutRest = 0.24f, kOutPlay = 0.52f; // how far the record's middle sits right of the sleeve's: peeking out enough to click, and out to play
 constexpr float kSongGap = 48; // dips from the sleeve down to the song
-constexpr float kCtlGap = 150; // and on from the song's top to the seek line, where the buttons sit
+constexpr float kCtlGap = 166; // and on from the song's top to the seek line, where the buttons sit
+constexpr float kLineGap = 104; // and to the sung line's resting place: clear of the song's two lines, outlines and all, in the editor too
 constexpr float kWearR = 0.43f; // the faint ring the record has pressed into the sleeve
 constexpr float kLabelR = 0.30f, kSpindleR = 0.028f, kRimIn = 0.965f; // shares of the record's radius
 constexpr int kGrooves = 32; // rings across the playing surface: enough to read as grooves, few enough to cost nothing
@@ -274,8 +275,11 @@ void Stage::VinylPlayer(float show) {
     std::wstring sub = !has ? L"Start music or a video in any app" : tr.album.empty() || tr.album == tr.artist || s.albumOn < 0.5f ? tr.artist : tr.artist + L"  ·  " + tr.album;
     c.Text(title, Rect(cx - tw / 2, ty, tw, 50 * tk), Weight::Medium, 38 * tk, look.text, Align::Center);
     c.Text(sub, Rect(cx - tw / 2, ty + 50 * tk, tw, 30 * tk), Weight::Light, 20 * tk, look.textDim, Align::Center);
-    VinylLine(cx, ty + 92 * tk, tw, tk);
-    partText = Rect(cx - tw / 2, ty, tw, 124 * tk);
+    partText = Rect(cx - tw / 2, ty, tw, 84 * tk);
+    // the sung line: a part of its own, under the song's resting place, moved and sized apart from it (the layout without lyrics has no column, so its lyrics place is this line's)
+    float lk = k * s.lyrW, lx = W / 2 + s.lyrX * W, ly = atY + S0 / 2 + (kSongGap + kLineGap) * k + s.lyrY * H, lw = (std::min)(W * 0.6f, 900 * k) * s.lyrW;
+    VinylLine(lx, ly, lw, lk);
+    partLyrics = Rect(lx - lw / 2, ly, lw, 28 * lk);
     // the buttons: a part of their own, under the song's resting place, moved and sized apart from it
     float bk = k * s.ctlS, ck = bk * 0.85f, bx = W / 2 + s.ctlX * W, sy = atY + S0 / 2 + (kSongGap + kCtlGap) * k + s.ctlY * H, y = sy + 66 * bk;
     float sw = (std::min)(W * 0.36f, 600 * k) * s.ctlS, half = (std::max)(sw / 2, 230 * ck);

@@ -130,7 +130,8 @@ void Stage::EditParts(const D2D1_RECT_F& bar, float show) {
     const D2D1_RECT_F parts[kEditParts] = {partClock, partCtl, partLyrics, partText, partCover};
     static const wchar_t* const kNames[kEditParts] = {L"Clock", L"Controls", L"Lyrics", L"Song", L"Cover"};
     static const int kPageOf[kEditParts] = {kPageClock, kPageSong, kPageLyrics, kPageSong, kPageCover}; // the buttons' switches live with the song's
-    bool has[kEditParts] = {s.clockOn > 0.5f, model.stageVinyl && model.stageVinylCtl && editTab == 0, editTab == 1, true, true}; // what's in this version
+    bool vinylLine = model.stageVinyl && model.fullLyrics && editTab == 0; // the vinyl room's one sung line: a part of its own
+    bool has[kEditParts] = {s.clockOn > 0.5f, model.stageVinyl && model.stageVinylCtl && editTab == 0, editTab == 1 || vinylLine, true, true}; // what's in this version
     if (!has[editPart]) editPart = kPartCover;
     D2D1_RECT_F boxes[kEditParts];
     for (int i = 0; i < kEditParts; ++i) boxes[i] = Inset(parts[i], -kOutset, -kOutset);
@@ -188,7 +189,8 @@ void Stage::EditParts(const D2D1_RECT_F& bar, float show) {
         if (!bySize && !ui.IsActive(Ui::Id("st.ed.body", i))) continue;
         editDrag = i * 2 + (bySize ? 1 : 0);
         editPart = i;
-        if (editPage != kPageOf[i]) editPage = kPageOf[i], ++editPageNth;
+        int page = vinylLine && i == kPartLyrics ? kPageSong : kPageOf[i]; // the lyrics page belongs to the layout with lyrics: vinyl's line goes with the song
+        if (editPage != page) editPage = page, ++editPageNth;
         editFrom = s;
         editMid = {(parts[i].left + parts[i].right) / 2, (parts[i].top + parts[i].bottom) / 2};
         editSize = {Width(parts[i]), Height(parts[i])};

@@ -1014,14 +1014,7 @@ bool Drawer::DrawIsland(float h, float dt, double now) {
     D2D1_RECT_F art = Rect(x0, cy - 10, 20, 20); // cover thumbnail, rounded like an app icon
     const float barsW = 22; // mini visualizer on the right, or the expand chevron on hover
     float tx = art.right + 7, tw = inner - (tx - x0) - barsW - 6;
-    bool wave = model.vizWave && model.vizOn; // the waveform look: bars the whole width of the pill, behind the cover and the song
-    if (wave) {
-        static Waveform pillWave;
-        bool alive = StepWave(pillWave, model, dt, model.track.playing);
-        if (alive) DrawWave(*canvas, pillWave, Rect(x0 - 6, cy - 13, inner + 12, 26), mt, 0.6f * a);
-        moving = (alive || (model.hasTrack && model.track.playing)) && !Unseen(); // a quiet moment drops every bar: keep asking for bands while it plays, or the loop idles and the capture is let go
-    }
-    if (still) {
+    if (still) { // the pill keeps its own small bars: the media page's waveform look is the media page's
         if (cover) {
             canvas->Art(cover.Get(), coverBlur.Get(), art, 5, a);
         } else {
@@ -1039,9 +1032,9 @@ bool Drawer::DrawIsland(float h, float dt, double now) {
         Color ink = mt.accentHi.Alpha(a);
         canvas->Line({ccx - 6, cy - 3}, {ccx, cy + 3}, ink, 2);
         canvas->Line({ccx, cy + 3}, {ccx + 6, cy - 3}, ink, 2);
-        return wave && moving; // the waveform keeps moving under the chevron
+        return false;
     }
-    for (int i = 0; bars && model.vizOn && !wave && i < 4; ++i) { // the waveform already moves behind it all
+    for (int i = 0; bars && model.vizOn && i < 4; ++i) {
         float v = islandBars[i], bh = 3 + 11 * v;
         canvas->Fill(Rect(bx + i * 6, cy - bh / 2, 3.5f, bh), 1.75f, mt.accent.Mix(mt.accentHi, v).Alpha(a));
     }
