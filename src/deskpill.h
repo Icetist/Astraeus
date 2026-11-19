@@ -40,6 +40,7 @@ public:
     void Measure(HMONITOR on); // the screen's size in dips
     HMONITOR Screen() const { return screen; }
     struct SharedDev {
+        uint32_t gen = 0;
         ComPtr<ID3D11Device> d3d;
         ComPtr<IDXGIFactory2> factory;
         ComPtr<ID2D1Device> d2d;
@@ -229,6 +230,7 @@ private:
     int wallFor = 0; // 0 none, 1 glass only, 2 sharp too
 
     std::shared_ptr<SharedDev> dev;
+    uint32_t devGen = 0;
     ComPtr<ID2D1DeviceContext> ctx;
     ComPtr<IDXGISwapChain2> swap;
     ComPtr<ID2D1Bitmap1> buf, wall;

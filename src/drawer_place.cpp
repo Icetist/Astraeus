@@ -27,9 +27,12 @@ bool IsClass(HWND w, std::initializer_list<const wchar_t*> names) {
     return false;
 }
 
-bool DeskFront(HWND w) { return IsClass(w, {L"Progman", L"WorkerW"}); } // show desktop, or a click on the wallpaper
-bool ShellFront(HWND w) { return DeskFront(w) || IsClass(w, {L"Shell_TrayWnd", L"Shell_SecondaryTrayWnd"}); } // nothing that maximizes or snaps
+}
 
+bool Drawer::DeskFront(HWND w) { return IsClass(w, {L"Progman", L"WorkerW"}); } // show desktop, or a click on the wallpaper
+
+namespace {
+bool ShellFront(HWND w) { return Drawer::DeskFront(w) || IsClass(w, {L"Shell_TrayWnd", L"Shell_SecondaryTrayWnd"}); } // nothing that maximizes or snaps
 }
 
 void Drawer::Place() {
@@ -152,7 +155,8 @@ void Drawer::OnDeskTimer() {
     HWND front = GetForegroundWindow();
     HookFront(front);
     bool view = DeskFront(front) || !AppBelow(); // the desktop has the focus, or nothing of an app's lies under the island
-    pillView = model.LongPill() && desk && (DeskFront(front) || !AppIn(desk->Spot(mon))); // the long pill has its own patch of screen to look under
+    HMONITOR deskMon = model.deskEveryScreen ? MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY) : mon;
+    pillView = model.LongPill() && desk && (DeskFront(front) || !AppIn(desk->Spot(deskMon))); // the long pill has its own patch of screen to look under
     bool overNow = model.LongPill() && desk ? !pillView : !view; // one answer for the theme and the long pill's body: with the long pill on, its own patch of screen
     if (desk) desk->SetOverApp(overNow);
     for (auto& d : extraDesks) {
@@ -183,7 +187,6 @@ void Drawer::ApplyPlace() {
     layNow = model.layout;
     pinNow = model.pinned != 0;
     floatNow = model.floating != 0;
-    deskEveryScreenNow = model.deskEveryScreen != 0;
     if (!screensNow) mon = sys::FindScreen(screenNow); // one screen: the picked one, primary if none
     island = islandLook = false; // a resting pill goes with the old edge; the next second brings it back on the new one
     spring = anim::Spring{};

@@ -619,13 +619,16 @@ void Screens(PageCtx& p, const D2D1_RECT_F& r, bool live) { // your monitors as 
     }
     D2D1_RECT_F pill = {in.right - 44, in.bottom - 18, in.right, in.bottom}; // every screen: the panel follows the mouse
     if (list.size() > 1) {
-        float evOn = ui.Smooth(Ui::Id("set.desk.every.sm"), m.deskEveryScreen ? 1.0f : 0, 14);
-        D2D1_RECT_F every = {in.right - 44 - 6 - 78, in.bottom - 18, in.right - 44 - 6, in.bottom};
+        float evOn = ui.Smooth(Ui::Id("set.desk.every.sm"), m.deskEveryScreen ? 1.0f : 0, 18);
+        D2D1_RECT_F every = {in.right - 44 - 6 - 120, in.bottom - 18, in.right - 44 - 6, in.bottom};
         Ui::Hit eh = live ? ui.Button(Ui::Id("set.desk.every"), every) : Ui::Hit{};
+        if (live) {
+            ui.Mark(Ui::Role::Toggle, m.deskEveryScreen != 0);
+            ui.Name(L"Pill on every screen");
+        }
         c.Fill(every, 9, t.track.Alpha(0.8f).Mix(t.accent, evOn));
-        c.Text(L"Every pill", every, Weight::Medium, 10.5f, t.textDim.Mix(t.onAccent, evOn).Mix(t.text, eh.hover ? 0.4f * (1 - evOn) : 0), Align::Center);
+        c.Text(L"Pill on every screen", every, Weight::Medium, 10.5f, t.textDim.Mix(t.onAccent, evOn).Mix(t.text, eh.hover ? 0.4f * (1 - evOn) : 0), Align::Center);
         if (eh.clicked) m.SetPref(m.deskEveryScreen, L"DeskEveryScreen", m.deskEveryScreen ? 0 : 1);
-        if (eh.hover) ui.Name(L"A pill on every screen");
 
         Ui::Hit ph = live ? ui.Button(Ui::Id("set.screens.all"), pill) : Ui::Hit{};
         c.Fill(pill, 9, t.track.Alpha(0.8f).Mix(t.accent, all));
@@ -637,7 +640,7 @@ void Screens(PageCtx& p, const D2D1_RECT_F& r, bool live) { // your monitors as 
     }
     int shown = chosen >= 0 && list[chosen].number ? list[chosen].number : chosen + 1;
     std::wstring label = list.size() <= 1 ? L"One screen" : m.screens ? L"Every screen · stays put while open" : L"Screen " + std::to_wstring(shown); // open, it never jumps to the screen the mouse moves to
-    c.Text(label, Rect(in.left, in.bottom - 16, Width(in) - (list.size() > 1 ? 134 : 48), 14), Weight::Medium, 11, t.textDim);
+    c.Text(label, Rect(in.left, in.bottom - 16, Width(in) - 48, 14), Weight::Medium, 11, t.textDim);
 }
 
 void Notices(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a little screen with a notification dropping in as a pill

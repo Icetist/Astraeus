@@ -74,6 +74,7 @@ Drawer::Drawer(const Config& c, Model& m) : cfg(c), model(m) {
     layNow = model.layout;
     pinNow = model.pinned != 0;
     floatNow = model.floating != 0;
+    deskEveryNow = model.deskEveryScreen;
     shellFrom = shellTo = shellNow = mediaFrom = mediaTo = mediaNow = Make(shellSeed);
 }
 
@@ -958,14 +959,15 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         model.screenList.clear(); // settings re-reads the monitors next frame
         Place();
         BuildStrips(); // screens may have come or gone
-        if (desk) desk->OnDisplayChange(mon);
+        SyncDeskPills();
+        if (desk) desk->OnDisplayChange(model.deskEveryScreen ? MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY) : mon);
         for (auto& d : extraDesks) if (d) d->OnDisplayChange(d->Screen());
         Log(msg == WM_DPICHANGED ? L"dpi changed" : L"displays changed");
         return 0;
     case WM_SETTINGCHANGE:
         if (wp == SPI_SETWORKAREA) {
             Place();
-            if (desk) desk->OnDisplayChange(mon);
+            if (desk) desk->OnDisplayChange(model.deskEveryScreen ? MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY) : mon);
             for (auto& d : extraDesks) if (d) d->OnDisplayChange(d->Screen());
             Redraw(); // a taskbar came, went or changed size: the sidebar fits the new room
         }
@@ -1457,6 +1459,10 @@ void Drawer::Frame() {
         FreeDev();
         Place();
         BuildStrips();
+    }
+    if (deskEveryNow != model.deskEveryScreen) {
+        deskEveryNow = model.deskEveryScreen;
+        SyncDeskPills();
     }
     SyncHud();
     model.SyncThemeSet(); // the desktop's theme or the over-apps one; settings previews whichever it's editing

@@ -381,8 +381,11 @@ bool DeskPill::SizeBuffers(UINT w, UINT h) {
 }
 
 bool DeskPill::EnsureDev() {
-    if (ctx) return true;
     if (!dev) dev = std::make_shared<SharedDev>();
+    if (ctx && devGen != dev->gen) {
+        FreeDev();
+    }
+    if (ctx) return true;
     if (!dev->Ok()) {
         dev->Reset();
         UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_SINGLETHREADED;
@@ -397,7 +400,9 @@ bool DeskPill::EnsureDev() {
             dev->Reset();
             return false;
         }
+        dev->gen++;
     }
+    devGen = dev->gen;
     RECT wr{};
     GetClientRect(hwnd, &wr);
     DXGI_SWAP_CHAIN_DESC1 d = {};
@@ -951,7 +956,10 @@ void DeskPill::Frame(const Theme& shell) {
     input.pressed = input.released = input.rclick = false;
     input.wheel = 0;
     if (hr == D2DERR_RECREATE_TARGET) {
-        if (dev) dev->Reset();
+        if (dev && devGen == dev->gen) {
+            dev->Reset();
+            dev->gen++;
+        }
         FreeDev();
         dirty = true;
         return;
@@ -959,7 +967,10 @@ void DeskPill::Frame(const Theme& shell) {
     bool calm = !moving && !busy && drag == Drag::None; // only the little bars are moving: a fraction of the frames
     hr = swap->Present(calm && barsMoving ? kBarsSync : 1, 0);
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
-        if (dev) dev->Reset();
+        if (dev && devGen == dev->gen) {
+            dev->Reset();
+            dev->gen++;
+        }
         FreeDev();
         dirty = true;
         return;

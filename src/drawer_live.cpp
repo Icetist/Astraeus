@@ -256,7 +256,7 @@ void Drawer::BoardKey() { // the screen under the mouse: its dashboard steps asi
 
 void Drawer::SyncDeskPills() {
     if (!desk) return;
-    if (!model.deskEveryScreen || (screensNow == 0 && sys::ListScreens().size() <= 1)) {
+    if (!model.deskEveryScreen) {
         extraDesks.clear();
         return;
     }
@@ -266,25 +266,25 @@ void Drawer::SyncDeskPills() {
         return;
     }
     auto shared = desk->Shared();
-    HMONITOR mainMon = mon ? mon : MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+    HMONITOR prim = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
     std::erase_if(extraDesks, [&](const std::unique_ptr<DeskPill>& p) {
         if (!p) return true;
         HMONITOR s = p->Screen();
-        if (s == mainMon) return true;
+        if (s == prim) return true;
         return std::none_of(screens.begin(), screens.end(), [&](const auto& sc) {
             return sys::FindScreen(sc.name) == s;
         });
     });
     for (const auto& sc : screens) {
         HMONITOR m = sys::FindScreen(sc.name);
-        if (!m || m == mainMon) continue;
+        if (!m || m == prim) continue;
         if (std::any_of(extraDesks.begin(), extraDesks.end(), [&](const auto& p) { return p && p->Screen() == m; }))
             continue;
         auto p = std::make_unique<DeskPill>(model);
         p->SetShared(shared);
         if (p->Create()) {
-            p->onOpen = [this, m] { if (m) mon = m; Open(); };
-            p->onEdit = [this, m] { if (m) mon = m; DeskEdit(Model::kEditFromLong); };
+            p->onOpen = [this] { Open(); };
+            p->onEdit = [this] { DeskEdit(Model::kEditFromLong); };
             p->onLook = [this] { SyncThemeNow(); };
             p->Measure(m);
             extraDesks.push_back(std::move(p));
@@ -295,17 +295,26 @@ void Drawer::SyncDeskPills() {
 void Drawer::SyncDesk() {
     if (!desk || desk->Editing()) return;
     if (opened) longHeld = false; // the panel took over: a new call brings it back
+    HMONITOR deskMon = model.deskEveryScreen ? MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY) : mon;
     bool appsLong = model.deskApps && longHeld && !(deskView && !model.LongPill()); // held over an app: back on a desktop that wears the regular pill, it lets go
-    desk->Want(deskOn && (pillView || appsLong) && !hidden && !stage && !opened && !peeking && !alarmBanner && !dragging && (!fullApp || model.pillFull), mon);
+    desk->Want(deskOn && (pillView || appsLong) && !hidden && !stage && !opened && !peeking && !alarmBanner && !dragging && (!fullApp || model.pillFull), deskMon);
     if (model.deskEveryScreen) {
-        SyncDeskPills();
+        HWND front = GetForegroundWindow();
         bool editing = desk->Editing();
+        for (auto& p : extraDesks) {
+            if (!p) continue;
+            if (p->Editing()) { editing = true; break; }
+        }
         for (auto& p : extraDesks) {
             if (!p || p->Editing()) continue;
             HMONITOR em = p->Screen();
+            bool deskViewE = DeskFront(front) || !AppIn(p->Spot(em));
+            bool pillViewE = model.LongPill() && deskViewE;
+            p->SetOverApp(!pillViewE);
+            bool appsLongE = model.deskApps && longHeld && !(deskViewE && !model.LongPill());
             bool full = FullOn(em);
             bool hide = (cfg.hideFull && !model.pillFull && full) || (BoardOn(em) && !stage) || editing;
-            p->Want(deskOn && (pillView || model.deskApps) && !hide && !stage && !opened && !dragging && (!full || model.pillFull), em);
+            p->Want(deskOn && (pillViewE || appsLongE) && !hide && !hidden && !stage && !opened && !peeking && !alarmBanner && !dragging && (!full || model.pillFull), em);
         }
     } else if (!extraDesks.empty()) {
         extraDesks.clear();
@@ -349,19 +358,14 @@ void Drawer::DeskFrame() {
         deskFadeAt = at;
     }
     Theme shell = Shell();
-    bool first = true;
     if (desk && desk->Needs()) {
         desk->Frame(shell);
         if (fading) desk->Refresh();
-        first = false;
     }
     for (auto& d : extraDesks) {
         if (!d || !d->Needs()) continue;
-        if (first || WaitForSingleObject(d->Wait(), 0) == WAIT_OBJECT_0) {
-            d->Frame(shell);
-            if (fading) d->Refresh();
-        }
-        first = false;
+        d->Frame(shell);
+        if (fading) d->Refresh();
     }
 }
 

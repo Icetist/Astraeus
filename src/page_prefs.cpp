@@ -117,7 +117,7 @@ void DeskCard(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the long pill on
     constexpr float kBtnW = 120, kBtnH = 30, kBtnGap = 10, kWordsDrop = 7;
     float by = in.top + 2 * kRowH + 8;
     if (Act(ui, t, Ui::Id("set.desk.edit"), Rect(in.left, by, kBtnW, kBtnH), L"Customize", true, false, live)) m.deskEditAsk = true;
-    std::wstring note = !desk ? L"Desktop pill is off" : m.deskEveryScreen && m.screenList.size() > 1 ? L"A pill on every screen" : L"Or right click the pill";
+    std::wstring note = !desk ? L"Desktop pill is off" : m.deskEveryScreen && m.screenList.size() > 1 ? L"Pill on every screen" : L"Or right click the pill";
     Note(c, t, Rect(in.left + kBtnW + kBtnGap, in.top, Width(in) - kBtnW - kBtnGap, Height(in)), by + kWordsDrop, note);
 }
 
