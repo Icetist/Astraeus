@@ -9,7 +9,7 @@ namespace preview {
 enum Kind {
     kNone,
     kCompact, kPillMusic, kAlbumArt, kArtBg, kVisualizer, kLyrics, // the media card's chips
-    kPillAlways, kTimerBubble, kPinned, kFloating, kPillDesk, kAppsTheme, kKeyOnly, kPillFull, kPillFullOpen,
+    kPillAlways, kTimerBubble, kPinned, kFloating, kPillDesk, kDeskEvery, kAppsTheme, kKeyOnly, kPillFull, kPillFullOpen,
     kPowerPills, kHud, kShelfCatch, kShelfKeep, kShelfWipe, kStageLyrBtn, kStageEditBtn, kTourNext,
     kA11yFollow, kA11yKeys, kA11yReader,
 };

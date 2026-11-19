@@ -60,6 +60,9 @@ public:
 
 private:
     std::unique_ptr<DeskPill> desk; // the long pill: its own window, on its own edge
+    std::vector<std::unique_ptr<DeskPill>> extraDesks; // pills on other monitors when every-screen is on
+    bool deskEveryScreenNow = false;
+    void SyncDeskPills();
     bool pillView = false; // nothing of an app's lies under it
     bool longHeld = false; // it's standing in for the small pill over an app: called by a hover, or held by the stay rules
     void SyncDesk(); // it comes or goes with the desktop, the panel and fullscreen apps
@@ -349,7 +352,7 @@ private:
     float winW = 0; // current window length along the edge in dips
     int edgeNow = 0, screensNow = 0; // placement the window is built for
     std::wstring screenNow; // the picked screen the window is built for
-    bool PlaceStale() const { return model.Edge() != edgeNow || model.screens != screensNow || model.screen != screenNow || model.layout != layNow || (model.pinned != 0) != pinNow || (model.floating != 0) != floatNow; }
+    bool PlaceStale() const { return model.Edge() != edgeNow || model.screens != screensNow || model.screen != screenNow || model.layout != layNow || (model.pinned != 0) != pinNow || (model.floating != 0) != floatNow || (model.deskEveryScreen != 0) != deskEveryScreenNow; }
     HMONITOR mon = nullptr; // screen we live on, null = primary
     std::vector<HWND> strips; // hover strips on other screens, all-screens mode only
     D2D1_MATRIX_3X2_F shapeXform = D2D1::Matrix3x2F::Identity(); // this frame's shape placement, the glass mask reuses it

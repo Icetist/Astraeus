@@ -498,6 +498,7 @@ void Drawer::OnSecond() {
     SyncThemeNow();
     SyncDesk();
     if (desk && !Unseen()) desk->Second(); // locked or dark: no screen reads and no refreshes for nobody
+    for (auto& d : extraDesks) if (d && !Unseen()) d->Second();
     bool smallUp = island && model.pillAlways, longUp = desk && desk->Up();
     auto onPill = [&](int kind) { return (smallUp && (model.pillLeft == kind || model.pillRight == kind)) || (longUp && std::find(model.deskItems.begin(), model.deskItems.end(), kind) != model.deskItems.end()); };
     model.SetPillMeters(!Unseen() && onPill(Model::kWGpu), !Unseen() && (onPill(Model::kWCpu) || onPill(Model::kWRam))); // only while one shows: the gpu counter closes the moment none does
@@ -830,7 +831,8 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         if (wp == kLongTimer) { // lingers as the small pill would, for as long as the mouse is on it or something holds it up
-            if (longHeld && (Stays() || (desk && desk->MouseOn()) || MouseIn())) SetTimer(hwnd, kLongTimer, model.IslandLingerMs((UINT)cfg.closeMs), nullptr);
+            bool onAnyDesk = (desk && desk->MouseOn()) || std::any_of(extraDesks.begin(), extraDesks.end(), [](const auto& p) { return p && p->MouseOn(); });
+            if (longHeld && (Stays() || onAnyDesk || MouseIn())) SetTimer(hwnd, kLongTimer, model.IslandLingerMs((UINT)cfg.closeMs), nullptr);
             else longHeld = false, SyncDesk();
             return 0;
         }
@@ -957,12 +959,14 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         Place();
         BuildStrips(); // screens may have come or gone
         if (desk) desk->OnDisplayChange(mon);
+        for (auto& d : extraDesks) if (d) d->OnDisplayChange(d->Screen());
         Log(msg == WM_DPICHANGED ? L"dpi changed" : L"displays changed");
         return 0;
     case WM_SETTINGCHANGE:
         if (wp == SPI_SETWORKAREA) {
             Place();
             if (desk) desk->OnDisplayChange(mon);
+            for (auto& d : extraDesks) if (d) d->OnDisplayChange(d->Screen());
             Redraw(); // a taskbar came, went or changed size: the sidebar fits the new room
         }
         model.ReadAccess(); // high contrast or the text size may be what changed
@@ -970,6 +974,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == SPI_SETDESKWALLPAPER) {
             if (Clear()) SyncWallTone(), Redraw();
             if (desk) desk->LookBehind();
+            for (auto& d : extraDesks) if (d) d->LookBehind();
         }
         return DefWindowProcW(hwnd, msg, wp, lp);
     case WM_THEMECHANGED: // high contrast's colors themselves
@@ -1324,6 +1329,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             locked = false;
             Place();
             if (desk) desk->OnDisplayChange(mon);
+            for (auto& d : extraDesks) if (d) d->OnDisplayChange(d->Screen());
             Redraw(); // the bars pick up where the music is
         }
         return 0;
@@ -1336,6 +1342,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 if (!screenOff) {
                     Place();
                     if (desk) desk->OnDisplayChange(mon);
+                    for (auto& d : extraDesks) if (d) d->OnDisplayChange(d->Screen());
                     Redraw();
                 }
             }
@@ -1465,7 +1472,10 @@ void Drawer::Frame() {
     bool themes = StepTheme(dt);
     themes = anim::Approach(glassShadeNow, glassShade, kShadeRate, dt, 0.004f) || themes; // the glass tint fading to what's behind it now
     themes = anim::Approach(clearInk, clearInkGoal, kShadeRate, dt, 0.004f) || themes; // clear's ink crosses over, it doesn't snap
-    if (themes && desk) desk->Refresh();
+    if (themes) {
+        if (desk) desk->Refresh();
+        for (auto& d : extraDesks) if (d) d->Refresh();
+    }
     SyncCover();
 
     float h = (std::max)(0.0f, (std::min)(spring.value, Depth() + overshoot)); // clamp to window room

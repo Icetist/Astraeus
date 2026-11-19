@@ -152,6 +152,17 @@ void Paint(Sketch& s, int kind) {
         s.Words(L"The desktop", {screen.left, screen.bottom - 22, screen.right, screen.bottom - 4}, 10.5f, t.text.Alpha(0.6f), Align::Center);
         break;
     }
+    case kDeskEvery: {
+        float sw = 44, sh = 28, gap = 8;
+        float y = (in.top + in.bottom - sh) / 2 - 4;
+        for (int i = 0; i < 2; ++i) {
+            float x = cx - sw - gap / 2 + i * (sw + gap);
+            c.Fill({x, y, x + sw, y + sh}, 4, t.cardHi);
+            c.Fill({x + sw / 2 - 12, y + 2, x + sw / 2 + 12, y + 5}, 2, t.accentHi);
+        }
+        s.Words(L"Pill on every screen", {in.left, in.bottom - 20, in.right, in.bottom - 4}, 11, t.text, Align::Center);
+        break;
+    }
     case kAppsTheme: { // one look on the desktop, another over your apps
         D2D1_RECT_F a = {in.left + 6, in.top + 26, cx - 6, in.top + 58}, b = {cx + 6, in.top + 26, in.right - 6, in.top + 58};
         c.Fill(a, 16, Color{0.94f, 0.94f, 0.96f, 1});
@@ -279,6 +290,7 @@ int ForId(const char* id) {
     static const struct { const char* id; int kind; } kMap[] = {
         {"set.pwr.pills", kPowerPills}, {"set.pill.always", kPillAlways}, {"set.pill.bubble", kTimerBubble}, {"set.pinned", kPinned},
         {"set.floating", kFloating}, {"set.tour.next", kTourNext}, {"set.stage.lyrbtn", kStageLyrBtn}, {"set.stage.editbtn", kStageEditBtn},
+        {"set.desk.every", kDeskEvery},
         {"set.keyonly", kKeyOnly}, {"set.pill.full", kPillFull}, {"set.pill.fullopen", kPillFullOpen}, {"set.shelf.cap", kShelfCatch},
         {"set.shelf.keep", kShelfKeep}, {"set.shelf.wipe", kShelfWipe}, {"set.a11y.follow", kA11yFollow}, {"set.a11y.keys", kA11yKeys},
         {"set.a11y.reader", kA11yReader},

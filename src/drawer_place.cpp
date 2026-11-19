@@ -155,6 +155,12 @@ void Drawer::OnDeskTimer() {
     pillView = model.LongPill() && desk && (DeskFront(front) || !AppIn(desk->Spot(mon))); // the long pill has its own patch of screen to look under
     bool overNow = model.LongPill() && desk ? !pillView : !view; // one answer for the theme and the long pill's body: with the long pill on, its own patch of screen
     if (desk) desk->SetOverApp(overNow);
+    for (auto& d : extraDesks) {
+        if (!d) continue;
+        HMONITOR em = d->Screen();
+        bool ev = DeskFront(front) || !AppIn(d->Spot(em));
+        d->SetOverApp(!ev);
+    }
     if (!opened) { // open, it keeps the theme it opened with: windows switching under it never repaint it mid-use; it catches up as it closes
         model.overApp = model.appsTheme != 0 && overNow;
         SyncThemeNow(); // before it comes or goes: it shows up in the right colors
@@ -177,6 +183,7 @@ void Drawer::ApplyPlace() {
     layNow = model.layout;
     pinNow = model.pinned != 0;
     floatNow = model.floating != 0;
+    deskEveryScreenNow = model.deskEveryScreen != 0;
     if (!screensNow) mon = sys::FindScreen(screenNow); // one screen: the picked one, primary if none
     island = islandLook = false; // a resting pill goes with the old edge; the next second brings it back on the new one
     spring = anim::Spring{};
@@ -184,6 +191,7 @@ void Drawer::ApplyPlace() {
     FreeDev(); // swapchain is sized for the old edge
     Place();
     BuildStrips();
+    SyncDeskPills();
     needsFrame = false;
     SyncHide(); // the new screen may or may not have a game on it
     Log(L"placed from settings");
