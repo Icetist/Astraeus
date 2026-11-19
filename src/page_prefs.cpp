@@ -129,9 +129,10 @@ void PanelOpts(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how the panel b
     Model& m = p.m;
     D2D1_RECT_F in = Box(c, t, r, L"Panel");
     if (SwitchRow(ui, t, "set.pinned", Rect(in.left, in.top, Width(in), kRowH), L"Pinned open", m.pinned != 0, live)) Flip(m, m.pinned, L"Pinned");
-    if (SwitchRow(ui, t, "set.floating", Rect(in.left, in.top + kRowH + 4, Width(in), kRowH), L"Floating card", m.floating != 0, live)) Flip(m, m.floating, L"Floating");
-    Note(c, t, in, in.top + 2 * kRowH + 12, L"Pinned: stays open, maximized windows end where it starts");
-    Note(c, t, in, in.top + 2 * kRowH + 30, L"Floating: a card with a gap from the edge");
+    if (SwitchRow(ui, t, "set.pill.reserve", Rect(in.left, in.top + kRowH + 2, Width(in), kRowH), L"Reserve space for the pill", m.pillReserve != 0, live)) Flip(m, m.pillReserve, L"PillReserve");
+    if (SwitchRow(ui, t, "set.floating", Rect(in.left, in.top + 2 * (kRowH + 2), Width(in), kRowH), L"Floating card", m.floating != 0, live)) Flip(m, m.floating, L"Floating");
+    Note(c, t, in, in.top + 3 * kRowH + 10, L"Pinned: stays open, windows end where it starts");
+    Note(c, t, in, in.top + 3 * kRowH + 24, L"Reserved: maximized windows end below the island");
 }
 
 void Layout(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the panel's shape: the wide island, or a narrow column

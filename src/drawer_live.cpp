@@ -179,7 +179,14 @@ void Drawer::FitSize() { // the panel's size: the ini's, or the compact column's
     shapeH = shapeW = -1;
 }
 
-void Drawer::Reserve(bool on) { // pinned: the shell keeps the panel's room clear, as it does for a taskbar
+bool Drawer::WantReserve() const {
+    if (hidden || stage || overFull) return false;
+    if (Pinned()) return true;
+    if (model.pillReserve && (island || model.pillAlways)) return true;
+    return false;
+}
+
+void Drawer::Reserve(bool on) { // pinned or island reservation: the shell keeps room clear, as it does for a taskbar
     APPBARDATA abd = {sizeof(abd)};
     abd.hWnd = hwnd;
     if (!on) {
@@ -194,7 +201,8 @@ void Drawer::Reserve(bool on) { // pinned: the shell keeps the panel's room clea
     }
     MONITORINFO mi = {sizeof(mi)};
     GetMonitorInfoW(mon ? mon : MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
-    LONG d = (LONG)((Depth() + 2) * scale + 0.5f); // its depth on screen, a hair more so a window's shadow doesn't touch it
+    float wantD = Pinned() ? (Depth() + 2) : (kIslandH + 2);
+    LONG d = (LONG)(wantD * scale + 0.5f); // its depth on screen, a hair more so a window's shadow doesn't touch it
     abd.uEdge = edgeNow == 0 ? ABE_TOP : edgeNow == 1 ? ABE_LEFT : ABE_RIGHT;
     abd.rc = mi.rcMonitor;
     SHAppBarMessage(ABM_QUERYPOS, &abd); // other bars already there move it inward

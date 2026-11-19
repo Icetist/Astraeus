@@ -164,6 +164,7 @@ void Drawer::ShowIsland() {
     KillTimer(hwnd, kReleaseTimer); // keep gpu alive
     KillTimer(hwnd, kCloseTimer);
     island = islandLook = true;
+    if (WantReserve()) Reserve(true);
     model.meter.Refresh(); // bind the level meter to the current output for the mini visualizer
     Resize(kIslandH + overshoot, true); // room for the bounce, trimmed once it settles
     spring.target = kIslandH;
@@ -452,12 +453,14 @@ void Drawer::SyncStay() {
     if (desk && desk->Up()) { // the long pill is the desktop's: no second one beside it
         if (island && !opened && !peeking && !MouseIn()) Close();
         stayWasAlways = false;
+        if (barOn && !WantReserve()) Reserve(false);
         return;
     }
     bool always = Stays();
     if (always && !island && !peeking && !alarmBanner && !dragging && !hidden && !stage && spring.value <= 0.5f) ShowIsland(); // the pill comes back by itself
     else if (!always && stayWasAlways && island && !MouseIn()) Close(); // always was just turned off, or an app came under it
     stayWasAlways = always;
+    if (barOn || WantReserve()) Reserve(WantReserve());
 }
 
 void Drawer::Answer() {
@@ -1449,6 +1452,7 @@ void Drawer::Frame() {
             pageT = 1; // a page slide cut short by closing only advances while the body draws: left behind, it kept the closed strip at full frame rate
             Resize(kStrip, false); // shrink window so it can't block clicks
             ui.Forget();
+            if (barOn && !WantReserve()) Reserve(false);
             SyncDesk(); // the desktop again: the long pill comes back now, not on the next second
             if (model.pickPending) { // the color picker waited for the panel to be gone
                 model.pickPending = false;
