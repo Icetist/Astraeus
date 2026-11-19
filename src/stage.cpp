@@ -301,9 +301,13 @@ LRESULT Stage::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == VK_RIGHT) model.media.Next();
         else if (wp == VK_LEFT) model.media.Previous();
         else if (wp == kVinylCtlKey && model.stageVinyl && role == kWhole && StagePrefs::Combo(kVinylCtlKey) == kVinylCtlKey &&
-                 kVinylCtlKey != StagePrefs::Get().keySplit && kVinylCtlKey != StagePrefs::Get().keySwap) { // the vinyl room's buttons, in and out; never over a two screen key picked as c
+                 kVinylCtlKey != StagePrefs::Get().keySplit && kVinylCtlKey != StagePrefs::Get().keySwap && kVinylCtlKey != StagePrefs::Get().keyWords) { // the vinyl room's buttons, in and out; never over a two screen key picked as c
             model.SetPref(model.stageVinylCtl, L"StageVinylCtl", model.stageVinylCtl ? 0 : 1);
             hint = model.stageVinylCtl ? L"Controls on" : L"Controls off";
+            hintAt = Seconds();
+        } else if (role == kWhole && StagePrefs::Combo((UINT)wp) == StagePrefs::Get().keyWords) { // picked in settings, l unless changed
+            wordsOnly = !wordsOnly; // the lyrics alone on this screen, from any room; again brings the player back
+            hint = wordsOnly ? L"Lyrics only" : L"Song and lyrics";
             hintAt = Seconds();
         } else if (wp == VK_OEM_4 || wp == VK_OEM_6) { // [ and ]: lyrics a touch earlier or later, remembered
             model.lyricOffsetMs = (std::clamp)(model.lyricOffsetMs + (wp == VK_OEM_6 ? 100 : -100), -3000, 3000);
@@ -356,7 +360,7 @@ bool Stage::TakeKey(UINT vk) {
     if (vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU || vk == VK_LWIN || vk == VK_RWIN) return true; // a modifier alone: wait for the key with it
     UINT combo = StagePrefs::Combo(vk);
     if (vk != VK_ESCAPE && !sp.Free(combo, sp.capture)) return sp.clash = true; // taken: it keeps waiting for another, and says why
-    if (vk != VK_ESCAPE) sp.SetKey(sp.capture == 1 ? sp.keySplit : sp.keySwap, sp.capture == 1 ? L"StageSplitKey" : L"StageSwapKey", combo);
+    if (vk != VK_ESCAPE) sp.Pick(sp.capture, combo);
     sp.capture = 0, sp.clash = false;
     return true;
 }
@@ -445,10 +449,11 @@ void Stage::Clock(float y, float k) { // just the time, faint, top center, unles
     wchar_t time[32] = {};
     GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &st, nullptr, time, 32);
     static const StagePrefs::Shape kPlain{};
-    const StagePrefs::Shape& s0 = role == kWhole ? shapeNow[0] : kPlain, &s1 = role == kWhole ? shapeNow[1] : kPlain;
+    int base = model.stageVinyl ? (vinylLyr > 0.5f ? StagePrefs::kVinylLyr : StagePrefs::kVinyl) : 0; // the vinyl room keeps its own clock, in whichever of its versions shows
+    const StagePrefs::Shape& s0 = role == kWhole ? shapeNow[base] : kPlain, &s1 = role == kWhole ? shapeNow[1] : kPlain;
     float e = role == kCover ? 1 : lyrMix * lyrMix * (3 - 2 * lyrMix);
     auto mix = [e](float a, float b) { return a + (b - a) * e; };
-    float laid = mix(role == kWhole ? clockLaid[0] : 1, role == kWhole ? clockLaid[1] : 1), zoom = mix(s0.clockS, s1.clockS) / laid;
+    float laid = mix(role == kWhole ? clockLaid[base] : 1, role == kWhole ? clockLaid[1] : 1), zoom = mix(s0.clockS, s1.clockS) / laid;
     float size = 22 * k * laid, h = 34 * k * laid, cx = W / 2 + mix(s0.clockX, s1.clockX) * W, cy = y + 17 * k + mix(s0.clockY, s1.clockY) * H;
     float on = mix(s0.clockOn, s1.clockOn), alpha = mix(s0.clockA, s1.clockA) * on;
     float tw = canvas->Measure(time, Weight::Light, size);
@@ -493,12 +498,12 @@ void Stage::Seek(const D2D1_RECT_F& r, float show) { // the media page's wave, s
 
 float Stage::LyricSize() const {
     float pick = model.lyricScale / 100.0f; // the settings' lyric size; a new size re-lays the lines, the blur bakes again
-    if (role == kLyrics) return std::clamp((std::min)(H * 0.084f, W * 0.052f), 30.0f, 160.0f) * pick; // a screen of its own: big enough to read across the room
+    if (Shown() == kLyrics) return std::clamp((std::min)(H * 0.084f, W * 0.052f), 30.0f, 160.0f) * pick; // a screen of its own: big enough to read across the room
     return std::clamp(H * 0.06f, 26.0f, 78.0f) * pick; // bold: the sung line is the room's headline
 }
 
 D2D1_RECT_F Stage::LyricRect() const {
-    if (role == kLyrics) { // the whole screen to the words: a wide column, top to bottom, fading at both ends
+    if (Shown() == kLyrics) { // the whole screen to the words: a wide column, top to bottom, fading at both ends
         float cw = W * kWordsW;
         return {(W - cw) / 2, 0, (W + cw) / 2, H};
     }
@@ -855,13 +860,13 @@ void Stage::Frame(const Theme& media) {
     SyncCover(); // first: a new cover brings its colors
     SyncTheme(media, dt);
     bool shapeMoving = false;
-    for (int v = 0; v < 2; ++v) {
+    for (int v = 0; v < StagePrefs::kShapes; ++v) {
         const StagePrefs::Shape& to = StagePrefs::Get().shape[v];
         if (editing) shapeMoving |= StagePrefs::Ease(shapeNow[v], to, kShapeRate, dt);
         else shapeNow[v] = to;
     }
     if (!shapeMoving && editDrag < 0) { // settled: the type at its true size, once
-        for (int v = 0; v < 2; ++v) textLaid[v] = shapeNow[v].textS, clockLaid[v] = shapeNow[v].clockS;
+        for (int v = 0; v < StagePrefs::kShapes; ++v) textLaid[v] = shapeNow[v].textS, clockLaid[v] = shapeNow[v].clockS;
     }
     if (!(shapeMoving || editDrag == kPartLyrics * 2 + 1) || lyrLaidW <= 0) lyrLaidW = Width(LyricRect());
     partLyrics = LyricRect();
@@ -881,22 +886,27 @@ void Stage::Frame(const Theme& media) {
     beat *= std::exp(-dt * 6);
     frameDt = dt;
 
-    if (editing && role != kWhole) EndEdit(); // gone to two screens: each keeps its own layout
+    if (editing && Shown() != kWhole) EndEdit(); // gone to two screens, or to the lyrics alone: each keeps its own layout
     if (editing) lastMove = now; // the controls and the cursor stay
     bool paused = !model.hasTrack || !model.track.playing;
     float show = ui.Smooth(Ui::Id("st.show"), !model.stageHide || now - lastMove < kIdleSec || paused || lyrMenu || ui.Captured() ? 1.0f : 0, 6); // the hide-at-rest switch off: they stay
 
     SyncLyrics(now);
     bool lyrOn = lyrDoc && !lyrDoc->lines.empty();
-    if (editing && (!lyrOn || model.stageVinyl)) editTab = 0; // no words for this song, or the vinyl room's single line: only the version without
-    bool waiting = !lyrDoc && !lyrKey.empty() && now - lyrKeyAt < kLyrWaitSec && (lyrMix > 0.5f || role == kLyrics); // next song's lyrics on their way: the layout holds still
-    if (role != styled) { // the lyrics half sets its words its own way; the full player's are as they always were
-        styled = role;
+    if (editing) { // the room being arranged: vinyl's own pair or the player's, and with words only while this song has them
+        int base = model.stageVinyl ? StagePrefs::kVinyl : 0;
+        bool words = editTab == 1 || editTab == StagePrefs::kVinylLyr;
+        if (editTab - (words ? 1 : 0) != base) words = lyrOn; // just switched rooms: the version this song shows
+        editTab = base + (words && lyrOn ? 1 : 0);
+    }
+    bool waiting = !lyrDoc && !lyrKey.empty() && now - lyrKeyAt < kLyrWaitSec && (lyrMix > 0.5f || Shown() == kLyrics); // next song's lyrics on their way: the layout holds still
+    if (Shown() != styled) { // the lyrics half sets its words its own way; the full player's are as they always were
+        styled = Shown();
         LyricView::Look ls;
-        if (role == kLyrics) ls = {kWordsAt, 0.2f, 0.82f, 120, 8, 0.95f, 0.36f, 0.42f, 1.0f, 0.05f}; // the lyrics half: the sung line big, the rest smaller and dimmer, a slow soft glide
+        if (styled == kLyrics) ls = {kWordsAt, 0.2f, 0.82f, 120, 8, 0.95f, 0.36f, 0.42f, 1.0f, 0.05f}; // the lyrics half: the sung line big, the rest smaller and dimmer, a slow soft glide
         lyrics.Style(ls);
     }
-    if (role == kWhole) { // the words as they were arranged
+    if (Shown() == kWhole) { // the words as they were arranged
         const StagePrefs::Shape& s = shapeNow[1];
         LyricView::Look ls;
         ls.anchor = s.lyrAnchor, ls.dim = s.lyrDim, ls.haze = s.lyrHaze, ls.align = (int)std::lround(StagePrefs::Get().shape[1].lyrAlign);
@@ -906,7 +916,7 @@ void Stage::Frame(const Theme& media) {
     else if (waiting) lyrics.Sync(ctx.Get(), nullptr, lyrLaidW, LyricSize()); // the old song's lines go, dots wait in their place
     else if (lyrMix < 0.001f) lyrics.Sync(ctx.Get(), nullptr, 0, 0);
     lyrics.Prepare(ctx.Get()); // bakes a few lines' blur, never inside the frame
-    bool lyrMoving = anim::Approach(lyrMix, (editing ? editTab == 1 : (lyrOn || waiting) && !model.stageVinyl) ? 1.0f : 0, editing ? kTabRate : kLyrRate, dt, 0.001f); // the record keeps its place: only the sung line shows under it
+    bool lyrMoving = anim::Approach(lyrMix, (editing ? editTab == 1 : (lyrOn || waiting) && (!model.stageVinyl || Shown() == kLyrics)) ? 1.0f : 0, editing ? kTabRate : kLyrRate, dt, 0.001f); // the record keeps its place: only the sung line shows under it, unless the words alone are asked for
     bool idle = now - lastMove >= kIdleSec && !ui.Captured();
     if (idle && !cursorGone) { // resting: the cursor goes too, not only when it next moves
         POINT p;
@@ -926,12 +936,12 @@ void Stage::Frame(const Theme& media) {
     if (mode == 2) ctx->Clear(D2D1::ColorF(0, 0, 0, 0)); // the other rooms start with an opaque fill over every pixel: a clear first would be a whole screen spent twice
     ui.Begin(*canvas, input, dt, now);
     Backdrop(now);
-    if (float dim = role == kWhole ? shapeNow[0].dim + (shapeNow[1].dim - shapeNow[0].dim) * lyrMix : 0; dim > 0.002f) canvas->Fill({0, 0, W, H}, 0, Color{0, 0, 0, dim});
+    if (float dim = Shown() == kWhole ? model.stageVinyl ? shapeNow[vinylLyr > 0.5f ? StagePrefs::kVinylLyr : StagePrefs::kVinyl].dim : shapeNow[0].dim + (shapeNow[1].dim - shapeNow[0].dim) * lyrMix : 0; dim > 0.002f) canvas->Fill({0, 0, W, H}, 0, Color{0, 0, 0, dim});
     if (role != kWhole) canvas->Fill({0, 0, W, H}, 0, Color{0, 0, 0, kPairShade}); // the same shade on both, so the two screens read as one room
-    if (role != kLyrics) Clock(H * 0.035f, std::clamp(H / 900.0f, 0.8f, 1.6f)); // the words' half: only the words
+    if (Shown() != kLyrics) Clock(H * 0.035f, std::clamp(H / 900.0f, 0.8f, 1.6f)); // the words' half: only the words
     bool menuUp = lyrMenu && !lyrKey.empty();
     if (menuUp || editing) ui.Block(true); // a click on the list never reaches the lines under it: a line seeks the song. in the editor it's all there to be moved, not pressed
-    if (role == kLyrics) Words();
+    if (Shown() == kLyrics) Words(); // the lyrics half of a pair, or the words alone on one screen
     else { // the song's half of a pair: the stacked layout, on its own; the vinyl room only on a single screen
         float vin = role == kWhole ? ui.Smooth(Ui::Id("st.vinyl"), model.stageVinyl ? 1.0f : 0, 6) : 0; // the two rooms trade places softly
         auto room = [&](float a, auto draw) {
@@ -952,15 +962,15 @@ void Stage::Frame(const Theme& media) {
     float editShow = ui.Smooth(Ui::Id("st.ed.show"), editing ? 1.0f : 0, 12); // it comes and goes softly
     if (!editing) {
         LyricsChoice(show);
-        EditButton(show);
+        if (Shown() != kLyrics) EditButton(show); // the words alone have nothing to arrange
     }
     if (editShow > 0.01f) {
         if (!editing) ui.Block(true); // on its way out: only a picture
-        EditLayer(lyrOn && !model.stageVinyl, editShow); // vinyl has no lyrics column to arrange
+        EditLayer(lyrOn, editShow); // both versions while the song has words, vinyl's pair or the player's
         ui.Block(false);
     }
     if (lyrMenu) LyricsMenu();
-    if (float nudge = anim::Clamp01((float)(1.6 - (now - nudgeAt)) / 0.3f); nudge > 0.001f && (lyrMix > 0.5f || role == kLyrics) && role != kCover) { // readout while nudging the lyrics
+    if (float nudge = anim::Clamp01((float)(1.6 - (now - nudgeAt)) / 0.3f); nudge > 0.001f && (lyrMix > 0.5f || Shown() == kLyrics) && role != kCover) { // readout while nudging the lyrics
         float k = std::clamp(H / 900.0f, 0.8f, 1.6f), pw = 210 * k, ph = 34 * k;
         D2D1_RECT_F lr = LyricRect(), pill = Rect(lr.left, H * 0.04f, pw, ph);
         wchar_t txt[48];
@@ -982,7 +992,7 @@ void Stage::Frame(const Theme& media) {
         ui.Wake();
         tip = 0; // the key's word takes the place of the opening tip
     }
-    if (tip > 0.001f && role != kLyrics) { // the words' half has no cover to click
+    if (tip > 0.001f && Shown() != kLyrics) { // the words' half has no cover to click
         float k = std::clamp(H / 900.0f, 0.8f, 1.6f), pw = 370 * k, ph = 38 * k;
         D2D1_RECT_F pill = Rect((W - pw) / 2, H * 0.085f + 8 * (1 - tip), pw, ph);
         Color fill = look.bg;

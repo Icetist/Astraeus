@@ -1222,7 +1222,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 Redraw();
                 return 0;
             }
-            if (wp != VK_ESCAPE) sp.SetKey(which == 1 ? sp.keySplit : sp.keySwap, which == 1 ? L"StageSplitKey" : L"StageSwapKey", combo);
+            if (wp != VK_ESCAPE) sp.Pick(which, combo);
             sp.capture = 0, sp.clash = false;
             Redraw();
             return 0;
@@ -1478,8 +1478,7 @@ void Drawer::Frame() {
     ui.Listen(hear);
     ui.Keyboard(keys && model.a11yKeys);
     bool pillCached = false, skyCached = false;
-    if (islandLook && !opened && !peeking && !Side() && !moving && !dragging && !themes && h > 0.5f && std::fabs(h - spring.target) < 0.01f &&
-        !(model.vizWave && model.vizOn)) { // resting pill; the waveform runs behind its still parts, so it's drawn whole
+    if (islandLook && !opened && !peeking && !Side() && !moving && !dragging && !themes && h > 0.5f && std::fabs(h - spring.target) < 0.01f) { // resting pill
         shapeXform = EdgeXform();
         pillCached = PillLayer(h, IslandSpan());
     }
@@ -1542,8 +1541,10 @@ void Drawer::Frame() {
         }
     }
     ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+    if (RevealDraw(dt)) uiBusy = true; // a new look coming in: every frame while it does, under a second
     ctx->PopAxisAlignedClip();
     HRESULT hr = ctx->EndDraw();
+    if (SUCCEEDED(hr)) RevealGrab(); // the old look's last frame, kept as it's shown
     if (hear) access.Publish(ui, *canvas, scale, {0, 0}, opened);
     input.pressed = input.released = input.rclick = false;
     input.wheel = 0;

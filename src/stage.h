@@ -57,7 +57,7 @@ private:
     void VinylStep(); // the record's motion for this frame
     void VinylDisc(D2D1_POINT_2F mid, float side, float k); // the record, its label the cover, turning
     void VinylArm(D2D1_POINT_2F mid, float side, float k); // and the arm over it
-    void VinylLine(float cx, float y, float w, float k); // the sung line alone, small
+    void VinylLine(float cx, float y, float w, float k, float a); // the sung line alone, small, at this much of its strength
     double vinylAngle = 0; // degrees the record has turned
     float vinylSlide = 0, vinylSpin = 0, vinylArm = 0; // the record 0 in its sleeve .. 1 out; 0 still .. 1 at speed; the arm 0 resting .. 1 on the record
     bool vinylScrub = false, vinylScrubbed = false; // the record held and turned by hand; and that press was a turn, so its release isn't a click
@@ -91,8 +91,11 @@ private:
     void EditButton(float show);
     bool editing = false; // the layout is being arranged: stage_edit.cpp
     int editTab = 0, editDrag = -1; // which version; what's held, a part times two, plus one by its corner
-    StagePrefs::Shape shapeNow[2]; // what's on screen: it glides after what's kept, only while editing
-    float textLaid[2] = {1, 1}, clockLaid[2] = {1, 1}; // type is laid out at this scale; on the way to another it's only drawn bigger, nothing laid out anew each frame
+    StagePrefs::Shape shapeNow[StagePrefs::kShapes]; // what's on screen: it glides after what's kept, only while editing
+    float textLaid[StagePrefs::kShapes] = {1, 1, 1, 1}, clockLaid[StagePrefs::kShapes] = {1, 1, 1, 1};
+    bool wordsOnly = false; // the l key: one screen shows only the lyrics, whichever room it's in
+    Role Shown() const { return role == kWhole && wordsOnly ? kLyrics : role; } // what this screen draws: its part of a pair, or the words alone
+    float vinylLyr = 0; // the vinyl room from its layout without words to its layout with them // type is laid out at this scale; on the way to another it's only drawn bigger, nothing laid out anew each frame
     int editPart = kPartCover, editPage = 0, editPageNth = 0; // what's picked, and the panel's page; each opening of a page fades in afresh
     History editHist; // both versions and the scene's switches: undo and redo
     int editRun = 0; // bumps as the editor opens: its undo starts afresh

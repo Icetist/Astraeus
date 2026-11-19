@@ -519,7 +519,8 @@ public:
     static constexpr int kAppHoverMs = 500, kAppHoverMax = 1000, kAppHoverStep = 50; // the dwell over an app window: default, most, slider step
     int appHoverMs = kAppHoverMs; // how long the mouse rests at the edge over an app before the pill drops
     int hud = 0; // astraeus' own volume and brightness pill, experimental, off by default
-    int vizWave = 0; // the media page and fullscreen draw a waveform across, behind the art, instead of the soft glow
+    int vizWave = 0; // fullscreen (and the dashboard's player) draw a waveform across, behind the art, instead of the soft glow
+    int mediaWave = 0; // the media page's own waveform look: off unless picked in settings, whatever fullscreen wears
     int vizFull = 0; // the visualizer ignores how loud windows plays: quiet music still moves it
 
     enum Layout { kLayHorizontal, kLayVertical, kLayouts }; // the panel's shape: the wide island, or a narrow column

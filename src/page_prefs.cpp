@@ -216,7 +216,7 @@ void Media(PageCtx& p, const D2D1_RECT_F& r, bool live) { // what the player is 
         int* field;
         const wchar_t* key; // none: it has its own setter
     } opts[] = {{L"Compact player", &m.mediaCompact, L"MediaCompact"}, {L"Music in the pill", &m.pillMusic, L"PillMusic"}, {L"Album art", &m.showArt, L"ShowArt"},
-                {L"Art background", &m.artBack, nullptr}, {L"Visualizer", &m.vizOn, L"Visualizer"},
+                {L"Art background", &m.artBack, nullptr}, {L"Visualizer", &m.vizOn, L"Visualizer"}, {L"Waveform", &m.mediaWave, L"MediaWave"},
                 {L"Lyrics", &m.mediaLyrics, L"MediaLyrics"}}; // lyrics: beside the song on the media page; fullscreen's are in its own editor
     constexpr int kN = (int)std::size(opts);
     constexpr float kGap = 6, kPad = 24, kSize = 11.5f; // kPad: the chip's own inset both sides, and air
@@ -241,7 +241,7 @@ void Media(PageCtx& p, const D2D1_RECT_F& r, bool live) { // what the player is 
             float wdt = want[j] + extra;
             D2D1_RECT_F q = Rect(x, in.top + 2 + r0 * (h + kGap), wdt, h);
             x += wdt + kGap;
-            static constexpr int kSketch[] = {preview::kCompact, preview::kPillMusic, preview::kAlbumArt, preview::kArtBg, preview::kVisualizer, preview::kLyrics}; // in the chips' order
+            static constexpr int kSketch[] = {preview::kCompact, preview::kPillMusic, preview::kAlbumArt, preview::kArtBg, preview::kVisualizer, preview::kVisualizer, preview::kLyrics}; // in the chips' order; the waveform shows as the visualizer it reshapes
             if (j < (int)std::size(kSketch)) preview::Want(ui, kSketch[j], live && Inside(q, ui.In().mouse));
             if (!w::Chip(ui, t, Ui::Id("set.media", j), q, opts[j].label, *opts[j].field != 0) || !live) continue;
             if (opts[j].key) Flip(m, *opts[j].field, opts[j].key);
@@ -331,17 +331,19 @@ void Fullscreen(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the keys that 
     const Theme& t = p.shell;
     StagePrefs& sp = StagePrefs::Get();
     D2D1_RECT_F in = Box(c, t, r, L"Fullscreen keys");
-    const wchar_t* labels[2] = {L"Two screens", L"Swap screens"};
-    UINT keys[2] = {sp.keySplit, sp.keySwap};
-    for (int i = 0; i < 2; ++i) { // label left, the key on the right: click it, then press the new one
-        D2D1_RECT_F row = Rect(in.left, in.top + i * (kRowH + 4), Width(in), kRowH);
+    static const wchar_t* const labels[StagePrefs::kKeys] = {L"Two screens", L"Swap screens", L"Lyrics only"};
+    constexpr float kNoteRoom = 16; // the line under the keys
+    float step = (std::min)(kRowH + 4, (Height(in) - kNoteRoom) / StagePrefs::kKeys), rowH = step - 4; // three to the card: rows as tall as fit
+    for (int i = 0; i < StagePrefs::kKeys; ++i) { // label left, the key on the right: click it, then press the new one
+        D2D1_RECT_F row = Rect(in.left, in.top + i * step, Width(in), rowH);
         bool waiting = sp.capture == i + 1;
         c.Text(labels[i], {row.left, row.top, row.right - kKeyW - 8, row.bottom}, Weight::Regular, 11.5f, t.text);
         D2D1_RECT_F chip = {row.right - kKeyW, row.top + 1, row.right, row.bottom - 1};
-        if (w::Chip(ui, t, Ui::Id("set.fullkey", i), chip, waiting ? std::wstring(L"Press a key") : StagePrefs::Name(keys[i]), waiting) && live) sp.capture = waiting ? 0 : i + 1, sp.clash = false;
+        if (w::Chip(ui, t, Ui::Id("set.fullkey", i), chip, waiting ? std::wstring(L"Press a key") : StagePrefs::Name(sp.KeyOf(i + 1)), waiting) && live) sp.capture = waiting ? 0 : i + 1, sp.clash = false;
     }
-    if (sp.capture && ui.In().pressed && !Inside({in.right - kKeyW, in.top, in.right, in.top + 2 * (kRowH + 4)}, ui.In().mouse)) sp.capture = 0; // clicked away: the key stays as it was
-    Note(c, t, in, in.top + 2 * (kRowH + 4) + 2, sp.capture ? (sp.clash ? L"That key is already used in fullscreen" : L"Esc keeps the key it had") : L"While fullscreen is open, with a second screen");
+    float end = in.top + StagePrefs::kKeys * step;
+    if (sp.capture && ui.In().pressed && !Inside({in.right - kKeyW, in.top, in.right, end}, ui.In().mouse)) sp.capture = 0; // clicked away: the key stays as it was
+    Note(c, t, in, end + 2, sp.capture ? (sp.clash ? L"That key is already used in fullscreen" : L"Esc keeps the key it had") : L"While fullscreen is open");
 }
 
 void Display(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how big everything is

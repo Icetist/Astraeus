@@ -246,6 +246,17 @@ private:
     void SetShell(const Theme& t);
     Theme Make(Seed s) const; // palette for a seed in the current appearance
     void SyncLook(); // appearance changed: crossfade palettes, swap presentation for glass
+    // the look changing as a reveal in its own style, over the open panel (drawer_reveal.cpp): the old look's last frame kept once, cut away as the new one grows in
+    ComPtr<ID2D1Bitmap1> revealSnap;
+    ComPtr<ID2D1Bitmap> revealBlur; // glass: the same frame softened once, so the old look frosts over as it goes
+    std::vector<uint8_t> revealPix; // that frame in memory, not on the gpu: into or out of glass the device is made anew, and it comes along
+    UINT revealPxW = 0, revealPxH = 0;
+    int revealStage = 0; // 0 idle, 1 this frame still wears the old look and is kept as it's shown, 2 kept: the new look comes in under it
+    int revealStyle = 0; // which reveal: the new look's own
+    float revealT = 1; // 0 .. 1 through it
+    D2D1_POINT_2F revealAt{}; // where it grows from: the pointer
+    bool RevealDraw(float dt); // over the frame, true while it runs
+    void RevealGrab(); // the frame just drawn, kept for it
     void SyncAccent(); // accent source or custom color changed
     void SyncTyping(); // hex field focused: take the keyboard, give it back after
     struct Glass; // live blur behind the panel, only while the glass appearance is on

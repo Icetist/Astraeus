@@ -27,6 +27,7 @@ constexpr float kDisc = 0.94f; // the record a little smaller than its sleeve, a
 constexpr float kOutRest = 0.24f, kOutPlay = 0.52f; // how far the record's middle sits right of the sleeve's: peeking out enough to click, and out to play
 constexpr float kSongGap = 48; // dips from the sleeve down to the song
 constexpr float kCtlGap = 166; // and on from the song's top to the seek line, where the buttons sit
+constexpr float kVersionRate = 3.2f, kVersionRateEdit = 7; // between vinyl's two layouts: calm for a new song, brisk in the editor
 constexpr float kLineGap = 104; // and to the sung line's resting place: clear of the song's two lines, outlines and all, in the editor too
 constexpr float kWearR = 0.43f; // the faint ring the record has pressed into the sleeve
 constexpr float kLabelR = 0.30f, kSpindleR = 0.028f, kRimIn = 0.965f; // shares of the record's radius
@@ -192,8 +193,8 @@ void Stage::VinylScrub(const D2D1_RECT_F& discR, D2D1_POINT_2F disc, uint32_t id
     }
 }
 
-void Stage::VinylLine(float cx, float y, float w, float k) {
-    if (!lyrDoc || lyrDoc->lines.empty() || !model.fullLyrics || !model.hasTrack) {
+void Stage::VinylLine(float cx, float y, float w, float k, float a) {
+    if (a <= 0.01f || !lyrDoc || lyrDoc->lines.empty() || !model.fullLyrics || !model.hasTrack) {
         vinylLine = -1;
         return;
     }
@@ -207,7 +208,7 @@ void Stage::VinylLine(float cx, float y, float w, float k) {
     if (n < 0 || lines[n].text.empty()) return;
     float in = anim::Clamp01((float)(now - vinylLineAt) / kLineFade);
     if (in < 1) ui.Wake();
-    canvas->Text(lines[n].text, Rect(cx - w / 2, y + 4 * k * (1 - in), w, 28 * k), Weight::Light, 18 * k, look.textDim.Alpha(0.85f * in), Align::Center);
+    canvas->Text(lines[n].text, Rect(cx - w / 2, y + 4 * k * (1 - in), w, 28 * k), Weight::Light, 18 * k, look.textDim.Alpha(0.85f * in * a), Align::Center);
 }
 
 void Stage::VinylPlayer(float show) {
@@ -215,7 +216,9 @@ void Stage::VinylPlayer(float show) {
     Canvas& c = *canvas;
     const sys::Track& tr = model.track;
     bool has = model.hasTrack;
-    const StagePrefs::Shape& s = shapeNow[0]; // arranged as the layout without lyrics: the words here are only ever one line
+    bool words = editing ? editTab == StagePrefs::kVinylLyr : lyrDoc && !lyrDoc->lines.empty(); // the version this song shows, or the one being arranged
+    if (anim::Approach(vinylLyr, words ? 1.0f : 0, editing ? kVersionRateEdit : kVersionRate, frameDt, 0.001f)) ui.Wake();
+    const StagePrefs::Shape s = StagePrefs::Mix(shapeNow[StagePrefs::kVinyl], shapeNow[StagePrefs::kVinylLyr], Ease(vinylLyr)); // the vinyl room's own pair of layouts: arranging them never moves the others
     float k = K();
     float ctl = ui.Smooth(Ui::Id("st.v.ctl"), model.stageVinylCtl ? 1.0f : 0, 8); // the buttons coming in: the record rises and shrinks a little to make their room
     float S0 = (std::min)(H * kSleeveH, W * kSleeveW) * (1 - kCtlShrink * ctl), atY = H * (kSleeveAt - kCtlRise * ctl);
@@ -278,7 +281,7 @@ void Stage::VinylPlayer(float show) {
     partText = Rect(cx - tw / 2, ty, tw, 84 * tk);
     // the sung line: a part of its own, under the song's resting place, moved and sized apart from it (the layout without lyrics has no column, so its lyrics place is this line's)
     float lk = k * s.lyrW, lx = W / 2 + s.lyrX * W, ly = atY + S0 / 2 + (kSongGap + kLineGap) * k + s.lyrY * H, lw = (std::min)(W * 0.6f, 900 * k) * s.lyrW;
-    VinylLine(lx, ly, lw, lk);
+    VinylLine(lx, ly, lw, lk, Ease(vinylLyr)); // only in the version with words
     partLyrics = Rect(lx - lw / 2, ly, lw, 28 * lk);
     // the buttons: a part of their own, under the song's resting place, moved and sized apart from it
     float bk = k * s.ctlS, ck = bk * 0.85f, bx = W / 2 + s.ctlX * W, sy = atY + S0 / 2 + (kSongGap + kCtlGap) * k + s.ctlY * H, y = sy + 66 * bk;

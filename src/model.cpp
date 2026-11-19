@@ -241,6 +241,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     appHoverMs = (std::clamp)(sys::ReadNum(L"AppHoverMs", kAppHoverMs), 0, kAppHoverMax);
     hud = flag(L"Hud", 0); // experimental: off unless asked for
     vizWave = flag(L"VizWave", 0);
+    mediaWave = flag(L"MediaWave", 0);
     vizFull = flag(L"VizFull", 0);
     layout = (std::clamp)(sys::ReadNum(L"Layout", kLayHorizontal), 0, kLayouts - 1);
     pinned = flag(L"Pinned", 0);

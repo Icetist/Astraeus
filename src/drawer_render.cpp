@@ -350,6 +350,8 @@ void Drawer::SyncMediaLyrics(double now) {
 }
 
 void Drawer::FreeDev() {
+    revealSnap.Reset(); // made on this device; the frame in memory stays, and the next device draws it (into or out of glass)
+    revealBlur.Reset();
     if (ctx) ctx->SetTarget(nullptr); // nothing left pointing at the backbuffer
     mediaLyr = LyricView{}; // its baked lines belong to this device
     canvas.reset();
@@ -469,12 +471,34 @@ void Drawer::SyncLook() {
     int tint = clear ? (wallLight ? 0xFFFFFF : -1) : glassy ? model.GlassTint() : -1; // clear's panels take the wallpaper's side
     if (look == lookNow && bg == bgNow && tint == tintNow) return;
     bool rebuild = glassy != Frosted() && ctx; // glass draws through a different pipeline
+    bool reveal = ctx && backBuf && opened && !model.reduceMotion; // in its own style over the open panel; the old frame is kept in memory, so a device made anew for glass still has it
+    if (reveal && revealStage == 0) { // this frame still wears the old look: it's kept as it's shown, the new one comes in under it next
+        revealStage = 1;
+        Redraw();
+        return;
+    }
+    if (reveal && revealStage == 1) return; // waiting on that frame
+    bool sweep = reveal && revealStage == 2;
+    revealStage = 0;
     lookNow = look;
     bgNow = bg;
     tintNow = tint;
     if (rebuild) FreeDev(); // the caller rebuilds it right away for the new appearance
     SetShell(Make(shellSeed)); // media follows unless album tinted
     if (coverSrc && cfg.albumCol) SetMedia(Make(mediaSeed));
+    if (!sweep) {
+        revealSnap.Reset();
+        revealPix.clear();
+        return;
+    }
+    shellNow = shellFrom = shellTo, mediaNow = mediaFrom = mediaTo, shellT = mediaT = 1; // the new look whole at once: the reveal is the change
+    revealStyle = shellNow.stars ? 3 : shellNow.chrome ? 2 : glassy ? 1 : 0; // starfall, chrome, glass or clear, the plain looks
+    POINT p{};
+    D2D1_SIZE_F sz = {revealPxW / scale, revealPxH / scale}; // the kept frame's size, in dips
+    bool at = GetCursorPos(&p) && ScreenToClient(hwnd, &p);
+    revealAt = {p.x / scale, p.y / scale};
+    if (!at || revealAt.x < 0 || revealAt.y < 0 || revealAt.x > sz.width || revealAt.y > sz.height) revealAt = {sz.width / 2, 0}; // the pointer's off the panel: from the top middle
+    revealT = 0;
 }
 
 void Drawer::SyncThemeNow() { // frames skip a closed panel: left to them, the theme would wait for the next time it opens

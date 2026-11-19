@@ -8,8 +8,12 @@ struct StagePrefs {
     static constexpr UINT kCtrl = 0x100, kAlt = 0x200, kShift = 0x400; // a key: its virtual key code with these held
     int split = 0; // two screens: the song on one, its lyrics on the other
     int swap = 0; // which of the two shows what: 0 the song on the screen it opened on
-    UINT keySplit = 'S', keySwap = 'W'; // free in fullscreen: esc, f, f11, space, the arrows and [ ] are taken
-    int capture = 0; // settings is waiting for a key: 1 the split's, 2 the swap's; never saved
+    UINT keySplit = 'S', keySwap = 'W', keyWords = 'L'; // free in fullscreen: esc, f, f11, space, the arrows and [ ] are taken; words: the lyrics alone
+    static constexpr int kKeys = 3;
+    int capture = 0; // settings is waiting for a key: 1 the split's, 2 the swap's, 3 the words'; never saved
+    UINT& Key(int which) { return which == 1 ? keySplit : which == 2 ? keySwap : keyWords; } // 1 .. kKeys
+    UINT KeyOf(int which) const { return which == 1 ? keySplit : which == 2 ? keySwap : keyWords; }
+    void Pick(int which, UINT combo); // that key set and kept
     bool clash = false; // the last key pressed for it was taken: fullscreen's own, or the other one's
     bool Free(UINT combo, int which) const; // a key for that one: not the other's, nor one fullscreen already answers
 
@@ -23,7 +27,9 @@ struct StagePrefs {
         float ctlS = 1, ctlX = 0, ctlY = 0; // the vinyl room's buttons, a part of their own there
     };
     static constexpr float kCtlLo = 0.6f, kCtlHi = 1.6f;
-    Shape shape[2]; // 0 a song without lyrics, 1 with them
+    static constexpr int kShapes = 4, kVinyl = 2, kVinylLyr = 3;
+    Shape shape[kShapes]; // 0 a song without lyrics, 1 with them, 2 the vinyl room without, 3 with: each arranged apart, so one never moves another
+    static Shape Mix(const Shape& a, const Shape& b, float t); // part way from one layout to the other, field by field
     static constexpr float kCoverLo = 0.5f, kCoverHi = 1.6f, kTextLo = 0.6f, kTextHi = 1.5f, kLyrWLo = 0.5f, kLyrWHi = 1.3f, kLyrHLo = 0.4f, kLyrHHi = 1.2f;
     static constexpr float kRoundHi = 0.5f, kGlowHi = 1.6f, kClockLo = 0.6f, kClockHi = 3, kClockALo = 0.1f, kDimHi = 0.7f, kLyrDimLo = 0.08f, kLyrDimHi = 0.8f, kHazeHi = 1.5f, kAnchorLo = 0.12f, kAnchorHi = 0.6f;
     void SaveShape();

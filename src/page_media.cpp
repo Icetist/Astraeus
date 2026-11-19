@@ -46,9 +46,10 @@ Waveform vizWave;
 void DrawViz(PageCtx& p, const D2D1_RECT_F& r) { // soft light swelling up from the bottom of the card: bass on the left, treble on the right
     if (!p.m.vizOn || !p.m.hasTrack) return;
     Ui& ui = p.ui;
-    if (p.m.vizWave) { // or bars the whole width of the card, behind the art and the words
-        if (!StepWave(vizWave, p.m, ui.Dt(), p.m.track.playing)) return;
-        ui.KeepAlive();
+    if (p.m.mediaWave) { // or bars the whole width of the card, behind the art and the words: its own switch in settings
+        bool alive = StepWave(vizWave, p.m, ui.Dt(), p.m.track.playing);
+        if (alive || (p.m.hasTrack && p.m.track.playing)) ui.KeepAlive(); // a quiet moment drops every bar: frames go on while it plays, or nothing asks for the music again and its capture is let go
+        if (!alive) return;
         D2D1_ROUNDED_RECT card = D2D1::RoundedRect(r, 24, 24);
         DrawWave(ui.C(), vizWave, Inset(r, 18, Height(r) * 0.12f), p.media, 0.55f, &card);
         return;

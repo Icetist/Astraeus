@@ -33,7 +33,7 @@ float PageH(int page, int tab, int songChips, bool vinyl) {
     case kPageLyrics: return kChipRow + 4 * kSlideRow;
     case kPageClock: return kChipRow + 2 * kSlideRow;
     case kPageScene: return 4 * kChipRow + 3 * kSlideRow;
-    default: return 2 * (kKeyH + kChipGap) + kNoteH;
+    default: return StagePrefs::kKeys * (kKeyH + kChipGap) + kNoteH;
     }
 }
 
@@ -49,7 +49,7 @@ static_assert(sizeof(StagePrefs::Shape) == kShapeFloats * sizeof(float), "a layo
 History::Snap Stage::EditSnap() const { // both versions, then the scene's own switches and numbers
     const StagePrefs& sp = StagePrefs::Get();
     History::Snap s;
-    s.reserve(2 * kShapeFloats + kScenePrefs);
+    s.reserve(StagePrefs::kShapes * kShapeFloats + kScenePrefs);
     for (const StagePrefs::Shape& sh : sp.shape) {
         const float* f = reinterpret_cast<const float*>(&sh);
         s.insert(s.end(), f, f + kShapeFloats);
@@ -60,15 +60,15 @@ History::Snap Stage::EditSnap() const { // both versions, then the scene's own s
 
 void Stage::EditLoad(const History::Snap& s) {
     StagePrefs& sp = StagePrefs::Get();
-    if (s.size() != 2 * kShapeFloats + kScenePrefs) return;
-    for (int i = 0; i < 2; ++i) std::copy(s.begin() + i * kShapeFloats, s.begin() + (i + 1) * kShapeFloats, reinterpret_cast<float*>(&sp.shape[i]));
+    if (s.size() != StagePrefs::kShapes * kShapeFloats + kScenePrefs) return;
+    for (int i = 0; i < StagePrefs::kShapes; ++i) std::copy(s.begin() + i * kShapeFloats, s.begin() + (i + 1) * kShapeFloats, reinterpret_cast<float*>(&sp.shape[i]));
     sp.SaveShape();
     struct Pref {
         int* field;
         const wchar_t* key;
     } prefs[] = {{&model.stageArt, L"StageArtBg"}, {&model.stageThump, L"StageThump"}, {&model.stageHide, L"StageHide"}, {&model.vizOn, L"Visualizer"},
                  {&model.vizWave, L"VizWave"}, {&model.vizFull, L"VizFull"}, {&model.vizGain, L"VizGain"}, {&model.vizAlpha, L"VizAlpha"}, {&model.stageVinyl, L"StageVinyl"}, {&model.stageVinylCtl, L"StageVinylCtl"}, {&model.stageVinylSpeed, L"StageVinylSpeed"}, {&model.stageVinylSound, L"StageVinylSound"}, {&model.stageVinylLabel, L"StageVinylLabel"}};
-    size_t at = 2 * kShapeFloats;
+    size_t at = StagePrefs::kShapes * kShapeFloats;
     for (const Pref& p : prefs) {
         int v = (int)s[at++];
         if (*p.field != v) model.SetPref(*p.field, p.key, v); // only what changed is written
@@ -80,7 +80,7 @@ void Stage::StartEdit() {
     editing = barAuto = true;
     lyrMenu = false;
     editDrag = -1;
-    editTab = lyrMix > 0.5f ? 1 : 0; // the one it's showing
+    editTab = model.stageVinyl ? StagePrefs::kVinyl : lyrMix > 0.5f ? 1 : 0; // the one it's showing
     editPart = kPartCover;
     editPage = kPageCover;
     ++editPageNth;
@@ -107,7 +107,7 @@ void Stage::EditNudge(int dx, int dy, bool big) {
 
 D2D1_RECT_F Stage::BarRect(float show) {
     bool extras = !model.stageVinyl || model.stageVinylCtl; // as the song page lays its switches out
-    int songChips = (model.stageVinyl ? 1 : 0) + (extras ? 2 : 0) + (editTab == 0 ? 2 : 0);
+    int songChips = (model.stageVinyl ? 1 : 0) + (extras ? 2 : 0) + (editTab != 1 ? 2 : 0);
     float want = (std::min)(kPanelChrome + PageH(editPage, editTab, songChips, model.stageVinyl != 0), H - 2 * kEdge);
     float h = ui.Smooth(Ui::Id("st.ed.h"), want, 16), w = (std::min)(kPanelW, W - 2 * kEdge);
     if (barAuto) { // it keeps out of the way of what's picked, on its own, until it's been put somewhere by hand
@@ -130,8 +130,8 @@ void Stage::EditParts(const D2D1_RECT_F& bar, float show) {
     const D2D1_RECT_F parts[kEditParts] = {partClock, partCtl, partLyrics, partText, partCover};
     static const wchar_t* const kNames[kEditParts] = {L"Clock", L"Controls", L"Lyrics", L"Song", L"Cover"};
     static const int kPageOf[kEditParts] = {kPageClock, kPageSong, kPageLyrics, kPageSong, kPageCover}; // the buttons' switches live with the song's
-    bool vinylLine = model.stageVinyl && model.fullLyrics && editTab == 0; // the vinyl room's one sung line: a part of its own
-    bool has[kEditParts] = {s.clockOn > 0.5f, model.stageVinyl && model.stageVinylCtl && editTab == 0, editTab == 1 || vinylLine, true, true}; // what's in this version
+    bool vinylLine = model.stageVinyl && model.fullLyrics && editTab == StagePrefs::kVinylLyr; // the vinyl room's one sung line: a part of its own
+    bool has[kEditParts] = {s.clockOn > 0.5f, model.stageVinyl && model.stageVinylCtl && editTab >= StagePrefs::kVinyl, editTab == 1 || vinylLine, true, true}; // what's in this version
     if (!has[editPart]) editPart = kPartCover;
     D2D1_RECT_F boxes[kEditParts];
     for (int i = 0; i < kEditParts; ++i) boxes[i] = Inset(parts[i], -kOutset, -kOutset);
@@ -289,7 +289,7 @@ void Stage::EditPage(const D2D1_RECT_F& body, bool live) { // the picked page's 
             if (chip("st.ed.song.extras", L"Shuffle and repeat", s.extrasOn > 0.5f)) flip(s.extrasOn);
             if (chip("st.ed.song.times", L"Times", s.timesOn > 0.5f)) flip(s.timesOn);
         }
-        if (editTab == 0) { // the layout with lyrics has no room for these anyway
+        if (editTab != 1) { // the layout with lyrics has no room for these anyway
             if (chip("st.ed.song.app", L"App name", s.appOn > 0.5f)) flip(s.appOn);
             if (chip("st.ed.song.album", L"Album name", s.albumOn > 0.5f)) flip(s.albumOn);
         }
@@ -326,16 +326,15 @@ void Stage::EditPage(const D2D1_RECT_F& body, bool live) { // the picked page's 
         percent("st.ed.sc.dim", L"Darken the background", s.dim, 0, StagePrefs::kDimHi, 100);
         break;
     default: {
-        static const wchar_t* const kLabels[2] = {L"Two screens", L"Swap screens"};
-        UINT keys[2] = {sp.keySplit, sp.keySwap};
-        for (int i = 0; i < 2; ++i) { // the same two as in settings: click it, then press the new one
+        static const wchar_t* const kLabels[StagePrefs::kKeys] = {L"Two screens", L"Swap screens", L"Lyrics only"};
+        for (int i = 0; i < StagePrefs::kKeys; ++i) { // the same ones as in settings: click it, then press the new one
             bool waiting = sp.capture == i + 1;
             c.Text(kLabels[i], Rect(x, y, wide - kKeyW - 8, kKeyH), Weight::Regular, 12, look.text);
-            if (w::Chip(ui, look, Ui::Id("st.ed.key", i), Rect(x + wide - kKeyW, y + 2, kKeyW, kKeyH - 4), waiting ? std::wstring(L"Press a key") : StagePrefs::Name(keys[i]), waiting) && live) sp.capture = waiting ? 0 : i + 1, sp.clash = false;
+            if (w::Chip(ui, look, Ui::Id("st.ed.key", i), Rect(x + wide - kKeyW, y + 2, kKeyW, kKeyH - 4), waiting ? std::wstring(L"Press a key") : StagePrefs::Name(sp.KeyOf(i + 1)), waiting) && live) sp.capture = waiting ? 0 : i + 1, sp.clash = false;
             y += kKeyH + kChipGap;
         }
         if (sp.capture && in.pressed && !Inside({x + wide - kKeyW, body.top, x + wide, y}, in.mouse)) sp.capture = 0; // clicked away: the key stays as it was
-        c.Text(sp.capture ? (sp.clash ? L"That key is already used in fullscreen" : L"Esc keeps the key it had") : L"With a second screen", Rect(x, y, wide, kNoteH), Weight::Light, 11, look.textDim);
+        c.Text(sp.capture ? (sp.clash ? L"That key is already used in fullscreen" : L"Esc keeps the key it had") : L"The first two need a second screen", Rect(x, y, wide, kNoteH), Weight::Light, 11, look.textDim);
         break;
     }
     }
@@ -367,19 +366,20 @@ void Stage::EditPanel(const D2D1_RECT_F& bar, bool canWith, bool covered) {
     y += kHeadH + kGap;
     if (canWith) { // both versions while a song has its words to show; one without has only the one
         static const wchar_t* const kTabs[2] = {L"Without lyrics", L"With lyrics"};
-        int picked = sheet::Segmented(ui, look, "st.ed.tab", Rect(inner.left, y, Width(inner), kTabsH), kTabs, 2, editTab, live);
-        if (picked >= 0) editTab = picked;
+        int base = editTab >= StagePrefs::kVinyl ? StagePrefs::kVinyl : 0; // vinyl's pair or the player's
+        int picked = sheet::Segmented(ui, look, "st.ed.tab", Rect(inner.left, y, Width(inner), kTabsH), kTabs, 2, editTab - base, live);
+        if (picked >= 0) editTab = base + picked;
     } else {
-        c.Text(L"Without lyrics", Rect(inner.left + 2, y, Width(inner), kTabsH), Weight::Medium, 12, look.textDim);
+        c.Text(editTab == StagePrefs::kVinyl ? L"Vinyl" : L"Without lyrics", Rect(inner.left + 2, y, Width(inner), kTabsH), Weight::Medium, 12, look.textDim); // vinyl is arranged on its own
     }
     y += kTabsH + kGap;
-    if (editTab == 0 && editPage == kPageLyrics) editPage = kPageCover, ++editPageNth;
+    if (editTab != 1 && editPage == kPageLyrics) editPage = kPageCover, ++editPageNth;
     int ids[kPages], n = 0;
     const wchar_t* names[kPages];
     static const wchar_t* const kNames[kPages] = {L"Cover", L"Song", L"Lyrics", L"Clock", L"Scene", L"Keys"};
     int cur = 0;
     for (int i = 0; i < kPages; ++i) {
-        if (i == kPageLyrics && editTab == 0) continue;
+        if (i == kPageLyrics && editTab != 1) continue;
         if (i == editPage) cur = n;
         ids[n] = i, names[n++] = kNames[i];
     }
