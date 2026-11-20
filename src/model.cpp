@@ -152,6 +152,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     stageEditBtn = flag(L"StageEditButton", 1);
     tourNext = flag(L"TourNext", 1);
     stageThump = flag(L"StageThump", 1);
+    stageThumpSens = (std::clamp)(sys::ReadNum(L"StageThumpSens", kThumpSensDef), kThumpSensMin, kThumpSensMax);
     stageVinyl = flag(L"StageVinyl", 0);
     stageVinylCtl = flag(L"StageVinylCtl", 0);
     stageVinylSpeed = (std::clamp)(sys::ReadNum(L"StageVinylSpeed", kVinylSpeedDef), kVinylSpeedMin, kVinylSpeedMax);

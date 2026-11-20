@@ -274,8 +274,9 @@ void FullBtns(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the two faint ma
     const Theme& t = p.shell;
     Model& m = p.m;
     D2D1_RECT_F in = Box(c, t, r, L"Fullscreen");
-    if (SwitchRow(ui, t, "set.stage.lyrbtn", Rect(in.left, in.top, Width(in), kRowH), L"Show the wrong lyrics button", m.stageLyrBtn != 0, live)) Flip(m, m.stageLyrBtn, L"StageLyricsButton");
-    if (SwitchRow(ui, t, "set.stage.editbtn", Rect(in.left, in.top + kRowH, Width(in), kRowH), L"Show the edit button", m.stageEditBtn != 0, live)) Flip(m, m.stageEditBtn, L"StageEditButton");
+    if (SwitchRow(ui, t, "set.stage.thump", Rect(in.left, in.top, Width(in), kRowH), L"Bass pulse animation", m.stageThump != 0, live)) Flip(m, m.stageThump, L"StageThump");
+    if (SwitchRow(ui, t, "set.stage.lyrbtn", Rect(in.left, in.top + kRowH, Width(in), kRowH), L"Show the wrong lyrics button", m.stageLyrBtn != 0, live)) Flip(m, m.stageLyrBtn, L"StageLyricsButton");
+    if (SwitchRow(ui, t, "set.stage.editbtn", Rect(in.left, in.top + 2 * kRowH, Width(in), kRowH), L"Show the edit button", m.stageEditBtn != 0, live)) Flip(m, m.stageEditBtn, L"StageEditButton");
 }
 
 void Opening(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the closed island: only the shortcut opens it, wherever it is

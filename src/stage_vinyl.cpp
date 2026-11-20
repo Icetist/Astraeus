@@ -301,20 +301,24 @@ void Stage::VinylPlayer(float show) {
     float baseX = W / 2 + (W * kClassicX - W / 2) * cl; // everything but the words steps into the left column
     float S0 = (std::min)(H * kSleeveH, W * kSleeveW) * (1 - kCtlShrink * ctl) * (1 - kClassicShrink * cl), atY = H * (kSleeveAt - kCtlRise * ctl);
     float S = S0 * s.coverS, D = S * kDisc;
+    float maxPulse = kThump * (0.6f + 0.4f * (model.stageThumpSens / 100.0f));
+    float pulse = 1 + (model.stageThump && !model.reduceMotion && !editing ? maxPulse * bassPulse : 0);
     float reach = kOutPlay * S + D / 2 * (kPivotX + kPivotR); // the record out to play and its arm's pivot: the pair's right edge, right of the sleeve's middle
     D2D1_POINT_2F mid = {baseX + s.coverX * W, atY + s.coverY * H}; // the middle of all of it, sleeve to arm: what the editor's guides line up
     D2D1_POINT_2F sleeve = {mid.x - (reach - S / 2) / 2, mid.y}, disc = {sleeve.x + S * (kOutRest + (kOutPlay - kOutRest) * Ease(vinylSlide)), mid.y};
     D2D1_RECT_F sl = Rect(sleeve.x - S / 2, mid.y - S / 2, S, S);
     float rad = 3 * k;
 
-    c.Glow({mid.x + S * 0.1f, mid.y + S * 0.08f}, S * 1.4f, S * 0.9f, look.accent.Alpha((0.22f + 0.22f * beat) * s.coverGlow)); // light spilling from the pair
+    c.Glow({mid.x + S * 0.1f, mid.y + S * 0.08f}, S * (1.4f + 0.15f * bassPulse), S * (0.9f + 0.10f * bassPulse), look.accent.Alpha((0.22f + 0.22f * beat + 0.20f * bassPulse) * s.coverGlow)); // light spilling from the pair
     c.Glow({mid.x, sl.bottom + 6 * k}, S * 1.1f, S * 0.14f, Color{0, 0, 0, LightRoom() ? 0.16f : 0.42f}); // and their shadow
     VinylDisc(disc, D, k); // behind the sleeve: what's still inside stays hidden by it
     c.Fill(Rect(sl.left + 3 * k, sl.top + 3 * k, S, S), rad, Color{0, 0, 0, 0.30f}); // the sleeve's own edge, lifted off the record
     Ui::Hit hit = ui.Button(Ui::Id("st.v.sleeve"), sl);
     if (hit.clicked) Leave(); // the cover brought you here, the cover takes you back
-    if (cover) c.Art(cover.Get(), coverBlur.Get(), sl, rad, 1);
-    else c.FillV(sl, rad, look.accentHi.Alpha(0.85f), look.accent.Alpha(0.55f));
+    float slPad = S * (pulse - 1.0f) / 2.0f;
+    D2D1_RECT_F slArt = Rect(sl.left - slPad, sl.top - slPad, S * pulse, S * pulse);
+    if (cover) c.Art(cover.Get(), coverBlur.Get(), slArt, rad, 1);
+    else c.FillV(slArt, rad, look.accentHi.Alpha(0.85f), look.accent.Alpha(0.55f));
     const D2D1_ROUNDED_RECT paper = {sl, rad, rad};
     if (model.stageVinylLabel) c.FillV(sl, rad, Color{1, 1, 1, 0.035f}, Color{0, 0, 0, 0.07f}); // card, not glass: lighter where the lamp reaches it
     c.Ring(sleeve, S * kWearR, Color{1, 1, 1, 0.05f}, 1.5f * k); // where the record inside has pressed for years

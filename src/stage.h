@@ -153,7 +153,8 @@ private:
     double lyrAsked = -1, lyrPoll = 0, lyrKeyAt = 0;
     float lyrMix = 0; // 0 the classic layout, 1 the cover on the left with the lyrics beside it
 
-    float left = 0, right = 0, slow = 0, beat = 0; // eased channel levels, running average, beat pulse
+    static constexpr float kThump = 0.040f; // maximum cover scale expansion on heavy kicks (~4%)
+    float left = 0, right = 0, slow = 0, beat = 0, bassSlow = 0, bassPulse = 0, pulseTarget = 0; // eased channel levels, running average, beat pulse
     float frameDt = 1 / 60.0f;
     double lastBeat = 0;
     static constexpr int kBlobs = 6;

@@ -427,6 +427,8 @@ public:
     static int TileGlyph(int id);
     int stageHide = 1; // the fullscreen player's controls fade while the mouse rests (on by default)
     int stageThump = 1; // the fullscreen cover thumps with the beat
+    int stageThumpSens = 50; // bass pulse sensitivity percent: 10..100
+    static constexpr int kThumpSensMin = 10, kThumpSensMax = 100, kThumpSensDef = 50;
     int stageVinyl = 0; // the fullscreen player as a record on a turntable
     int stageVinylCtl = 0; // and the buttons and seek line under its song; off, the record itself is the control
     int stageVinylSpeed = 50; // how fast the record turns: percent of a real one's 33 1/3, which reads hurried on a screen

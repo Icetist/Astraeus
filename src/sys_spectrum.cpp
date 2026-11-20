@@ -24,9 +24,9 @@ namespace sys {
 namespace {
 
 constexpr int kN = 2048; // fft size: ~43 ms at 48 kHz, enough resolution for the low bands
-constexpr int kHop = 1024; // a new spectrum every 1024 samples, ~47 per second, plenty for eased light
+constexpr int kHop = 512; // a new spectrum every 512 samples, ~94 per second (~10.6 ms), ultra-responsive beat tracking
 constexpr REFERENCE_TIME kBuf = 600000; // 60 ms capture buffer: room for the slower look below
-constexpr DWORD kLookMs = 30; // bars at 20-30 fps read no better for twice the wakeups
+constexpr DWORD kLookMs = 10; // 10 ms polling for fast, low-latency transient response without CPU overhead
 constexpr float kLoHz = 32, kHiHz = 16000;
 constexpr float kFloorDb = -72, kTopDb = -12; // mapped to 0..1
 constexpr float kPi = 3.14159265f;

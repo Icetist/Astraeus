@@ -20,7 +20,6 @@ constexpr double kLyrWaitSec = 12; // how long the lyrics layout waits for a new
 constexpr float kWordsHush = 0.6f; // the waveform under the lyrics keeps this much less of its light
 constexpr float kLeaveSec = 0.26f; // easing back toward the bezel as it fades
 constexpr double kIdleSec = 2.5; // controls and cursor fade after the mouse rests this long
-constexpr float kThump = 0.018f; // the cover on the kick: a share of its size
 constexpr float kShapeRate = 22; // the layout after the mouse in the editor: close behind it, with no hard edge to the motion
 constexpr float kLiftScale = 0.018f, kLiftShade = 0.18f; // the cover picked up in the editor
 constexpr float kTabRate = 7, kLyrRate = 3.2f; // the layouts trading places: briskly in the editor, slow and calm for a new song
@@ -715,7 +714,8 @@ void Stage::Player(float show, float lyr) { // the cover big on the left and the
     float side0 = side * s0.coverS, side1 = side2 * s1.coverS;
     D2D1_POINT_2F mid0 = {x0 + side / 2 + s0.coverX * W, cy + s0.coverY * H}, mid1 = {lcx + s1.coverX * W, ly + side2 / 2 + s1.coverY * H};
     float lift = ui.Smooth(Ui::Id("st.ed.lift"), editing && editDrag >= 0 && editDrag / 2 == kPartCover ? 1.0f : 0, 18);
-    float sd = mix(side0, side1), pulse = 1 + (model.stageThump && !model.reduceMotion && !editing ? kThump * beat : 0) + kLiftScale * lift; // the cover thumps with the kick, when that's on
+    float maxPulse = kThump * (0.6f + 0.4f * (model.stageThumpSens / 100.0f));
+    float sd = mix(side0, side1), pulse = 1 + (model.stageThump && !model.reduceMotion && !editing ? maxPulse * bassPulse : 0) + kLiftScale * lift; // the cover pulses with the bass kick, when that's on
     D2D1_POINT_2F mid = {mix(mid0.x, mid1.x), mix(mid0.y, mid1.y)};
     D2D1_RECT_F art = Rect(mid.x - sd * pulse / 2, mid.y - sd * pulse / 2, sd * pulse, sd * pulse);
     partCover = Rect(mid.x - sd / 2, mid.y - sd / 2, sd, sd);
@@ -723,7 +723,7 @@ void Stage::Player(float show, float lyr) { // the cover big on the left and the
     float tk0 = k * laid0, colW0 = colW * laid0, colH0 = colH * laid0, tx0 = mid0.x + side0 / 2 + gap + s0.textX * W, ty0 = mid0.y - colH0 / 2 + s0.textY * H, waveY0 = ty0 + (22 + 66 + 66) * tk0;
     float tk1 = k * laid1, lw1 = lw * laid1, lcx1 = mid1.x + s1.textX * W, lty1 = mid1.y + side1 / 2 + 20 * k + s1.textY * H, lWaveY1 = lty1 + (44 + 28 + 40) * tk1;
     float rad = sd * mix(s0.coverRound, s1.coverRound);
-    c.Glow({mid.x, mid.y + sd * 0.08f}, sd * 1.05f, sd * 0.95f, look.accent.Alpha((0.30f + 0.30f * beat) * mix(s0.coverGlow, s1.coverGlow))); // light spilling from the cover
+    c.Glow({mid.x, mid.y + sd * 0.08f}, sd * (1.05f + 0.08f * bassPulse), sd * (0.95f + 0.08f * bassPulse), look.accent.Alpha((0.30f + 0.25f * bassPulse) * mix(s0.coverGlow, s1.coverGlow))); // light spilling from the cover
     c.Glow({mid.x, art.bottom + 10 * lift}, sd * 0.70f, sd * (0.20f + 0.06f * lift), Color{0, 0, 0, (LightRoom() ? 0.18f : 0.45f) + kLiftShade * lift}); // and a soft shadow under it
     Ui::Hit artHit = ui.Button(Ui::Id("st.art"), art);
     if (artHit.clicked) Leave(); // the cover brought you here, the cover takes you back
@@ -894,11 +894,42 @@ void Stage::Frame(const Theme& media) {
     follow(right, std::sqrt(pr));
     float level = (left + right) / 2;
     slow += (level - slow) * (std::min)(1.0f, dt * 2.5f);
-    if (playing && level > slow * 1.20f + 0.035f && now - lastBeat > 0.20) {
-        beat = 1;
-        lastBeat = now;
+
+    float bass = 0;
+    if (playing) {
+        float raw[sys::Spectrum::kBands] = {};
+        model.Bands(raw);
+        // Concentrate strictly on real deep kick drum & punch (Bands 2..10: ~40Hz..95Hz)
+        bass = (raw[2] * 0.6f + raw[3] * 0.9f + raw[4] * 1.3f + raw[5] * 1.6f +
+                raw[6] * 1.6f + raw[7] * 1.4f + raw[8] * 1.2f + raw[9] * 0.8f + raw[10] * 0.5f) / 9.9f;
     }
-    beat *= std::exp(-dt * 6);
+    bassSlow += (bass - bassSlow) * (std::min)(1.0f, dt * 2.8f);
+
+    float sens = (std::clamp)(model.stageThumpSens, Model::kThumpSensMin, Model::kThumpSensMax) / 100.0f; // 0.1 .. 1.0
+    // Dynamic transient threshold: higher threshold = only high/heavy drum kicks
+    float minKick = 0.07f + (1.0f - sens) * 0.09f;
+    float thresh = 0.06f + (1.0f - sens) * 0.10f;
+    float delta = bass - bassSlow;
+
+    if (playing && bass > minKick && delta > thresh && now - lastBeat > 0.15) {
+        lastBeat = now;
+        beat = 1.0f;
+        float punch = (delta - thresh) / 0.12f;
+        pulseTarget = (std::clamp)(0.4f + punch * 0.6f, 0.4f, 1.0f);
+    }
+    beat *= std::exp(-dt * 6.0f);
+
+    // Two-phase physical speaker cone envelope:
+    // 1. Fast, smooth attack towards punch peak (~25-30ms)
+    // 2. Smooth elastic return (~120ms)
+    if (pulseTarget > 0.001f) {
+        bassPulse += (pulseTarget - bassPulse) * (std::min)(1.0f, dt * 32.0f);
+        if (bassPulse >= pulseTarget * 0.90f) {
+            pulseTarget = 0.0f; // reached peak, begin elastic decay
+        }
+    } else {
+        bassPulse += (0.0f - bassPulse) * (std::min)(1.0f, dt * 9.5f);
+    }
     frameDt = dt;
 
     if (editing && Shown() != kWhole) EndEdit(); // gone to two screens, or to the lyrics alone: each keeps its own layout
@@ -1026,7 +1057,7 @@ void Stage::Frame(const Theme& media) {
     if (hear) access.Publish(ui, *canvas, scale);
     input.pressed = input.released = input.rclick = false;
     input.wheel = 0;
-    bool fast = editing || ui.Busy() || ui.Captured() || (show > 0.01f && show < 0.99f) || tip > 0.001f || lyrMoving || lyrics.Busy() || swapDim > 0.001f;
+    bool fast = editing || ui.Busy() || ui.Captured() || (show > 0.01f && show < 0.99f) || tip > 0.001f || lyrMoving || lyrics.Busy() || swapDim > 0.001f || (model.stageThump && bassPulse > 0.004f);
     bool ambient = left + right > 0.03f || beat > 0.02f || rimBusy || (model.stageVinyl && (vinylSpin > 0 || (vinylArm > 0.002f && vinylArm < 0.998f) || (vinylSlide > 0.002f && vinylSlide < 0.998f))); // the music-driven light, and a record turning or its arm on the move
     double hz = RefreshOf(screen);
     bool game = GameNow(now); // a game in front elsewhere: nothing needs more than the ambient rate
