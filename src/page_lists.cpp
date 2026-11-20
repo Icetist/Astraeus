@@ -102,7 +102,7 @@ void TodoList(PageCtx& p, const D2D1_RECT_F& r) {
     const Input& in = ui.In();
     Field(p, Rect(r.left, r.top, Width(r), kFieldH), Model::kFieldTodo, L"Add a to-do, then Enter");
     bool anyDone = std::any_of(m.todos.begin(), m.todos.end(), [](const Model::Todo& x) { return x.done; });
-    float foot = anyDone ? 24 : 0;
+    float foot = anyDone ? 24.0f : 0.0f;
     D2D1_RECT_F view = {r.left, r.top + kFieldH + kGap, r.right, r.bottom - foot};
     int n = (int)m.todos.size();
     if (pickFor >= n) pickFor = -1;

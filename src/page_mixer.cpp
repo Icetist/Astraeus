@@ -457,11 +457,11 @@ void DrawMixer(PageCtx& p, float k) {
     c.PushClip(view);
     float x = view.left - scroll;
     { // the master channel, first and in the accent
-        StripLook s{L"Master", glyph::VolumeUp};
-        s.tint = t.accent, s.muted = m.muted, s.master = true;
+        StripLook masterLook{L"Master", glyph::VolumeUp};
+        masterLook.tint = t.accent, masterLook.muted = m.muted, masterLook.master = true;
         float level = m.vol;
         bool tap = false;
-        if (Strip(p, Rect(x, view.top, kStripW, Height(view)), view, Ui::Id("mix.master"), s, level, tap)) m.SetVol(level);
+        if (Strip(p, Rect(x, view.top, kStripW, Height(view)), view, Ui::Id("mix.master"), masterLook, level, tap)) m.SetVol(level);
         if (tap) m.ToggleMute();
         x += kStripW + kStripGap;
     }
@@ -469,12 +469,12 @@ void DrawMixer(PageCtx& p, float k) {
         std::wstring name = L"Microphone";
         for (const auto& d : m.mics)
             if (d.id == m.micId) name = d.name;
-        StripLook s{name.c_str(), glyph::Mic};
-        s.muted = m.micMuted, s.chips = m.mics.size() > 1 ? 1 : 0;
+        StripLook micLook{name.c_str(), glyph::Mic};
+        micLook.muted = m.micMuted, micLook.chips = m.mics.size() > 1 ? 1 : 0;
         float level = m.micVol;
         bool tap = false;
         uint32_t id = Ui::Id("mix.mic");
-        if (Strip(p, Rect(x, view.top, kStripW, Height(view)), view, id, s, level, tap)) m.SetMic(level);
+        if (Strip(p, Rect(x, view.top, kStripW, Height(view)), view, id, micLook, level, tap)) m.SetMic(level);
         if (tap) m.ToggleMic();
         if (m.mics.size() > 1 && SmallChip(p, id + 30, Rect(x + 8, ChipY(Rect(x, view.top, kStripW, Height(view)), 0), kStripW - 16, kChipH), L"Switch input", kNoTint, Inside(view, ui.In().mouse))) {
             size_t cur = 0;

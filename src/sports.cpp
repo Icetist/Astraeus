@@ -160,7 +160,9 @@ Detail DecodeDetail(const std::vector<std::wstring>& rows) {
 
 std::string MatchId(const Game& g) {
     if (g.id.empty() || g.path.empty()) return {};
-    std::string id(g.id.begin(), g.id.end()); // ids and slugs are plain ascii
+    std::string id;
+    id.reserve(g.id.size());
+    for (wchar_t c : g.id) id += (char)c; // ids and slugs are plain ascii
     time_t t = (time_t)g.when;
     tm u{};
     char day[16] = "";
