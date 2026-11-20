@@ -55,6 +55,7 @@ constexpr float kClassicX = 0.235f; // classic words: the record, song and butto
 constexpr float kClassicW = 0.34f; // that column's width, as the full player's
 constexpr float kClassicShrink = 0.12f; // and the record a little smaller, so the pair and its arm fit in it
 constexpr float kClassicRate = 6; // how quickly the room trades the one line for the column
+constexpr double kWordsWait = 12; // a new song's words are waited for this long before the room lays out without them
 constexpr float kPi = 3.14159265f;
 
 float Ease(float v) { return v * v * (3 - 2 * v); }
@@ -289,12 +290,14 @@ void Stage::VinylPlayer(float show) {
     Canvas& c = *canvas;
     const sys::Track& tr = model.track;
     bool has = model.hasTrack;
-    bool words = editing ? editTab == StagePrefs::kVinylLyr : lyrDoc && !lyrDoc->lines.empty(); // the version this song shows, or the one being arranged
+    bool coming = vinylLyr > 0.5f && !lyrDoc && !lyrKey.empty() && ui.Now() - lyrKeyAt < kWordsWait; // a new song's words on their way: hold still, don't slide over and back
+    bool words = editing ? editTab == StagePrefs::kVinylLyr : role == kWhole && ((lyrDoc && !lyrDoc->lines.empty()) || coming); // the version this song shows, or the one being arranged; the song's half of two screens leaves the words to the other
     if (anim::Approach(vinylLyr, words ? 1.0f : 0, editing ? kVersionRateEdit : kVersionRate, frameDt, 0.001f)) ui.Wake();
     const StagePrefs::Shape s = StagePrefs::Mix(shapeNow[StagePrefs::kVinyl], shapeNow[StagePrefs::kVinylLyr], Ease(vinylLyr)); // the vinyl room's own pair of layouts: arranging them never moves the others
     float k = K();
     float ctl = ui.Smooth(Ui::Id("st.v.ctl"), model.stageVinylCtl ? 1.0f : 0, 8); // the buttons coming in: the record rises and shrinks a little to make their room
     float cl = Ease(ui.Smooth(Ui::Id("st.v.classic"), VinylClassic() ? 1.0f : 0, kClassicRate)) * Ease(vinylLyr); // the full player's words beside the record, only in the version with words
+    classicNow = cl;
     float baseX = W / 2 + (W * kClassicX - W / 2) * cl; // everything but the words steps into the left column
     float S0 = (std::min)(H * kSleeveH, W * kSleeveW) * (1 - kCtlShrink * ctl) * (1 - kClassicShrink * cl), atY = H * (kSleeveAt - kCtlRise * ctl);
     float S = S0 * s.coverS, D = S * kDisc;

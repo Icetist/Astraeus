@@ -45,7 +45,10 @@ struct Waveform { // bars across the player, mirrored about its middle: bass on 
     float level[kBars] = {}, gain[kBars] = {};
 };
 bool StepWave(Waveform& w, Model& m, float dt, bool playing); // true while any bar still stands
-void DrawWave(Canvas& c, const Waveform& w, const D2D1_RECT_F& r, const Theme& t, float alpha, const D2D1_ROUNDED_RECT* in = nullptr);
+struct Hush { // a stretch across the bars kept quieter, so words over it read clearly
+    float left = 0, right = 0, by = 0; // where, and how much of their light goes there
+};
+void DrawWave(Canvas& c, const Waveform& w, const D2D1_RECT_F& r, const Theme& t, float alpha, const D2D1_ROUNDED_RECT* in = nullptr, Hush hush = {});
 void DrawSwell(Canvas& c, const Swell& s, int blobs, const D2D1_RECT_F& r, const Theme& t, double now, const D2D1_ROUNDED_RECT* in = nullptr); // glows up from r's bottom, in: kept inside a card
 void WaveLine(Canvas& c, float a0, float a1, float cy, float amp, double now, Color col, float width, float wavelen); // the played part of the seek line, rippling
 

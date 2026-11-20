@@ -102,7 +102,7 @@ void Stage::StartEdit() {
     editing = barAuto = true;
     lyrMenu = false;
     editDrag = -1;
-    editTab = model.stageVinyl ? StagePrefs::kVinyl : lyrMix > 0.5f ? 1 : 0; // the one it's showing
+    editTab = model.stageVinyl ? (vinylLyr > 0.5f ? StagePrefs::kVinylLyr : StagePrefs::kVinyl) : lyrMix > 0.5f ? 1 : 0; // the one it's showing, with words if they're up
     editPart = kPartCover;
     editPage = kPageCover;
     ++editPageNth;

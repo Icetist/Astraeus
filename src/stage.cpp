@@ -17,6 +17,7 @@ constexpr float kStageArtSigma = 6; // the album art background at 1024 px: soft
 constexpr float kStageArtGlass = 0.6f; // glass keeps some of the desktop showing through it
 constexpr float kStageArtWash = 0.32f, kStageArtWashLight = 0.30f; // over the art: enough for white or dark type to read
 constexpr double kLyrWaitSec = 12; // how long the lyrics layout waits for a new song's lines before giving way
+constexpr float kWordsHush = 0.6f; // the waveform under the lyrics keeps this much less of its light
 constexpr float kLeaveSec = 0.26f; // easing back toward the bezel as it fades
 constexpr double kIdleSec = 2.5; // controls and cursor fade after the mouse rests this long
 constexpr float kThump = 0.018f; // the cover on the kick: a share of its size
@@ -438,9 +439,11 @@ void Stage::Backdrop(double now) { // the media page's glow, scaled to the room:
             if (art) DrawSwell(c, swell, kBlobs, {0, H * 0.25f, W, H}, look, now); // twice over the art: one pass of soft light disappears into a bright cover
         }
         if ((looks & Model::kLookBars) && shaped) { // bars across the whole room, behind the cover and the words
-            float ly = lyrMix * lyrMix * (3 - 2 * lyrMix); // lyrics showing: the bars slide down out of the words' way and dim
+            float ly = (std::max)(lyrMix * lyrMix * (3 - 2 * lyrMix), classicNow); // lyrics showing, the player's or vinyl's classic: the bars slide down out of the words' way and dim
             D2D1_RECT_F band = {W * 0.03f, H * (0.28f + 0.56f * ly), W * 0.97f, H * (0.72f + 0.24f * ly)};
-            DrawWave(c, wave, band, look, (art ? 0.85f : 0.5f) * (1 - 0.45f * ly));
+            D2D1_RECT_F lr = LyricRect();
+            Hush hush = {lr.left, lr.right, kWordsHush * ly}; // and quieter still right under the words
+            DrawWave(c, wave, band, look, (art ? 0.85f : 0.5f) * (1 - 0.45f * ly), nullptr, Shown() == kWhole ? hush : Hush{});
         }
         if (art) c.Target()->PopLayer();
     }
@@ -911,7 +914,7 @@ void Stage::Frame(const Theme& media) {
         if (editTab - (words ? 1 : 0) != base) words = lyrOn; // just switched rooms: the version this song shows
         editTab = base + (words && lyrOn ? 1 : 0);
     }
-    bool waiting = !lyrDoc && !lyrKey.empty() && now - lyrKeyAt < kLyrWaitSec && (lyrMix > 0.5f || Shown() == kLyrics); // next song's lyrics on their way: the layout holds still
+    bool waiting = !lyrDoc && !lyrKey.empty() && now - lyrKeyAt < kLyrWaitSec && (lyrMix > 0.5f || Shown() == kLyrics || (VinylClassic() && vinylLyr > 0.5f)); // next song's lyrics on their way: the layout holds still
     if (Shown() != styled) { // the lyrics half sets its words its own way; the full player's are as they always were
         styled = Shown();
         LyricView::Look ls;
@@ -957,7 +960,7 @@ void Stage::Frame(const Theme& media) {
     if (menuUp || editing) ui.Block(true); // a click on the list never reaches the lines under it: a line seeks the song. in the editor it's all there to be moved, not pressed
     if (Shown() == kLyrics) Words(); // the lyrics half of a pair, or the words alone on one screen
     else { // the song's half of a pair: the stacked layout, on its own; the vinyl room only on a single screen
-        float vin = role == kWhole ? ui.Smooth(Ui::Id("st.vinyl"), model.stageVinyl ? 1.0f : 0, 6) : 0; // the two rooms trade places softly
+        float vin = ui.Smooth(Ui::Id("st.vinyl"), model.stageVinyl ? 1.0f : 0, 6); // the two rooms trade places softly; with two screens the song's half turns the record too, its words on the other
         auto room = [&](float a, auto draw) {
             if (a <= 0.001f) return;
             bool fade = a < 0.999f;
@@ -970,7 +973,7 @@ void Stage::Frame(const Theme& media) {
         };
         room(1 - vin, [&] { Player(show, role == kCover ? 1.0f : lyrMix); });
         room(vin, [&] { VinylPlayer(show); });
-        if (vin <= 0.001f && !model.stageVinyl) vinylSlide = vinylSpin = vinylArm = 0; // the next time it's picked, the record comes out of its sleeve afresh
+        if (vin <= 0.001f && !model.stageVinyl) vinylSlide = vinylSpin = vinylArm = classicNow = 0; // the next time it's picked, the record comes out of its sleeve afresh
     }
     ui.Block(false);
     float editShow = ui.Smooth(Ui::Id("st.ed.show"), editing ? 1.0f : 0, 12); // it comes and goes softly

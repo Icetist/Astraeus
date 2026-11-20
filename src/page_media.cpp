@@ -41,6 +41,7 @@ void Wave(PageCtx& p, const D2D1_RECT_F& r, float fraction, bool playing, bool c
 }
 
 constexpr int kBlobs = 5; // a few big soft blobs across the media card
+constexpr float kHushEdge = 0.06f; // a waveform's quiet stretch fades in over this share of its width
 Swell vizSwell;
 Waveform vizWave;
 EdgeGlow mediaRim; // the edge glow round the card: its own flow, and a falloff baked on the panel's device
@@ -166,15 +167,18 @@ bool StepWave(Waveform& w, Model& m, float dt, bool playing) {
     return alive;
 }
 
-void DrawWave(Canvas& c, const Waveform& w, const D2D1_RECT_F& r, const Theme& t, float alpha, const D2D1_ROUNDED_RECT* in) {
+void DrawWave(Canvas& c, const Waveform& w, const D2D1_RECT_F& r, const Theme& t, float alpha, const D2D1_ROUNDED_RECT* in, Hush hush) {
     float slot = Width(r) / Waveform::kBars, bw = (std::max)(2.0f, slot * 0.52f), cy = (r.top + r.bottom) / 2, half = Height(r) / 2;
+    float soft = (std::max)(1.0f, Width(r) * kHushEdge); // the quiet stretch fades in over this, no hard step in the bars
     if (in) c.Glow({(r.left + r.right) / 2, cy}, Width(r) * 0.55f, half * 1.4f, t.accent.Alpha(0.10f * alpha), in); // a breath of light behind the bars
     for (int i = 0; i < Waveform::kBars; ++i) {
         float v = w.level[i];
         float edge = std::sin(kPi * (i + 0.5f) / Waveform::kBars); // the ends taper, like a wave rolling in and out
         float hh = (std::max)(bw / 2, half * v * (0.35f + 0.65f * edge));
         float x = r.left + slot * (i + 0.5f);
-        c.Fill({x - bw / 2, cy - hh, x + bw / 2, cy + hh}, bw / 2, t.accent.Mix(t.accentHi, v).Alpha(alpha * (0.35f + 0.65f * v)));
+        float inside = hush.by > 0 ? anim::Clamp01((std::min)(x - hush.left, hush.right - x) / soft + 0.5f) : 0;
+        float a = alpha * (0.35f + 0.65f * v) * (1 - hush.by * inside);
+        c.Fill({x - bw / 2, cy - hh, x + bw / 2, cy + hh}, bw / 2, t.accent.Mix(t.accentHi, v).Alpha(a));
     }
 }
 

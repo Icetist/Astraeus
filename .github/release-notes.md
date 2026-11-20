@@ -1,18 +1,14 @@
-## Astraeus 2.8.2
+## Astraeus 2.8.3
 
 ### New
-- **Clock faces.** Pick the fullscreen clock's type in Edit fullscreen, under Clock: Default, Thin, Bold, Rounded, Serif or Narrow. Each tile shows the time in its own face.
-- **Classic lyrics for vinyl.** Vinyl can show the full scrolling lyrics beside the record, the way the regular player does, instead of the one sung line. It's off by default: turn it on in Edit fullscreen, under Lyrics.
-- **A Lyrics page for vinyl.** Vinyl's lyrics now have their own page in the editor, with Lyric glow and the size of the sung line.
-- **IP addresses stay covered.** The Network page blurs your local and public IP addresses until you click them, so a screen share or a screenshot doesn't give them away.
+- **Vinyl on two screens.** With vinyl picked, the song's screen in two-screen mode now shows the turntable and its record, with the lyrics on the other screen.
 
 ### Improved
-- **A tidier Scene page.** The room's own options come first, then the visualizer's. Options that depend on the visualizer only show while it's on.
-- **Reset resets the page you're on.** Reset in Edit fullscreen now resets only the open page, sliders included. Undo brings it back.
+- **The waveform makes room for the lyrics.** In fullscreen it now dims under the lyrics column and steps out of the way of vinyl's classic lyrics too, so the words read clearly.
+- **Vinyl waits for a new song's lyrics.** On a song change the record keeps its place while the lyrics load, instead of sliding to the middle and back.
 
 ### Fixed
-- The Reset button left some sliders as they were: Spin speed, Type size and the visualizer's sliders.
-- The panel could open with an empty, see-through page area, most often on a second screen.
+- Edit fullscreen opened on "Without lyrics" in vinyl even while the lyrics were showing. It now opens on the version on screen.
 
 > [!NOTE]
 > The executable is not code-signed yet, so Windows SmartScreen may show an "unknown publisher" warning the first time. Click **More info → Run anyway**.
