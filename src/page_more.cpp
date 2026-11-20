@@ -287,8 +287,8 @@ void WorkTile(PageCtx& p, const D2D1_RECT_F& r) { // every workspace as a chip: 
         D2D1_RECT_F chip = Rect(x, y, kChip, kChip);
         bool on = i == s.current;
         Ui::Hit h = ui.Button(Ui::Id("tl.ws", i), chip);
-        float hov = ui.Smooth(Ui::Id("tl.ws", i + 100), h.hover ? 1.0f : 0, 16);
-        c.Fill(chip, 9, on ? t.accent : t.track.Mix(t.cardHi, 0.5f * hov));
+        float chov = ui.Smooth(Ui::Id("tl.ws", i + 100), h.hover ? 1.0f : 0, 16);
+        c.Fill(chip, 9, on ? t.accent : t.track.Mix(t.cardHi, 0.5f * chov));
         std::wstring label = s.list[i].name.size() <= 2 ? s.list[i].name : std::to_wstring(i + 1); // long names show their number here, in full on the pill
         c.Text(label, chip, Weight::Semi, 11.5f, on ? t.onAccent : t.text, Align::Center);
         if (s.list[i].busy && !on) c.Dot({(chip.left + chip.right) / 2, chip.bottom - 4}, 1.8f, t.accentHi);

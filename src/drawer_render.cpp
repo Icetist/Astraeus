@@ -413,7 +413,7 @@ void Drawer::SyncCover() {
 void Drawer::SyncWallTone() {
     constexpr float kLightFrom = 0.5f;
     std::wstring path = theme::WallPath();
-    WIN32_FILE_ATTRIBUTE_DATA info;
+    WIN32_FILE_ATTRIBUTE_DATA info{};
     bool picture = !path.empty() && GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &info);
     COLORREF plain = GetSysColor(COLOR_DESKTOP);
     std::wstring key = picture ? path + L"|" + std::to_wstring(info.ftLastWriteTime.dwLowDateTime) : L"#" + std::to_wstring(plain); // no picture: windows' plain color
@@ -907,20 +907,27 @@ void Drawer::DrawPeek(float h) {
     float a = anim::Clamp01((h - 26) / 30); // fade text in as banner drops
     if (a <= 0) return;
     D2D1_RECT_F area = edgeNow == 0 ? Rect(0, 0, W, h) : edgeNow == 1 ? Rect(0, cfg.fillet, h, CH()) : Rect(winH - h, cfg.fillet, h, CH()); // visible part
-    float cx = (area.left + area.right) / 2 + (Tall() ? 60 : 0), cy = Tall() ? area.top + 70 : (area.top + area.bottom) / 2 + 2; // sidebar: near the top
+    float cx = (area.left + area.right) / 2 + (Side() ? 60 : 0), cy = Side() ? area.top + 70 : (area.top + area.bottom) / 2; // sidebar: near the top
     canvas->Dot({cx - 112, cy}, 17, t.accent.Alpha(0.18f * a));
     canvas->Icon(peekIcon ? peekIcon : glyph::Timer, {cx - 112, cy}, 21, t.accentHi.Alpha(a), true);
     if (peekLevel >= 0) { // the hud: what changed, a bar and the number
         float lv = peekLevel;
-        canvas->Text(peekTitle, Rect(cx - 84, cy - 20, 150, 20), Weight::Medium, 14, t.text.Alpha(a));
-        canvas->Text(w::Pct(peekLevel), Rect(cx + 76, cy - 20, 60, 20), Weight::Medium, 13, t.textDim.Alpha(a), Align::Right);
+        canvas->Text(peekTitle, Rect(cx - 84, cy - 19, 150, 20), Weight::Medium, 14, t.text.Alpha(a));
+        canvas->Text(w::Pct(peekLevel), Rect(cx + 76, cy - 19, 60, 20), Weight::Medium, 13, t.textDim.Alpha(a), Align::Right);
         D2D1_RECT_F bar = Rect(cx - 84, cy + 7, 220, 6);
         canvas->Fill(bar, 3, t.track.Alpha(a));
         if (lv > 0.01f) canvas->FillH({bar.left, bar.top, bar.left + Width(bar) * lv, bar.bottom}, 3, t.accent.Alpha(a), t.accentHi.Alpha(a));
         return;
     }
-    canvas->Text(peekTitle, Rect(cx - 84, cy - 20, 240, 22), Weight::Medium, 15, t.text.Alpha(a));
-    canvas->Text(peekDetail, Rect(cx - 84, cy + 1, 240, 18), Weight::Light, 12.5f, t.textDim.Alpha(a));
+    float textW = (std::min)(340.0f, (std::max)(60.0f, area.right - (cx - 84) - 16.0f));
+    if (peekDetail.empty()) {
+        canvas->Text(peekTitle, Rect(cx - 84, cy - 11, textW, 22), Weight::Medium, 15, t.text.Alpha(a));
+    } else if (peekTitle.empty()) {
+        canvas->Text(peekDetail, Rect(cx - 84, cy - 9, textW, 18), Weight::Light, 12.5f, t.textDim.Alpha(a));
+    } else {
+        canvas->Text(peekTitle, Rect(cx - 84, cy - 19, textW, 20), Weight::Medium, 14.5f, t.text.Alpha(a));
+        canvas->Text(peekDetail, Rect(cx - 84, cy + 2, textW, 18), Weight::Light, 12.0f, t.textDim.Alpha(a));
+    }
 }
 
 void Drawer::DrawAlarmRing(float h) {
@@ -1046,8 +1053,12 @@ bool Drawer::DrawIsland(float h, float dt, double now) {
             canvas->Fill(art, 5, mt.cardHi.Alpha(a));
             canvas->Icon(glyph::Music, {art.left + 10, art.top + 10}, 12, mt.accentHi.Alpha(a), true);
         }
-        canvas->Text(model.track.title, Rect(tx, cy - 12, tw, 14), Weight::Medium, 10.5f, t.text.Alpha(a));
-        if (!model.track.artist.empty()) canvas->Text(model.track.artist, Rect(tx, cy + 1, tw, 12), Weight::Light, 9.5f, t.textDim.Alpha(a));
+        if (model.track.artist.empty()) {
+            canvas->Text(model.track.title, Rect(tx, cy - 7, tw, 14), Weight::Medium, 10.5f, t.text.Alpha(a));
+        } else {
+            canvas->Text(model.track.title, Rect(tx, cy - 12, tw, 14), Weight::Medium, 10.5f, t.text.Alpha(a));
+            canvas->Text(model.track.artist, Rect(tx, cy + 1, tw, 12), Weight::Light, 9.5f, t.textDim.Alpha(a));
+        }
     }
 
     float bx = x0 + inner - barsW;
@@ -1193,8 +1204,12 @@ bool Drawer::DrawIslandSide(float h, float a) {
     D2D1_MATRIX_3X2_F was;
     ctx->GetTransform(&was);
     ctx->SetTransform(D2D1::Matrix3x2F::Rotation(left ? -90.0f : 90.0f) * D2D1::Matrix3x2F::Translation(X(dc), tc) * was); // turned text, centered in its stretch
-    canvas->Text(model.track.title, Rect(-len / 2, -12, len, 14), Weight::Medium, 10.5f, t.text.Alpha(a));
-    if (!model.track.artist.empty()) canvas->Text(model.track.artist, Rect(-len / 2, 1, len, 12), Weight::Light, 9.5f, t.textDim.Alpha(a));
+    if (model.track.artist.empty()) {
+        canvas->Text(model.track.title, Rect(-len / 2, -7, len, 14), Weight::Medium, 10.5f, t.text.Alpha(a));
+    } else {
+        canvas->Text(model.track.title, Rect(-len / 2, -12, len, 14), Weight::Medium, 10.5f, t.text.Alpha(a));
+        canvas->Text(model.track.artist, Rect(-len / 2, 1, len, 12), Weight::Light, 9.5f, t.textDim.Alpha(a));
+    }
     ctx->SetTransform(was);
     if (islandHot) { // chevron pointing into the screen: tap opens the full panel
         Color ink = mt.accentHi.Alpha(a);
