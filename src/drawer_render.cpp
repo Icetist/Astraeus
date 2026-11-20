@@ -912,26 +912,37 @@ void Drawer::DrawPeek(float h) {
     float a = anim::Clamp01((h - 26) / 30); // fade text in as banner drops
     if (a <= 0) return;
     D2D1_RECT_F area = edgeNow == 0 ? Rect(0, 0, W, h) : edgeNow == 1 ? Rect(0, cfg.fillet, h, CH()) : Rect(winH - h, cfg.fillet, h, CH()); // visible part
-    float cx = (area.left + area.right) / 2 + (Side() ? 60 : 0), cy = Side() ? area.top + 70 : (area.top + area.bottom) / 2; // sidebar: near the top
-    canvas->Dot({cx - 112, cy}, 17, t.accent.Alpha(0.18f * a));
-    canvas->Icon(peekIcon ? peekIcon : glyph::Timer, {cx - 112, cy}, 21, t.accentHi.Alpha(a), true);
+    float cy = Side() ? area.top + 70 : (area.top + area.bottom) / 2; // sidebar: near the top
+    float iconX, tx, rightMargin;
+    if (Side()) {
+        float cx = (area.left + area.right) / 2 + 60;
+        iconX = cx - 112;
+        tx = cx - 84;
+        rightMargin = 16.0f;
+    } else {
+        iconX = area.left + cfg.fillet + 28;
+        tx = iconX + 28;
+        rightMargin = cfg.fillet + 16.0f;
+    }
+    canvas->Dot({iconX, cy}, 17, t.accent.Alpha(0.18f * a));
+    canvas->Icon(peekIcon ? peekIcon : glyph::Timer, {iconX, cy}, 21, t.accentHi.Alpha(a), true);
     if (peekLevel >= 0) { // the hud: what changed, a bar and the number
         float lv = peekLevel;
-        canvas->Text(peekTitle, Rect(cx - 84, cy - 19, 150, 20), Weight::Medium, 14, t.text.Alpha(a));
-        canvas->Text(w::Pct(peekLevel), Rect(cx + 76, cy - 19, 60, 20), Weight::Medium, 13, t.textDim.Alpha(a), Align::Right);
-        D2D1_RECT_F bar = Rect(cx - 84, cy + 7, 220, 6);
+        canvas->Text(peekTitle, Rect(tx, cy - 19, 150, 20), Weight::Medium, 14, t.text.Alpha(a));
+        canvas->Text(w::Pct(peekLevel), Rect(tx + 160, cy - 19, 60, 20), Weight::Medium, 13, t.textDim.Alpha(a), Align::Right);
+        D2D1_RECT_F bar = Rect(tx, cy + 7, 220, 6);
         canvas->Fill(bar, 3, t.track.Alpha(a));
         if (lv > 0.01f) canvas->FillH({bar.left, bar.top, bar.left + Width(bar) * lv, bar.bottom}, 3, t.accent.Alpha(a), t.accentHi.Alpha(a));
         return;
     }
-    float textW = (std::min)(340.0f, (std::max)(60.0f, area.right - (cx - 84) - 16.0f));
+    float textW = (std::min)(540.0f, (std::max)(60.0f, area.right - tx - rightMargin));
     if (peekDetail.empty()) {
-        canvas->Text(peekTitle, Rect(cx - 84, cy - 11, textW, 22), Weight::Medium, 15, t.text.Alpha(a));
+        canvas->Text(peekTitle, Rect(tx, cy - 11, textW, 22), Weight::Medium, 15, t.text.Alpha(a));
     } else if (peekTitle.empty()) {
-        canvas->Text(peekDetail, Rect(cx - 84, cy - 9, textW, 18), Weight::Light, 12.5f, t.textDim.Alpha(a));
+        canvas->Text(peekDetail, Rect(tx, cy - 9, textW, 18), Weight::Light, 12.5f, t.textDim.Alpha(a));
     } else {
-        canvas->Text(peekTitle, Rect(cx - 84, cy - 19, textW, 20), Weight::Medium, 14.5f, t.text.Alpha(a));
-        canvas->Text(peekDetail, Rect(cx - 84, cy + 2, textW, 18), Weight::Light, 12.0f, t.textDim.Alpha(a));
+        canvas->Text(peekTitle, Rect(tx, cy - 19, textW, 20), Weight::Medium, 14.5f, t.text.Alpha(a));
+        canvas->Text(peekDetail, Rect(tx, cy + 2, textW, 18), Weight::Light, 12.0f, t.textDim.Alpha(a));
     }
 }
 

@@ -13,12 +13,23 @@ constexpr float kHazeSigma = 0.11f; // blur of out-of-focus lines, as a share of
 constexpr float kHazeRes = 0.5f; // baked at half resolution: it's a blur, nobody can tell, a quarter of the memory
 constexpr int kBakesPerFrame = 3; // spreads a new song's baking over a few frames
 
+bool IsRtlText(const std::wstring& s) {
+    for (wchar_t c : s) {
+        if ((c >= 0x0590 && c <= 0x08FF) || (c >= 0xFB1D && c <= 0xFDFF) || (c >= 0xFE70 && c <= 0xFEFC))
+            return true;
+    }
+    return false;
+}
+
 }
 
 bool LyricView::Lay(Piece& pc, const std::wstring& text, IDWriteTextFormat* f, float lineH) {
     pc = {};
     if (text.empty()) return true;
     if (FAILED(gfx::DWrite()->CreateTextLayout(text.c_str(), (UINT32)text.size(), f, width, 4096, &pc.lay))) return false;
+    if (IsRtlText(text)) {
+        pc.lay->SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT);
+    }
     DWRITE_TRIMMING none = {DWRITE_TRIMMING_GRANULARITY_NONE, 0, 0};
     pc.lay->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP); // long lines wrap, the shared format is single-line
     pc.lay->SetTrimming(&none, nullptr);
@@ -185,6 +196,7 @@ void LyricView::Text(ID2D1DeviceContext* ctx, const Row& row, D2D1_POINT_2F at, 
 
 void LyricView::Sweeping(ID2D1DeviceContext* ctx, Piece& pc, D2D1_POINT_2F at, float chars, float a, Color text, size_t& e) { // one piece, lit up to chars
     if (!pc.lay) return;
+    bool rtl = (pc.lay->GetReadingDirection() == DWRITE_READING_DIRECTION_RIGHT_TO_LEFT);
     sung->SetColor(text.Alpha(a).D2D());
     unsung->SetColor(text.Alpha(style.dimLit * a).D2D());
     float feather = (pc.spans.empty() ? size : pc.spans[0].height) * 0.7f; // soft edge scales with the type
@@ -192,15 +204,22 @@ void LyricView::Sweeping(ID2D1DeviceContext* ctx, Piece& pc, D2D1_POINT_2F at, f
         float f = s.len ? anim::Clamp01((chars - s.first) / s.len) : 1;
         IUnknown* brush = f >= 1 ? sung.Get() : unsung.Get();
         if (f > 0 && f < 1) { // the soft edge of the sweep runs through this piece
-            float x = at.x + s.left - feather + f * (s.width + 2 * feather);
+            float x = rtl
+                ? at.x + s.left + s.width + feather - f * (s.width + 2 * feather)
+                : at.x + s.left - feather + f * (s.width + 2 * feather);
             if (e >= edges.size()) {
                 ComPtr<ID2D1LinearGradientBrush> g;
                 if (FAILED(ctx->CreateLinearGradientBrush({{0, 0}, {1, 0}}, D2D1::BrushProperties(1), stops.Get(), &g))) continue;
                 edges.push_back(g);
             }
             ID2D1LinearGradientBrush* g = edges[e++].Get();
-            g->SetStartPoint({x - feather, 0});
-            g->SetEndPoint({x + feather, 0});
+            if (rtl) {
+                g->SetStartPoint({x + feather, 0});
+                g->SetEndPoint({x - feather, 0});
+            } else {
+                g->SetStartPoint({x - feather, 0});
+                g->SetEndPoint({x + feather, 0});
+            }
             g->SetOpacity(a);
             brush = g;
         }
