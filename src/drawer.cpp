@@ -1549,7 +1549,14 @@ void Drawer::Frame() {
     input.pressed = input.released = input.rclick = false;
     input.wheel = 0;
     SyncRailKeys(railHot);
-    if (hr == D2DERR_RECREATE_TARGET) { // device lost, rebuild next frame
+    if (FAILED(hr)) { // device lost, or a frame that failed some other way: rebuild next frame, never keep showing a broken one
+        static HRESULT lastBad = S_OK;
+        if (hr != D2DERR_RECREATE_TARGET && hr != lastBad) {
+            wchar_t note[64];
+            swprintf_s(note, L"A frame failed (0x%08X), rebuilding", (unsigned)hr);
+            Log(note);
+        }
+        lastBad = hr;
         FreeDev();
         needsFrame = true;
         return;

@@ -434,6 +434,10 @@ public:
     int stageVinylSound = 0; // a soft needle drop and crackle as the arm lands
     int stageVinylLabel = 0; // the song's name pressed around the label, the sheen's sway and the sleeve's card shading
     int stageVinylGlow = 0; // the sung line lit softly from behind in the album's color; off until it's asked for
+    int stageVinylClassic = 0; // vinyl's words as the full player shows them, a scrolling column beside the record, not the one sung line; off until it's asked for
+    static constexpr int kClockFaces = 6;
+    int stageClockFace = 0; // the fullscreen clock's type: 0 the panel's own, then thin, bold, rounded, serif, narrow
+    static constexpr int kVinylSpeedDef = 50, kLyricDef = 100, kVizGainDef = 100, kVizAlphaDef = 60, kRimGlowDef = 100; // what the editor's sliders start at, and reset to
     int stageLyrBtn = 1, stageEditBtn = 1; // the fullscreen player's corner: wrong lyrics, and its editor
     int uiScale = 100; // percent, 80..130, folded into the dpi scale
     enum { kContrastAuto, kContrastOn, kContrastOff };

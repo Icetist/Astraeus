@@ -154,10 +154,12 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     stageThump = flag(L"StageThump", 1);
     stageVinyl = flag(L"StageVinyl", 0);
     stageVinylCtl = flag(L"StageVinylCtl", 0);
-    stageVinylSpeed = (std::clamp)(sys::ReadNum(L"StageVinylSpeed", 50), kVinylSpeedMin, kVinylSpeedMax);
+    stageVinylSpeed = (std::clamp)(sys::ReadNum(L"StageVinylSpeed", kVinylSpeedDef), kVinylSpeedMin, kVinylSpeedMax);
     stageVinylSound = flag(L"StageVinylSound", 0);
     stageVinylLabel = flag(L"StageVinylLabel", 0);
     stageVinylGlow = flag(L"StageVinylGlow", 0);
+    stageVinylClassic = flag(L"StageVinylClassic", 0);
+    stageClockFace = (std::clamp)(sys::ReadNum(L"StageClockFace", 0), 0, kClockFaces - 1);
     uiScale = (std::clamp)(sys::ReadNum(L"UiScale", 100), 80, 130);
     a11yContrast = (std::clamp)(sys::ReadNum(L"A11yContrast", kContrastAuto), (int)kContrastAuto, (int)kContrastOff);
     a11yFollow = flag(L"A11yFollowText", 1);
@@ -165,7 +167,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     a11yKeys = flag(L"A11yKeys", 1);
     a11yReader = flag(L"A11yReader", 1);
     ReadAccess();
-    lyricScale = (std::clamp)(sys::ReadNum(L"LyricScale", 100), kLyricMin, kLyricMax);
+    lyricScale = (std::clamp)(sys::ReadNum(L"LyricScale", kLyricDef), kLyricMin, kLyricMax);
     bgOpacity = (std::clamp)(sys::ReadNum(L"BgOpacity", kMaxOpacity), kMinOpacity, kMaxOpacity);
     auto appsNum = [](const wchar_t* key, int fallback) { return sys::ReadNum((std::wstring(key) + L"Apps").c_str(), fallback); }; // never set: the desktop's
     otherSet = {(std::clamp)(appsNum(kLookVal, look), 0, kLookChrome), (std::clamp)(appsNum(L"AccentMode", accentMode), 0, (int)kAccentWindows), appsNum(L"AccentHex", accentHex) & 0xFFFFFF,
@@ -235,9 +237,9 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     vizOn = flag(L"Visualizer", cfg.viz ? 1 : 0); // the ini's choice until the switch in settings is used
     artBack = flag(kArtBackVal, 0);
     stageArt = flag(L"StageArtBg", 0);
-    vizAlpha = (std::clamp)(sys::ReadNum(kVizAlphaVal, 60), kVizAlphaMin, 100);
-    vizGain = (std::clamp)(sys::ReadNum(kVizGainVal, 100), kVizGainMin, kVizGainMax);
-    rimGlow = (std::clamp)(sys::ReadNum(L"RimGlow", 100), kRimGlowMin, kRimGlowMax);
+    vizAlpha = (std::clamp)(sys::ReadNum(kVizAlphaVal, kVizAlphaDef), kVizAlphaMin, 100);
+    vizGain = (std::clamp)(sys::ReadNum(kVizGainVal, kVizGainDef), kVizGainMin, kVizGainMax);
+    rimGlow = (std::clamp)(sys::ReadNum(L"RimGlow", kRimGlowDef), kRimGlowMin, kRimGlowMax);
     keyOnly = flag(L"KeyOnly", 0);
     appKeyOnly = flag(L"AppKeyOnly", 0);
     appHoverMs = (std::clamp)(sys::ReadNum(L"AppHoverMs", kAppHoverMs), 0, kAppHoverMax);
@@ -1117,8 +1119,8 @@ bool Model::PollShared() {
     if (ourWatch.Changed(kOurKey)) { // only after a write to our key
         quiet = sys::ReadNum(kQuietVal, 0) ? 1 : 0; // halobar may have flipped it
         artBack = sys::ReadNum(kArtBackVal, 0) ? 1 : 0; // and this one
-        vizAlpha = (std::clamp)(sys::ReadNum(kVizAlphaVal, 60), kVizAlphaMin, 100); // and the two sliders
-        vizGain = (std::clamp)(sys::ReadNum(kVizGainVal, 100), kVizGainMin, kVizGainMax);
+        vizAlpha = (std::clamp)(sys::ReadNum(kVizAlphaVal, kVizAlphaDef), kVizAlphaMin, 100); // and the two sliders
+        vizGain = (std::clamp)(sys::ReadNum(kVizGainVal, kVizGainDef), kVizGainMin, kVizGainMax);
     }
     bool runs = FindWindowW(kHaloClass, nullptr) != nullptr;
     bool theme = Following() || settingsOpen; // the settings swatch previews it too

@@ -99,12 +99,12 @@ std::wstring FirstFam(IDWriteFontCollection1* c, const wchar_t* prefer) {
 }
 
 IDWriteTextFormat* Cached(uint64_t key, IDWriteFontCollection* collection, const std::wstring& family,
-                          DWRITE_FONT_WEIGHT weight, float size, DWRITE_TEXT_ALIGNMENT align) {
+                          DWRITE_FONT_WEIGHT weight, float size, DWRITE_TEXT_ALIGNMENT align, DWRITE_FONT_STRETCH stretch = DWRITE_FONT_STRETCH_NORMAL) {
     for (const auto& e : g->formats)
         if (e.key == key) return e.format.Get(); // reuse, formats never evicted
     ComPtr<IDWriteTextFormat> f;
     if (FAILED(g->dw->CreateTextFormat(family.c_str(), collection, weight, DWRITE_FONT_STYLE_NORMAL,
-                                       DWRITE_FONT_STRETCH_NORMAL, size, L"en-us", &f)))
+                                       stretch, size, L"en-us", &f)))
         return nullptr;
     f->SetTextAlignment(align);
     f->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER); // vertically centered in rect
@@ -227,6 +227,50 @@ IDWriteTextFormat* IconFmt(float size, bool filled) {
     uint64_t key = (1ull << 60) | (filled ? 1ull << 59 : 0) | (uint64_t)(size * 10) << 8; // bit 60 keeps icons apart from text keys
     return filled ? Cached(key, g->iconFill.Get(), g->fillFam, DWRITE_FONT_WEIGHT_LIGHT, size, DWRITE_TEXT_ALIGNMENT_CENTER)
                   : Cached(key, g->iconLine.Get(), g->lineFam, DWRITE_FONT_WEIGHT_LIGHT, size, DWRITE_TEXT_ALIGNMENT_CENTER);
+}
+
+namespace {
+struct Face {
+    const wchar_t* family; // nullptr: one of the bundled faces
+    DWRITE_FONT_WEIGHT weight;
+    DWRITE_FONT_STRETCH stretch;
+};
+constexpr Face kFaces[kClockFaces] = { // a lock screen's range of clocks, from faces every windows pc has or the app carries
+    {nullptr, DWRITE_FONT_WEIGHT_LIGHT, DWRITE_FONT_STRETCH_NORMAL}, // the panel's own, as it always was
+    {nullptr, DWRITE_FONT_WEIGHT_EXTRA_LIGHT, DWRITE_FONT_STRETCH_NORMAL}, // thin, the same face at its lightest
+    {L"Segoe UI Variable Display", DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STRETCH_NORMAL}, // bold and tight, the phone's default
+    {nullptr, DWRITE_FONT_WEIGHT_EXTRA_BOLD, DWRITE_FONT_STRETCH_NORMAL}, // rounded: the lyrics' face
+    {L"Georgia", DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STRETCH_NORMAL}, // serif
+    {L"Bahnschrift", DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STRETCH_CONDENSED}, // narrow and tall
+};
+constexpr int kRoundFace = 3;
+int faceThere[kClockFaces] = {}; // 0 not looked yet, 1 there, -1 missing
+}
+
+bool ClockFaceThere(int face) {
+    if (face < 0 || face >= kClockFaces) return false;
+    if (!kFaces[face].family) return true; // carried in the exe
+    if (!faceThere[face]) {
+        ComPtr<IDWriteFontCollection> sys;
+        UINT32 at = 0;
+        BOOL found = FALSE;
+        if (SUCCEEDED(g->dw->GetSystemFontCollection(&sys))) sys->FindFamilyName(kFaces[face].family, &at, &found);
+        faceThere[face] = found ? 1 : -1;
+    }
+    return faceThere[face] > 0;
+}
+
+IDWriteTextFormat* ClockFmt(int face, float size) {
+    if (!ClockFaceThere(face)) face = 0;
+    const Face& f = kFaces[face];
+    uint64_t key = (1ull << 58) | (uint64_t)face << 50 | (uint64_t)(size * 10) << 8; // bit 58 keeps clocks apart from text, icon and lyric keys
+    if (face == kRoundFace) {
+        if (!g->lyricFonts && (g->lyricFonts = LoadRes({208}))) g->lyricFam = FirstFam(g->lyricFonts.Get(), L"Nunito");
+        if (g->lyricFonts) return Cached(key, g->lyricFonts.Get(), g->lyricFam, f.weight, size, DWRITE_TEXT_ALIGNMENT_CENTER);
+        return TextFmt(Weight::Light, size, Align::Center);
+    }
+    if (!f.family) return Cached(key, g->textFonts.Get(), g->textFam, f.weight, size, DWRITE_TEXT_ALIGNMENT_CENTER);
+    return Cached(key, nullptr, f.family, f.weight, size, DWRITE_TEXT_ALIGNMENT_CENTER, f.stretch);
 }
 
 static ComPtr<IWICBitmapSource> Finish(IWICBitmapFrameDecode* frame, UINT maxPx) {
@@ -550,6 +594,20 @@ float Canvas::Measure(const std::wstring& s, Weight w, float size) {
     IDWriteTextLayout* l = f ? Layout(s, f, kRoom, size * 2, 0) : nullptr;
     DWRITE_TEXT_METRICS tm{};
     return l && SUCCEEDED(l->GetMetrics(&tm)) ? tm.widthIncludingTrailingWhitespace : 0;
+}
+
+void Canvas::TextIn(const std::wstring& s, const D2D1_RECT_F& r, IDWriteTextFormat* f, Color c) {
+    if (s.empty() || !f) return;
+    if (listening) Say(s, 0, r);
+    IDWriteTextLayout* l = Layout(s, f, Width(r), Height(r), 0);
+    if (l) rt->DrawTextLayout({r.left, r.top}, l, Brush(c), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
+float Canvas::MeasureIn(const std::wstring& s, IDWriteTextFormat* f, float size) {
+    constexpr float kRoom = 4000; // wide enough that nothing trims
+    IDWriteTextLayout* l = s.empty() || !f ? nullptr : Layout(s, f, kRoom, size * 2, 0);
+    DWRITE_TEXT_METRICS tm{};
+    return l && SUCCEEDED(l->GetMetrics(&tm)) ? tm.width : 0; // a centred format: the ink's width, not the room
 }
 
 void Canvas::TextSp(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c, float spacing, Align a) {

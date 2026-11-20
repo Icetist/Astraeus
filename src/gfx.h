@@ -42,6 +42,9 @@ IWICImagingFactory* Wic();
 IDWriteTextFormat* TextFmt(Weight weight, float size, Align align); // cached, pointer stays valid until Shutdown
 IDWriteTextFormat* LyricFmt(float size); // the lyrics' rounder face, left aligned
 IDWriteTextFormat* IconFmt(float size, bool filled); // outline or filled symbol font
+constexpr int kClockFaces = 6;
+IDWriteTextFormat* ClockFmt(int face, float size); // a clock's type, centred: 0 the text face light, then thin, bold, rounded, serif, narrow
+bool ClockFaceThere(int face); // its family is on this pc: windows' own faces can be missing from a trimmed install
 
 ComPtr<IWICBitmapSource> Decode(const uint8_t* data, size_t size, UINT maxPx); // downscaled to maxPx, pbgra out
 ComPtr<IWICBitmapSource> DecodeFile(const wchar_t* path, UINT maxPx); // tries scaled jpeg decode first
@@ -84,6 +87,8 @@ public:
     void Text(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c, Align a = Align::Left);
     float TextOnce(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c); // never cached (secrets); returns the drawn width
     float Measure(const std::wstring& s, Weight w, float size); // a single line's width in dips, from the same cached layouts Text draws
+    void TextIn(const std::wstring& s, const D2D1_RECT_F& r, IDWriteTextFormat* f, Color c); // in a format of its own, such as a clock face
+    float MeasureIn(const std::wstring& s, IDWriteTextFormat* f, float size);
     void TextSp(const std::wstring& s, const D2D1_RECT_F& r, Weight w, float size, Color c, float spacing, Align a = Align::Left);
     void Icon(int glyph, D2D1_POINT_2F center, float size, Color c, bool filled = false);
 

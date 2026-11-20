@@ -210,6 +210,10 @@ bool Drawer::RenewDev() {
     else visual->SetContent(nullptr);
     ctx->SetTarget(nullptr);
     canvas.reset(); // everything made on the old device goes with it
+    revealSnap.Reset(); // as FreeDev lets go of them: drawn on the new device they'd fail the whole frame
+    revealBlur.Reset();
+    mediaLyr = LyricView{};
+    rim::ForgetMedia();
     cover.Reset();
     coverBlur.Reset();
     coverBack.Reset();

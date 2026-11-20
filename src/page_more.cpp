@@ -83,6 +83,44 @@ void InfoRow(Canvas& c, const Theme& t, float x, float y, float wdt, const wchar
     c.Text(value.empty() ? L"—" : value, Rect(x, y + 15, wdt, 20), Weight::Regular, 13.5f, t.text);
 }
 
+constexpr int kVeilTaps = 8; // copies round a ring: a soft smear, with no blur effect to run each frame
+constexpr float kVeilSpread = 3.2f, kVeilInk = 0.17f; // its radius in dips, and each copy's share of the ink
+constexpr double kVeilForget = 1.0; // the page out of sight this long: the addresses cover up again
+constexpr float kVeilRate = 14;
+bool ipShown[2] = {}; // the local and public address, uncovered by a click; never saved
+double ipSeen = -10;
+
+std::wstring Masked(const std::wstring& s) { // the same shape with other digits: the real address never reaches the frame, or a screen reader, until it's asked for
+    std::wstring m = s;
+    for (wchar_t& ch : m)
+        if (std::iswalnum(ch)) ch = L'8';
+    return m;
+}
+
+void IpRow(Ui& ui, const Theme& t, float x, float y, float wdt, const wchar_t* label, const std::wstring& value, int which, bool secret) {
+    Canvas& c = ui.C();
+    if (!secret) { // nothing to hide: off, or still looking
+        InfoRow(c, t, x, y, wdt, label, value);
+        return;
+    }
+    c.TextSp(label, Rect(x, y, wdt, 14), Weight::Medium, 9.5f, t.textLow, 1.4f);
+    D2D1_RECT_F at = Rect(x, y + 15, wdt, 20);
+    uint32_t id = Ui::Id("net.ip", which);
+    Ui::Hit h = ui.Button(id, Rect(x - 6, y + 13, (std::min)(wdt, c.Measure(value, Weight::Regular, 13.5f) + 12), 24));
+    ui.Name(ipShown[which] ? std::wstring(label) + L", " + value : std::wstring(L"Show ") + label);
+    if (h.clicked) ipShown[which] = !ipShown[which];
+    float open = ui.Smooth(id + 1, ipShown[which] ? 1.0f : 0, kVeilRate);
+    if (open > 0.01f && open < 0.99f) ui.KeepAlive();
+    if (open > 0.01f) c.Text(value, at, Weight::Regular, 13.5f, t.text.Alpha(open));
+    if (open > 0.99f) return;
+    std::wstring m = Masked(value);
+    float r = kVeilSpread * (1 - open), ink = kVeilInk * (1 - open) * (h.hover ? 1.4f : 1);
+    for (int i = 0; i < kVeilTaps; ++i) {
+        float ang = 6.2831853f * i / kVeilTaps;
+        c.Text(m, Rect(at.left + r * std::cos(ang), at.top + r * std::sin(ang), wdt, 20), Weight::Regular, 13.5f, t.text.Alpha(ink));
+    }
+}
+
 void Clip(const std::wstring& s) {
     if (s.empty() || !OpenClipboard(nullptr)) return; // bail if another app holds clipboard
     EmptyClipboard();
@@ -167,8 +205,10 @@ void DrawNet(PageCtx& p) {
         c.Text(std::to_wstring(n.signal) + L"% signal", Rect(info.left + 56, info.top + 96, 200, 18), Weight::Regular, 12.5f, t.textDim);
     }
     float x = info.left + 20, wdt = 276;
-    InfoRow(c, t, x, info.top + 134, wdt, L"LOCAL IP", n.lanIp);
-    InfoRow(c, t, x, info.top + 184, wdt - 40, L"PUBLIC IP", !p.m.cfg.publicIp ? L"Off" : n.wanIp.empty() ? L"Looking up…" : n.wanIp); // narrower to fit copy button
+    if (ui.Now() - ipSeen > kVeilForget) ipShown[0] = ipShown[1] = false; // back on the page: covered again
+    ipSeen = ui.Now();
+    IpRow(ui, t, x, info.top + 134, wdt, L"LOCAL IP", n.lanIp, 0, !n.lanIp.empty()); // covered until clicked: a screen share or a screenshot doesn't give them away
+    IpRow(ui, t, x, info.top + 184, wdt - 40, L"PUBLIC IP", !p.m.cfg.publicIp ? L"Off" : n.wanIp.empty() ? L"Looking up…" : n.wanIp, 1, p.m.cfg.publicIp && !n.wanIp.empty()); // narrower to fit copy button
     bool copied = ui.Now() - copiedAt < 1.6; // check icon shows 1.6s after copy
     if (!n.wanIp.empty() &&
         w::IconBtn(ui, t, Ui::Id("net.copy"), {info.right - 34, info.top + 206}, 34, copied ? glyph::Check : glyph::Copy, 18, true, copied)) {

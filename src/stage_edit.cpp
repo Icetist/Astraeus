@@ -27,13 +27,34 @@ float Overlap(const D2D1_RECT_F& a, const D2D1_RECT_F& b) {
     return w > 0 && h > 0 ? w * h : 0;
 }
 
-float PageH(int page, int tab, int songChips, bool vinyl) {
+constexpr float kFaceH = 58, kFaceRow = kFaceH + kChipGap; // a clock face's tile: the time in that face over its name
+constexpr int kFaceCols = 3;
+constexpr float kFaceTime = 22, kFaceName = 10.5f; // the tile's sample time and its name
+constexpr float kGroupGap = 8; // a breath between the room's own options and the visualizer's: room, not a caption
+const wchar_t* const kFaceNames[gfx::kClockFaces] = {L"Default", L"Thin", L"Bold", L"Rounded", L"Serif", L"Narrow"};
+
+bool Worded(int tab) { return tab == 1 || tab == StagePrefs::kVinylLyr; } // a version with words: it has a lyrics page
+
+int FacesThere() {
+    int n = 0;
+    for (int i = 0; i < gfx::kClockFaces; ++i) n += gfx::ClockFaceThere(i) ? 1 : 0;
+    return n;
+}
+
+float PageH(int page, int tab, int songChips, const Model& m) {
+    bool vinyl = m.stageVinyl != 0;
     switch (page) {
     case kPageCover: return (vinyl ? 2 : 1) * kChipRow + 3 * kSlideRow; // vinyl adds its color row, and trades the corners for its spin speed
     case kPageSong: return kSlideRow + (songChips + 1) / 2 * kChipRow; // two to a row
-    case kPageLyrics: return kChipRow + 4 * kSlideRow;
-    case kPageClock: return kChipRow + 2 * kSlideRow;
-    case kPageScene: return 6 * kChipRow + 4 * kSlideRow; // nine switches, ten with vinyl's lyric glow: five rows either way, and the media tab's pick under them
+    case kPageLyrics:
+        if (tab < StagePrefs::kVinyl) return kChipRow + 4 * kSlideRow;
+        return m.stageVinylClassic ? 2 * kChipRow + 4 * kSlideRow : 2 * kChipRow + kSlideRow; // vinyl: its words' two switches, then the column's numbers or the line's size
+    case kPageClock: return kChipRow + (FacesThere() + kFaceCols - 1) / kFaceCols * kFaceRow + 2 * kSlideRow;
+    case kPageScene: { // the room's own, then the visualizer's: what hangs off the visualizer shows only while it's on
+        float h = 2 * kChipRow + kSlideRow + kGroupGap + kChipRow;
+        if (m.vizOn) h += 2 * kChipRow + 2 * kSlideRow + ((m.vizLooks & Model::kLookRim) || m.mediaWave == rim::kMediaRim ? kSlideRow : 0);
+        return h;
+    }
     default: return StagePrefs::kKeys * (kKeyH + kChipGap) + kNoteH;
     }
 }
@@ -42,7 +63,7 @@ float PageH(int page, int tab, int songChips, bool vinyl) {
 
 namespace {
 constexpr size_t kShapeFloats = sizeof(StagePrefs::Shape) / sizeof(float);
-constexpr size_t kScenePrefs = 16;
+constexpr size_t kScenePrefs = 19;
 constexpr int kSpinStep = 5; // the spin speed slider's steps, in percent // the switches and numbers after the two layouts in a snapshot: EditSnap and EditLoad keep the same order
 static_assert(sizeof(StagePrefs::Shape) == kShapeFloats * sizeof(float), "a layout is floats only: it goes into a snapshot as they are");
 }
@@ -55,7 +76,7 @@ History::Snap Stage::EditSnap() const { // both versions, then the scene's own s
         const float* f = reinterpret_cast<const float*>(&sh);
         s.insert(s.end(), f, f + kShapeFloats);
     }
-    for (int v : {model.stageArt, model.stageThump, model.stageHide, model.vizOn, model.vizLooks, model.vizFull, model.vizGain, model.vizAlpha, model.stageVinyl, model.stageVinylCtl, model.stageVinylSpeed, model.stageVinylSound, model.stageVinylLabel, model.stageVinylGlow, model.mediaWave, model.rimGlow}) s.push_back((float)v);
+    for (int v : {model.stageArt, model.stageThump, model.stageHide, model.vizOn, model.vizLooks, model.vizFull, model.vizGain, model.vizAlpha, model.stageVinyl, model.stageVinylCtl, model.stageVinylSpeed, model.stageVinylSound, model.stageVinylLabel, model.stageVinylGlow, model.mediaWave, model.rimGlow, model.lyricScale, model.stageVinylClassic, model.stageClockFace}) s.push_back((float)v);
     return s;
 }
 
@@ -68,7 +89,7 @@ void Stage::EditLoad(const History::Snap& s) {
         int* field;
         const wchar_t* key;
     } prefs[] = {{&model.stageArt, L"StageArtBg"}, {&model.stageThump, L"StageThump"}, {&model.stageHide, L"StageHide"}, {&model.vizOn, L"Visualizer"},
-                 {&model.vizLooks, L"VizLooks"}, {&model.vizFull, L"VizFull"}, {&model.vizGain, L"VizGain"}, {&model.vizAlpha, L"VizAlpha"}, {&model.stageVinyl, L"StageVinyl"}, {&model.stageVinylCtl, L"StageVinylCtl"}, {&model.stageVinylSpeed, L"StageVinylSpeed"}, {&model.stageVinylSound, L"StageVinylSound"}, {&model.stageVinylLabel, L"StageVinylLabel"}, {&model.stageVinylGlow, L"StageVinylGlow"}, {&model.mediaWave, L"MediaWave"}, {&model.rimGlow, L"RimGlow"}};
+                 {&model.vizLooks, L"VizLooks"}, {&model.vizFull, L"VizFull"}, {&model.vizGain, L"VizGain"}, {&model.vizAlpha, L"VizAlpha"}, {&model.stageVinyl, L"StageVinyl"}, {&model.stageVinylCtl, L"StageVinylCtl"}, {&model.stageVinylSpeed, L"StageVinylSpeed"}, {&model.stageVinylSound, L"StageVinylSound"}, {&model.stageVinylLabel, L"StageVinylLabel"}, {&model.stageVinylGlow, L"StageVinylGlow"}, {&model.mediaWave, L"MediaWave"}, {&model.rimGlow, L"RimGlow"}, {&model.lyricScale, L"LyricScale"}, {&model.stageVinylClassic, L"StageVinylClassic"}, {&model.stageClockFace, L"StageClockFace"}};
     size_t at = StagePrefs::kShapes * kShapeFloats;
     for (const Pref& p : prefs) {
         int v = (int)s[at++];
@@ -109,7 +130,7 @@ void Stage::EditNudge(int dx, int dy, bool big) {
 D2D1_RECT_F Stage::BarRect(float show) {
     bool extras = !model.stageVinyl || model.stageVinylCtl; // as the song page lays its switches out
     int songChips = (model.stageVinyl ? 1 : 0) + (extras ? 2 : 0) + (editTab != 1 ? 2 : 0);
-    float want = (std::min)(kPanelChrome + PageH(editPage, editTab, songChips, model.stageVinyl != 0), H - 2 * kEdge);
+    float want = (std::min)(kPanelChrome + PageH(editPage, editTab, songChips, model), H - 2 * kEdge);
     float h = ui.Smooth(Ui::Id("st.ed.h"), want, 16), w = (std::min)(kPanelW, W - 2 * kEdge);
     if (barAuto) { // it keeps out of the way of what's picked, on its own, until it's been put somewhere by hand
         D2D1_RECT_F parts[kEditParts] = {partClock, partCtl, partLyrics, partText, partCover};
@@ -190,7 +211,7 @@ void Stage::EditParts(const D2D1_RECT_F& bar, float show) {
         if (!bySize && !ui.IsActive(Ui::Id("st.ed.body", i))) continue;
         editDrag = i * 2 + (bySize ? 1 : 0);
         editPart = i;
-        int page = vinylLine && i == kPartLyrics ? kPageSong : kPageOf[i]; // the lyrics page belongs to the layout with lyrics: vinyl's line goes with the song
+        int page = kPageOf[i]; // vinyl's words have their own lyrics page too
         if (editPage != page) editPage = page, ++editPageNth;
         editFrom = s;
         editMid = {(parts[i].left + parts[i].right) / 2, (parts[i].top + parts[i].bottom) / 2};
@@ -234,6 +255,75 @@ void Stage::EditParts(const D2D1_RECT_F& bar, float show) {
     else if (part == kPartClock) s.clockX = editFrom.clockX + ox, s.clockY = editFrom.clockY + oy;
     else if (part == kPartCtl) s.ctlX = editFrom.ctlX + ox, s.ctlY = editFrom.ctlY + oy;
     else s.lyrX = editFrom.lyrX + ox, s.lyrY = editFrom.lyrY + oy;
+}
+
+void Stage::ResetPage(int page) {
+    StagePrefs& sp = StagePrefs::Get();
+    StagePrefs::Shape& s = sp.shape[editTab];
+    const StagePrefs::Shape d{};
+    auto num = [&](int& f, const wchar_t* key, int v) {
+        if (f != v) model.SetPref(f, key, v);
+    };
+    switch (page) {
+    case kPageCover:
+        s.coverS = d.coverS, s.coverX = d.coverX, s.coverY = d.coverY, s.coverRound = d.coverRound, s.coverGlow = d.coverGlow;
+        if (model.stageVinyl) num(model.stageVinylSpeed, L"StageVinylSpeed", Model::kVinylSpeedDef); // its slider lives here
+        break;
+    case kPageSong: // the song, and the vinyl room's buttons, which this page holds too
+        s.textS = d.textS, s.textX = d.textX, s.textY = d.textY, s.appOn = d.appOn, s.albumOn = d.albumOn, s.extrasOn = d.extrasOn, s.timesOn = d.timesOn;
+        s.ctlS = d.ctlS, s.ctlX = d.ctlX, s.ctlY = d.ctlY;
+        break;
+    case kPageLyrics:
+        s.lyrX = d.lyrX, s.lyrY = d.lyrY, s.lyrW = d.lyrW, s.lyrH = d.lyrH, s.lyrAlign = d.lyrAlign, s.lyrDim = d.lyrDim, s.lyrHaze = d.lyrHaze, s.lyrAnchor = d.lyrAnchor;
+        num(model.lyricScale, L"LyricScale", Model::kLyricDef);
+        break;
+    case kPageClock:
+        s.clockOn = d.clockOn, s.clockS = d.clockS, s.clockX = d.clockX, s.clockY = d.clockY, s.clockA = d.clockA;
+        num(model.stageClockFace, L"StageClockFace", 0);
+        break;
+    case kPageScene: // the numbers; the switches are kept as they were set
+        s.dim = d.dim;
+        num(model.vizGain, L"VizGain", Model::kVizGainDef);
+        num(model.vizAlpha, L"VizAlpha", Model::kVizAlphaDef);
+        num(model.rimGlow, L"RimGlow", Model::kRimGlowDef);
+        break;
+    default: { // the keys, back to the ones it came with
+        const StagePrefs fresh;
+        for (int i = 1; i <= StagePrefs::kKeys; ++i) sp.Pick(i, fresh.KeyOf(i));
+        sp.capture = 0;
+        break;
+    }
+    }
+    sp.SaveShape();
+}
+
+void Stage::ClockFaces(float x, float y, float wide, bool live) {
+    Canvas& c = *canvas;
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t time[32] = {};
+    GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS | TIME_NOTIMEMARKER, &st, nullptr, time, 32); // the time now, as the clock shows it, without am/pm to keep the tile calm
+    float tw = (wide - (kFaceCols - 1) * kChipGap) / kFaceCols;
+    int n = 0;
+    for (int f = 0; f < gfx::kClockFaces; ++f) {
+        if (!gfx::ClockFaceThere(f)) continue; // missing on this pc: not offered
+        D2D1_RECT_F r = Rect(x + n % kFaceCols * (tw + kChipGap), y + n / kFaceCols * kFaceRow, tw, kFaceH);
+        ++n;
+        uint32_t id = Ui::Id("st.ed.face", f);
+        Ui::Hit h = {};
+        if (live) {
+            h = ui.Button(id, r);
+            ui.Name(std::wstring(L"Clock face: ") + kFaceNames[f]);
+        }
+        bool on = model.stageClockFace == f;
+        float hov = ui.Smooth(id + 1, h.hover ? 1.0f : 0, 16), sel = ui.Smooth(id + 2, on ? 1.0f : 0, 14);
+        float a = live ? 1.0f : kFaded * 2;
+        c.Fill(r, 14, look.track.Alpha((0.55f + 0.25f * hov) * a).Mix(look.accent.Alpha(0.22f * a), sel));
+        if (sel > 0.01f) c.Stroke(r, 14, look.accentHi.Alpha(0.9f * sel * a), 1.5f);
+        c.TextIn(time, Rect(r.left, r.top + 6, tw, 32), gfx::ClockFmt(f, kFaceTime), look.text.Alpha(a));
+        c.Text(kFaceNames[f], Rect(r.left, r.bottom - 20, tw, 14), Weight::Medium, kFaceName, (on ? look.accentHi : look.textDim).Alpha(a), Align::Center);
+        if (h.clicked && !on) model.SetPref(model.stageClockFace, L"StageClockFace", f);
+    }
 }
 
 void Stage::EditPage(const D2D1_RECT_F& body, bool live) { // the picked page's options
@@ -296,48 +386,77 @@ void Stage::EditPage(const D2D1_RECT_F& body, bool live) { // the picked page's 
         }
         break;
     case kPageLyrics: {
-        if (w::Chip(ui, look, Ui::Id("st.ed.lyr.on"), Rect(x, y, cw, kChipH), L"Lyrics", model.fullLyrics != 0) && live) pref(model.fullLyrics, L"FullLyrics");
         static const wchar_t* const kAlign[3] = {L"Left", L"Center", L"Right"};
-        int was = (int)std::lround(s.lyrAlign), picked = sheet::Segmented(ui, look, "st.ed.lyr.align", Rect(x + cw + kChipGap, y, cw, kChipH), kAlign, 3, was, live);
-        if (picked >= 0) s.lyrAlign = (float)picked, sp.SaveShape();
-        y += kChipRow;
-        setting("st.ed.lyr.type", L"Type size", model.lyricScale, L"LyricScale", Model::kLyricMin, Model::kLyricMax, kLyricStep, model.fullLyrics != 0);
-        percent("st.ed.lyr.line", L"Sung line height", s.lyrAnchor, StagePrefs::kAnchorLo, StagePrefs::kAnchorHi, 100);
-        percent("st.ed.lyr.dim", L"Other lines", s.lyrDim, StagePrefs::kLyrDimLo, StagePrefs::kLyrDimHi, 100);
-        percent("st.ed.lyr.blur", L"Blur", s.lyrHaze, 0, StagePrefs::kHazeHi, 100);
+        auto align = [&](const D2D1_RECT_F& r) {
+            int was = (int)std::lround(s.lyrAlign), picked = sheet::Segmented(ui, look, "st.ed.lyr.align", r, kAlign, 3, was, live);
+            if (picked >= 0) s.lyrAlign = (float)picked, sp.SaveShape();
+        };
+        auto column = [&] { // the scrolling words' own numbers, the full player's and vinyl's classic look alike
+            setting("st.ed.lyr.type", L"Type size", model.lyricScale, L"LyricScale", Model::kLyricMin, Model::kLyricMax, kLyricStep, model.fullLyrics != 0);
+            percent("st.ed.lyr.line", L"Sung line height", s.lyrAnchor, StagePrefs::kAnchorLo, StagePrefs::kAnchorHi, 100);
+            percent("st.ed.lyr.dim", L"Other lines", s.lyrDim, StagePrefs::kLyrDimLo, StagePrefs::kLyrDimHi, 100);
+            percent("st.ed.lyr.blur", L"Blur", s.lyrHaze, 0, StagePrefs::kHazeHi, 100);
+        };
+        if (editTab < StagePrefs::kVinyl) {
+            if (w::Chip(ui, look, Ui::Id("st.ed.lyr.on"), Rect(x, y, cw, kChipH), L"Lyrics", model.fullLyrics != 0) && live) pref(model.fullLyrics, L"FullLyrics");
+            align(Rect(x + cw + kChipGap, y, cw, kChipH));
+            y += kChipRow;
+            column();
+            break;
+        }
+        // vinyl: the one sung line under the record, or the full player's scrolling words beside it
+        if (chip("st.ed.lyr.on", L"Lyrics", model.fullLyrics != 0)) pref(model.fullLyrics, L"FullLyrics");
+        if (chip("st.ed.lyr.classic", L"Classic lyrics", model.stageVinylClassic != 0)) pref(model.stageVinylClassic, L"StageVinylClassic");
+        if (model.stageVinylClassic) {
+            align(Rect(x, y, wide, kChipH));
+            y += kChipRow;
+            column();
+        } else {
+            if (chip("st.ed.lyr.glow", L"Lyric glow", model.stageVinylGlow != 0)) pref(model.stageVinylGlow, L"StageVinylGlow");
+            y += kChipRow, col = 0;
+            percent("st.ed.lyr.size", L"Size", s.lyrW, StagePrefs::kLyrWLo, StagePrefs::kLyrWHi, 100);
+        }
         break;
     }
     case kPageClock:
         if (chip("st.ed.clock.on", L"Show the clock", s.clockOn > 0.5f)) flip(s.clockOn);
         y += kChipRow, col = 0;
+        ClockFaces(x, y, wide, live && s.clockOn > 0.5f);
+        y += (FacesThere() + kFaceCols - 1) / kFaceCols * kFaceRow;
         percent("st.ed.clock.size", L"Size", s.clockS, StagePrefs::kClockLo, StagePrefs::kClockHi, 100, s.clockOn > 0.5f);
         percent("st.ed.clock.alpha", L"Opacity", s.clockA, StagePrefs::kClockALo, 1, 100, s.clockOn > 0.5f);
         break;
-    case kPageScene:
+    case kPageScene: {
+        // the room: what's behind the song
         if (chip("st.ed.sc.art", L"Album art", model.stageArt != 0)) pref(model.stageArt, L"StageArtBg");
         if (chip("st.ed.sc.thump", L"Cover thump", model.stageThump != 0)) pref(model.stageThump, L"StageThump");
         if (chip("st.ed.sc.hide", L"Hide at rest", model.stageHide != 0)) pref(model.stageHide, L"StageHide");
-        if (chip("st.ed.sc.viz", L"Visualizer", model.vizOn != 0)) pref(model.vizOn, L"Visualizer");
-        // the visualizer's looks: any of them together
-        for (auto [id, label, bit] : {std::tuple{"st.ed.sc.glow2", L"Glow", Model::kLookGlow}, std::tuple{"st.ed.sc.wave", L"Waveform", Model::kLookBars}, std::tuple{"st.ed.sc.rim", L"Edge glow", Model::kLookRim}})
-            if (chip(id, label, (model.vizLooks & bit) != 0)) model.SetPref(model.vizLooks, L"VizLooks", model.vizLooks ^ bit);
-        if (chip("st.ed.sc.full", L"Any volume", model.vizFull != 0)) pref(model.vizFull, L"VizFull");
         if (chip("st.ed.sc.lyrics", L"Lyrics", model.fullLyrics != 0)) pref(model.fullLyrics, L"FullLyrics"); // always here: the lyrics page shows only while there are lyrics, so off there was off for good
-        if (model.stageVinyl && chip("st.ed.sc.glow", L"Lyric glow", model.stageVinylGlow != 0)) pref(model.stageVinylGlow, L"StageVinylGlow"); // here, not on the lyrics page: vinyl never shows that page
-        if (col) y += kChipRow, col = 0;
+        percent("st.ed.sc.dim", L"Darken the background", s.dim, 0, StagePrefs::kDimHi, 100);
+        y += kGroupGap;
+        // the visualizer: its switch, then what hangs off it, only while it's on
+        if (chip("st.ed.sc.viz", L"Visualizer", model.vizOn != 0)) pref(model.vizOn, L"Visualizer");
+        if (chip("st.ed.sc.full", L"Any volume", model.vizFull != 0)) pref(model.vizFull, L"VizFull");
+        if (!model.vizOn) break;
+        float cw3 = (wide - 2 * kChipGap) / 3;
+        int i = 0;
+        for (auto [id, label, bit] : {std::tuple{"st.ed.sc.glow2", L"Glow", Model::kLookGlow}, std::tuple{"st.ed.sc.wave", L"Waveform", Model::kLookBars}, std::tuple{"st.ed.sc.rim", L"Edge glow", Model::kLookRim}}) { // its looks, any of them together: one row, read as a set
+            if (w::Chip(ui, look, Ui::Id(id), Rect(x + i++ * (cw3 + kChipGap), y, cw3, kChipH), label, (model.vizLooks & bit) != 0) && live) model.SetPref(model.vizLooks, L"VizLooks", model.vizLooks ^ bit);
+        }
+        y += kChipRow;
         { // the media tab shows one visualizer at a time: which of them, the soft glow by default
             static const wchar_t* const kMedia[3] = {L"Glow", L"Wave", L"Edge"};
-            c.Text(L"Media tab", Rect(x, y, cw, kChipH), Weight::Regular, 12, look.text);
+            c.Text(L"On the media tab", Rect(x + 2, y, cw, kChipH), Weight::Regular, 12, look.textDim);
             int picked = sheet::Segmented(ui, look, "st.ed.sc.media", Rect(x + cw + kChipGap, y, cw, kChipH), kMedia, 3, model.mediaWave, live);
             if (picked >= 0 && picked != model.mediaWave) model.SetPref(model.mediaWave, L"MediaWave", picked);
             y += kChipRow;
         }
-        setting("st.ed.sc.gain", L"Visualizer strength", model.vizGain, L"VizGain", Model::kVizGainMin, Model::kVizGainMax, Model::kSlideStep);
-        setting("st.ed.sc.alpha", L"Visualizer opacity", model.vizAlpha, L"VizAlpha", Model::kVizAlphaMin, 100, Model::kSlideStep);
-        setting("st.ed.sc.rimglow", L"Edge glow", model.rimGlow, L"RimGlow", Model::kRimGlowMin, Model::kRimGlowMax, Model::kSlideStep,
-                (model.vizLooks & Model::kLookRim) || model.mediaWave == rim::kMediaRim); // its reach and brightness together, live only where it's worn
-        percent("st.ed.sc.dim", L"Darken the background", s.dim, 0, StagePrefs::kDimHi, 100);
+        setting("st.ed.sc.gain", L"Strength", model.vizGain, L"VizGain", Model::kVizGainMin, Model::kVizGainMax, Model::kSlideStep);
+        setting("st.ed.sc.alpha", L"Opacity", model.vizAlpha, L"VizAlpha", Model::kVizAlphaMin, 100, Model::kSlideStep);
+        if ((model.vizLooks & Model::kLookRim) || model.mediaWave == rim::kMediaRim) // only while it's worn somewhere
+            setting("st.ed.sc.rimglow", L"Edge glow", model.rimGlow, L"RimGlow", Model::kRimGlowMin, Model::kRimGlowMax, Model::kSlideStep);
         break;
+    }
     default: {
         static const wchar_t* const kLabels[StagePrefs::kKeys] = {L"Two screens", L"Swap screens", L"Lyrics only"};
         for (int i = 0; i < StagePrefs::kKeys; ++i) { // the same ones as in settings: click it, then press the new one
@@ -369,10 +488,8 @@ void Stage::EditPanel(const D2D1_RECT_F& bar, bool canWith, bool covered) {
     editHist.Sync(editRun, EditSnap(), live && !in.down); // a drag or a slider counts once it's let go
     c.Text(L"Edit fullscreen", Rect(inner.left + 2, y, histX - inner.left - 6, kHeadH), Weight::Semi, 13, look.text);
     if (sheet::Act(ui, look, Ui::Id("st.ed.done"), Rect(inner.right - btnW, y, btnW, kHeadH), L"Done", true, false, live)) EndEdit();
-    if (sheet::Act(ui, look, Ui::Id("st.ed.reset"), Rect(inner.right - 2 * btnW - 6, y, btnW, kHeadH), L"Reset", false, false, live)) {
-        sp.shape[editTab] = StagePrefs::Shape{}; // this version's layout; undo brings it back
-        sp.SaveShape();
-    }
+    if (sheet::Act(ui, look, Ui::Id("st.ed.reset"), Rect(inner.right - 2 * btnW - 6, y, btnW, kHeadH), L"Reset", false, false, live))
+        ResetPage(editPage); // only the page that's open, in this version; undo brings it back
     int go = history::Buttons(ui, look, "st.ed.hist", histX, y + kHeadH / 2, editHist, live);
     if (go < 0) EditLoad(editHist.Undo());
     else if (go > 0) EditLoad(editHist.Redo());
@@ -386,13 +503,13 @@ void Stage::EditPanel(const D2D1_RECT_F& bar, bool canWith, bool covered) {
         c.Text(editTab == StagePrefs::kVinyl ? L"Vinyl" : L"Without lyrics", Rect(inner.left + 2, y, Width(inner), kTabsH), Weight::Medium, 12, look.textDim); // vinyl is arranged on its own
     }
     y += kTabsH + kGap;
-    if (editTab != 1 && editPage == kPageLyrics) editPage = kPageCover, ++editPageNth;
+    if (!Worded(editTab) && editPage == kPageLyrics) editPage = kPageCover, ++editPageNth;
     int ids[kPages], n = 0;
     const wchar_t* names[kPages];
     static const wchar_t* const kNames[kPages] = {L"Cover", L"Song", L"Lyrics", L"Clock", L"Scene", L"Keys"};
     int cur = 0;
     for (int i = 0; i < kPages; ++i) {
-        if (i == kPageLyrics && editTab != 1) continue;
+        if (i == kPageLyrics && !Worded(editTab)) continue;
         if (i == editPage) cur = n;
         ids[n] = i, names[n++] = kNames[i];
     }

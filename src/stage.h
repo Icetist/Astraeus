@@ -77,6 +77,9 @@ private:
     float vinylHazeK = 0, vinylHazeW = 0, vinylWantK = 0, vinylWantW = 0; // and their scales and text widths
     void SyncLyrics(double now);
     D2D1_RECT_F LyricRect() const; // the column the lyrics scroll in, right of the cover
+    bool VinylClassic() const { return model.stageVinyl && model.stageVinylClassic && role == kWhole; } // the vinyl room with the full player's scrolling words beside the record
+    void ResetPage(int page); // the editor's reset: only what that page of options holds
+    void ClockFaces(float x, float y, float wide, bool live); // the clock's type, each tile set in its own face
     float LyricSize() const;
     void Words(); // the lyrics half of a pair: only the words, the whole screen theirs
     void Keys(UINT vk); // the two screen keys

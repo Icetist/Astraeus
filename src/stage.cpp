@@ -467,12 +467,13 @@ void Stage::Clock(float y, float k) { // just the time, faint, top center, unles
     float laid = mix(role == kWhole ? clockLaid[base] : 1, role == kWhole ? clockLaid[1] : 1), zoom = mix(s0.clockS, s1.clockS) / laid;
     float size = 22 * k * laid, h = 34 * k * laid, cx = W / 2 + mix(s0.clockX, s1.clockX) * W, cy = y + 17 * k + mix(s0.clockY, s1.clockY) * H;
     float on = mix(s0.clockOn, s1.clockOn), alpha = mix(s0.clockA, s1.clockA) * on;
-    float tw = canvas->Measure(time, Weight::Light, size);
+    IDWriteTextFormat* face = gfx::ClockFmt(model.stageClockFace, size); // the picked type; the panel's own light face unless another was asked for
+    float tw = canvas->MeasureIn(time, face, size);
     partClock = {cx - tw * zoom / 2, cy - h * zoom / 2, cx + tw * zoom / 2, cy + h * zoom / 2};
     if (alpha < 0.004f) return;
     bool zoomed = std::fabs(zoom - 1) > 0.0005f;
     if (zoomed) ctx->SetTransform(D2D1::Matrix3x2F::Scale(zoom, zoom, {cx, cy}));
-    canvas->Text(time, Rect(cx - tw / 2 - 8 * k, cy - h / 2, tw + 16 * k, h), Weight::Light, size, look.text.Alpha(alpha), Align::Center);
+    canvas->TextIn(time, Rect(cx - tw / 2 - 8 * k, cy - h / 2, tw + 16 * k, h), face, look.text.Alpha(alpha));
     if (zoomed) ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 }
 
@@ -521,7 +522,7 @@ D2D1_RECT_F Stage::LyricRect() const {
     float m = W * 0.065f, lw = W * 0.34f, lx = m + lw + W * 0.05f;
     D2D1_RECT_F r = {lx, H * 0.07f, W - W * 0.05f, H * 0.93f};
     if (role != kWhole) return r;
-    const StagePrefs::Shape& s = shapeNow[1]; // as it was arranged
+    const StagePrefs::Shape& s = shapeNow[VinylClassic() ? StagePrefs::kVinylLyr : 1]; // as it was arranged: vinyl's words keep their own place
     float mx = (r.left + r.right) / 2 + s.lyrX * W, my = (r.top + r.bottom) / 2 + s.lyrY * H, hw = Width(r) * s.lyrW / 2, hh = Height(r) * s.lyrH / 2;
     return {mx - hw, my - hh, mx + hw, my + hh};
 }
@@ -880,7 +881,7 @@ void Stage::Frame(const Theme& media) {
         for (int v = 0; v < StagePrefs::kShapes; ++v) textLaid[v] = shapeNow[v].textS, clockLaid[v] = shapeNow[v].clockS;
     }
     if (!(shapeMoving || editDrag == kPartLyrics * 2 + 1) || lyrLaidW <= 0) lyrLaidW = Width(LyricRect());
-    partLyrics = LyricRect();
+    partLyrics = LyricRect(); // the vinyl room sets its own below, as it draws
 
     float pl = 0, pr = 0;
     bool playing = model.hasTrack && model.track.playing;
@@ -918,9 +919,10 @@ void Stage::Frame(const Theme& media) {
         lyrics.Style(ls);
     }
     if (Shown() == kWhole) { // the words as they were arranged
-        const StagePrefs::Shape& s = shapeNow[1];
+        int at = VinylClassic() ? StagePrefs::kVinylLyr : 1;
+        const StagePrefs::Shape& s = shapeNow[at];
         LyricView::Look ls;
-        ls.anchor = s.lyrAnchor, ls.dim = s.lyrDim, ls.haze = s.lyrHaze, ls.align = (int)std::lround(StagePrefs::Get().shape[1].lyrAlign);
+        ls.anchor = s.lyrAnchor, ls.dim = s.lyrDim, ls.haze = s.lyrHaze, ls.align = (int)std::lround(StagePrefs::Get().shape[at].lyrAlign);
         lyrics.Style(ls);
     }
     if (lyrOn) lyrics.Sync(ctx.Get(), lyrDoc, lyrLaidW, LyricSize()); // lays out a new song's lines before the frame starts
@@ -982,7 +984,7 @@ void Stage::Frame(const Theme& media) {
         ui.Block(false);
     }
     if (lyrMenu) LyricsMenu();
-    if (float nudge = anim::Clamp01((float)(1.6 - (now - nudgeAt)) / 0.3f); nudge > 0.001f && (lyrMix > 0.5f || Shown() == kLyrics) && role != kCover) { // readout while nudging the lyrics
+    if (float nudge = anim::Clamp01((float)(1.6 - (now - nudgeAt)) / 0.3f); nudge > 0.001f && (lyrMix > 0.5f || Shown() == kLyrics || (VinylClassic() && vinylLyr > 0.5f)) && role != kCover) { // readout while nudging the lyrics
         float k = std::clamp(H / 900.0f, 0.8f, 1.6f), pw = 210 * k, ph = 34 * k;
         D2D1_RECT_F lr = LyricRect(), pill = Rect(lr.left, H * 0.04f, pw, ph);
         wchar_t txt[48];

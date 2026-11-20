@@ -51,6 +51,10 @@ constexpr float kHazeSigma = 0.11f, kHazePad = kHazeSigma * 3.2f; // its bloom: 
 constexpr float kHazeRes = 0.5f; // baked at half resolution, as they are: it's a blur
 constexpr float kHazeGlow = 0.55f; // the bloom's strength, the full lyrics' too
 constexpr float kRebake = 1.25f; // drawn this much larger or smaller than it was baked, it's baked again
+constexpr float kClassicX = 0.235f; // classic words: the record, song and buttons move into the left column the full player's cover keeps, this far across
+constexpr float kClassicW = 0.34f; // that column's width, as the full player's
+constexpr float kClassicShrink = 0.12f; // and the record a little smaller, so the pair and its arm fit in it
+constexpr float kClassicRate = 6; // how quickly the room trades the one line for the column
 constexpr float kPi = 3.14159265f;
 
 float Ease(float v) { return v * v * (3 - 2 * v); }
@@ -290,10 +294,12 @@ void Stage::VinylPlayer(float show) {
     const StagePrefs::Shape s = StagePrefs::Mix(shapeNow[StagePrefs::kVinyl], shapeNow[StagePrefs::kVinylLyr], Ease(vinylLyr)); // the vinyl room's own pair of layouts: arranging them never moves the others
     float k = K();
     float ctl = ui.Smooth(Ui::Id("st.v.ctl"), model.stageVinylCtl ? 1.0f : 0, 8); // the buttons coming in: the record rises and shrinks a little to make their room
-    float S0 = (std::min)(H * kSleeveH, W * kSleeveW) * (1 - kCtlShrink * ctl), atY = H * (kSleeveAt - kCtlRise * ctl);
+    float cl = Ease(ui.Smooth(Ui::Id("st.v.classic"), VinylClassic() ? 1.0f : 0, kClassicRate)) * Ease(vinylLyr); // the full player's words beside the record, only in the version with words
+    float baseX = W / 2 + (W * kClassicX - W / 2) * cl; // everything but the words steps into the left column
+    float S0 = (std::min)(H * kSleeveH, W * kSleeveW) * (1 - kCtlShrink * ctl) * (1 - kClassicShrink * cl), atY = H * (kSleeveAt - kCtlRise * ctl);
     float S = S0 * s.coverS, D = S * kDisc;
     float reach = kOutPlay * S + D / 2 * (kPivotX + kPivotR); // the record out to play and its arm's pivot: the pair's right edge, right of the sleeve's middle
-    D2D1_POINT_2F mid = {W / 2 + s.coverX * W, atY + s.coverY * H}; // the middle of all of it, sleeve to arm: what the editor's guides line up
+    D2D1_POINT_2F mid = {baseX + s.coverX * W, atY + s.coverY * H}; // the middle of all of it, sleeve to arm: what the editor's guides line up
     D2D1_POINT_2F sleeve = {mid.x - (reach - S / 2) / 2, mid.y}, disc = {sleeve.x + S * (kOutRest + (kOutPlay - kOutRest) * Ease(vinylSlide)), mid.y};
     D2D1_RECT_F sl = Rect(sleeve.x - S / 2, mid.y - S / 2, S, S);
     float rad = 3 * k;
@@ -342,7 +348,8 @@ void Stage::VinylPlayer(float show) {
         c.Text(say, pill, Weight::Medium, 13 * k, look.text.Alpha(tip), Align::Center);
     }
 
-    float tk = k * s.textS, cx = W / 2 + s.textX * W, ty = atY + S0 / 2 + kSongGap * k + s.textY * H, tw = (std::min)(W * 0.6f, 900 * k); // its own place on the screen: moving the record leaves the song where it is
+    float tk = k * s.textS, cx = baseX + s.textX * W, ty = atY + S0 / 2 + kSongGap * k + s.textY * H; // its own place on the screen: moving the record leaves the song where it is
+    float tw = (std::min)(W * 0.6f, 900 * k) * (1 - cl) + W * kClassicW * cl; // beside the words it keeps to the column
     std::wstring title = has && !tr.title.empty() ? tr.title : L"Nothing playing";
     std::wstring sub = !has ? L"Start music or a video in any app" : tr.album.empty() || tr.album == tr.artist || s.albumOn < 0.5f ? tr.artist : tr.artist + L"  ·  " + tr.album;
     c.Text(title, Rect(cx - tw / 2, ty, tw, 50 * tk), Weight::Medium, 38 * tk, look.text, Align::Center);
@@ -350,11 +357,25 @@ void Stage::VinylPlayer(float show) {
     partText = Rect(cx - tw / 2, ty, tw, 84 * tk);
     // the sung line: a part of its own, under the song's resting place, moved and sized apart from it (the layout without lyrics has no column, so its lyrics place is this line's)
     float lk = k * s.lyrW, lx = W / 2 + s.lyrX * W, ly = atY + S0 / 2 + (kSongGap + kLineGap) * k + s.lyrY * H, lw = (std::min)(W * 0.6f, 900 * k) * s.lyrW;
-    VinylLine(lx, ly, lw, lk, Ease(vinylLyr)); // only in the version with words
-    partLyrics = Rect(lx - lw / 2, ly, lw, kLineBox * lk);
+    if (VinylClassic()) {
+        vinylLine = -1; // no lone line, and no bloom baked for one
+        vinylWant.clear();
+    } else {
+        VinylLine(lx, ly, lw, lk, Ease(vinylLyr) * (1 - cl)); // only in the version with words
+    }
+    partLyrics = VinylClassic() ? LyricRect() : Rect(lx - lw / 2, ly, lw, kLineBox * lk);
+    if (cl > 0.001f) { // the words as the full player shows them, drifting in from the right
+        D2D1_RECT_F lr = LyricRect();
+        float dx = 60 * k * (1 - cl);
+        lr.left += dx, lr.right += dx;
+        double at = tr.Elapsed() / 1e7 - model.lyricOffsetMs / 1000.0; // [ and ] fine-tune it
+        if (!lyrics.Has()) lyrics.Waiting(c, lr, cl, look, ui.Now());
+        double jump = lyrics.Draw(ctx.Get(), c, ui, lr, at, cl, look, has && tr.playing);
+        if (jump >= 0 && tr.canSeek && tr.duration > 0) model.media.Seek(jump * 1e7 / tr.duration);
+    }
     // the buttons: a part of their own, under the song's resting place, moved and sized apart from it
-    float bk = k * s.ctlS, ck = bk * 0.85f, bx = W / 2 + s.ctlX * W, sy = atY + S0 / 2 + (kSongGap + kCtlGap) * k + s.ctlY * H, y = sy + 66 * bk;
-    float sw = (std::min)(W * 0.36f, 600 * k) * s.ctlS, half = (std::max)(sw / 2, 230 * ck);
+    float bk = k * s.ctlS, ck = bk * 0.85f, bx = baseX + s.ctlX * W, sy = atY + S0 / 2 + (kSongGap + kCtlGap) * k + s.ctlY * H, y = sy + 66 * bk;
+    float sw = (std::min)(W * 0.36f, 600 * k) * s.ctlS * (1 - cl) + W * kClassicW * 0.84f * s.ctlS * cl, half = (std::max)(sw / 2, 230 * ck);
     partCtl = {bx - half, sy - 18 * bk, bx + half, y + 42 * ck};
     float a = show * ctl;
     if (a <= 0.01f) return; // off, or hidden at rest
