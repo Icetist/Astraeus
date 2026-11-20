@@ -157,6 +157,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     stageVinylSpeed = (std::clamp)(sys::ReadNum(L"StageVinylSpeed", 50), kVinylSpeedMin, kVinylSpeedMax);
     stageVinylSound = flag(L"StageVinylSound", 0);
     stageVinylLabel = flag(L"StageVinylLabel", 0);
+    stageVinylGlow = flag(L"StageVinylGlow", 0);
     uiScale = (std::clamp)(sys::ReadNum(L"UiScale", 100), 80, 130);
     a11yContrast = (std::clamp)(sys::ReadNum(L"A11yContrast", kContrastAuto), (int)kContrastAuto, (int)kContrastOff);
     a11yFollow = flag(L"A11yFollowText", 1);
@@ -240,8 +241,13 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     appKeyOnly = flag(L"AppKeyOnly", 0);
     appHoverMs = (std::clamp)(sys::ReadNum(L"AppHoverMs", kAppHoverMs), 0, kAppHoverMax);
     hud = flag(L"Hud", 0); // experimental: off unless asked for
-    vizWave = flag(L"VizWave", 0);
-    mediaWave = flag(L"MediaWave", 0);
+    vizLooks = sys::ReadNum(L"VizLooks", -1);
+    if (vizLooks < 0) { // saved before looks could be mixed: the one picked then. 0 glow, 1 waveform, 2 edge
+        static constexpr int kWas[3] = {kLookGlow, kLookBars, kLookRim};
+        vizLooks = kWas[(std::clamp)(sys::ReadNum(L"VizWave", 0), 0, 2)];
+    }
+    vizLooks &= kLookAll;
+    mediaWave = (std::clamp)(sys::ReadNum(L"MediaWave", 0), 0, 2); // the media page's one visualizer: 0 the glow, 1 the waveform, 2 the edge glow. older saves are 0 or 1
     vizFull = flag(L"VizFull", 0);
     layout = (std::clamp)(sys::ReadNum(L"Layout", kLayHorizontal), 0, kLayouts - 1);
     pinned = flag(L"Pinned", 0);

@@ -2,6 +2,8 @@
 // turning under an arm that drops onto it; on pause the arm lifts and the record slips back in.
 // The record is the control: a click plays or stops it, and turning it by hand seeks. Under it, centred: the song and the line being sung.
 // The light on the record is the room's, so it never turns with it.
+#include <d2d1_1helper.h>
+#include <d2d1effects.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -44,6 +46,11 @@ constexpr double kScrubTurnSec = 12; // a whole turn by hand moves the song this
 constexpr double kScrubHoldSec = 1.2; // after letting go, the arm keeps its place this long while the player catches up
 constexpr float kLineFade = 0.45f; // a new sung line fades in this long
 constexpr double kLineHold = 1.5; // and stays this long past its singing, then the gap is quiet
+constexpr float kLineType = 18, kLineBox = 28; // the sung line's type size and box height, in dips before scaling
+constexpr float kHazeSigma = 0.11f, kHazePad = kHazeSigma * 3.2f; // its bloom: the same blur as the full lyrics', a share of the type size, with room to spread
+constexpr float kHazeRes = 0.5f; // baked at half resolution, as they are: it's a blur
+constexpr float kHazeGlow = 0.55f; // the bloom's strength, the full lyrics' too
+constexpr float kRebake = 1.25f; // drawn this much larger or smaller than it was baked, it's baked again
 constexpr float kPi = 3.14159265f;
 
 float Ease(float v) { return v * v * (3 - 2 * v); }
@@ -208,7 +215,69 @@ void Stage::VinylLine(float cx, float y, float w, float k, float a) {
     if (n < 0 || lines[n].text.empty()) return;
     float in = anim::Clamp01((float)(now - vinylLineAt) / kLineFade);
     if (in < 1) ui.Wake();
-    canvas->Text(lines[n].text, Rect(cx - w / 2, y + 4 * k * (1 - in), w, 28 * k), Weight::Light, 18 * k, look.textDim.Alpha(0.85f * in * a), Align::Center);
+    float top = y + 4 * k * (1 - in);
+    Color ink = look.textDim.Alpha(0.85f);
+    if (model.stageVinylGlow) { // as the full lyrics light their sung line: the words bright, their own blur behind them in the album's color
+        const std::wstring& text = lines[n].text;
+        float tw = (std::min)(w, canvas->Measure(text, Weight::Light, kLineType * k));
+        if (text != vinylWant || tw != vinylWantW || k != vinylWantK) ui.Wake(); // the next frame bakes it
+        vinylWant = text, vinylWantK = k, vinylWantW = tw;
+        if (vinylHaze && text == vinylHazeFor) {
+            float z = k / vinylHazeK, pad = kLineType * vinylHazeK * kHazePad; // drawn at the baked size, scaled to this one
+            float hw = (vinylHazeW + 2 * pad) * z, hh = (kLineBox * vinylHazeK + 2 * pad) * z;
+            D2D1_RECT_F dst = Rect(cx - hw / 2, top + kLineBox * k / 2 - hh / 2, hw, hh);
+            Color tint = look.accentHi.Alpha(kHazeGlow * in * a);
+            if (!vinylTint) ctx->CreateSolidColorBrush(tint.D2D(), &vinylTint);
+            if (vinylTint) {
+                vinylTint->SetColor(tint.D2D());
+                D2D1_ANTIALIAS_MODE was = ctx->GetAntialiasMode();
+                ctx->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED); // opacity masks need it
+                ctx->FillOpacityMask(vinylHaze.Get(), vinylTint.Get(), &dst, nullptr);
+                ctx->SetAntialiasMode(was);
+            }
+        }
+        ink = look.text;
+    }
+    canvas->Text(lines[n].text, Rect(cx - w / 2, top, w, kLineBox * k), Weight::Light, kLineType * k, ink.Alpha(in * a), Align::Center);
+}
+
+void Stage::VinylBake() {
+    if (!model.stageVinylGlow || vinylWant.empty() || vinylWantW <= 0) return;
+    bool sized = vinylHazeK > 0 && vinylWantK / vinylHazeK < kRebake && vinylHazeK / vinylWantK < kRebake; // a size on its way somewhere: the bake is scaled, not redone each frame
+    if (vinylWant == vinylHazeFor && sized) return;
+    vinylHazeFor = vinylWant, vinylHazeK = vinylWantK, vinylHazeW = vinylWantW; // set even if it fails: no retrying every frame
+    vinylHaze.Reset();
+    float size = kLineType * vinylHazeK, pad = size * kHazePad;
+    float dx = 96, dy = 96;
+    ctx->GetDpi(&dx, &dy);
+    float dpi = dx * kHazeRes;
+    D2D1_SIZE_U px = {(UINT32)std::ceil((vinylHazeW + 2 * pad) * dpi / 96), (UINT32)std::ceil((kLineBox * vinylHazeK + 2 * pad) * dpi / 96)};
+    D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi, dpi);
+    ComPtr<ID2D1Bitmap1> src, out;
+    ComPtr<ID2D1Effect> blur;
+    if (!px.width || !px.height || FAILED(ctx->CreateBitmap(px, nullptr, 0, bp, &src)) || FAILED(ctx->CreateBitmap(px, nullptr, 0, bp, &out)) ||
+        FAILED(ctx->CreateEffect(CLSID_D2D1GaussianBlur, &blur)))
+        return;
+    ComPtr<ID2D1Image> was;
+    ctx->GetTarget(&was);
+    ctx->SetDpi(dpi, dpi);
+    ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+    ctx->SetTarget(src.Get());
+    ctx->BeginDraw();
+    ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
+    canvas->Text(vinylWant, Rect(pad, pad, vinylHazeW, kLineBox * vinylHazeK), Weight::Light, size, Color{1, 1, 1, 1}, Align::Center);
+    bool ok = SUCCEEDED(ctx->EndDraw());
+    blur->SetInput(0, src.Get());
+    blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, size * kHazeSigma);
+    blur->SetValue(D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION, D2D1_GAUSSIANBLUR_OPTIMIZATION_QUALITY); // once a line, so the nicer one
+    ctx->SetTarget(out.Get());
+    ctx->BeginDraw();
+    ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
+    ctx->DrawImage(blur.Get());
+    ok = SUCCEEDED(ctx->EndDraw()) && ok;
+    ctx->SetTarget(was.Get());
+    ctx->SetDpi(dx, dy);
+    if (ok) vinylHaze = out;
 }
 
 void Stage::VinylPlayer(float show) {
@@ -282,7 +351,7 @@ void Stage::VinylPlayer(float show) {
     // the sung line: a part of its own, under the song's resting place, moved and sized apart from it (the layout without lyrics has no column, so its lyrics place is this line's)
     float lk = k * s.lyrW, lx = W / 2 + s.lyrX * W, ly = atY + S0 / 2 + (kSongGap + kLineGap) * k + s.lyrY * H, lw = (std::min)(W * 0.6f, 900 * k) * s.lyrW;
     VinylLine(lx, ly, lw, lk, Ease(vinylLyr)); // only in the version with words
-    partLyrics = Rect(lx - lw / 2, ly, lw, 28 * lk);
+    partLyrics = Rect(lx - lw / 2, ly, lw, kLineBox * lk);
     // the buttons: a part of their own, under the song's resting place, moved and sized apart from it
     float bk = k * s.ctlS, ck = bk * 0.85f, bx = W / 2 + s.ctlX * W, sy = atY + S0 / 2 + (kSongGap + kCtlGap) * k + s.ctlY * H, y = sy + 66 * bk;
     float sw = (std::min)(W * 0.36f, 600 * k) * s.ctlS, half = (std::max)(sw / 2, 230 * ck);

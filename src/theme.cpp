@@ -105,7 +105,20 @@ Seed FromBmp(IWICBitmapSource* source) {
     }
     float hue = std::atan2(sn[best], cs[best]) * 180 / 3.14159265f; // circular mean within winning bin
     if (hue < 0) hue += 360;
-    return {hue, sat[best] / weight[best]}; // weighted avg saturation
+    Seed out{hue, sat[best] / weight[best]}; // weighted avg saturation
+    constexpr int kApart = 3; // bins: a second color must be at least 45 degrees off the first, or it's the same color
+    constexpr float kEnough = 0.12f; // and hold this share of the first's weight, or it's a speck
+    int next = -1;
+    for (int b = 0; b < bins; ++b) {
+        int gap = std::abs(b - best);
+        if ((std::min)(gap, bins - gap) < kApart || weight[b] < weight[best] * kEnough) continue;
+        if (next < 0 || weight[b] > weight[next]) next = b;
+    }
+    if (next >= 0) {
+        out.hue2 = std::atan2(sn[next], cs[next]) * 180 / 3.14159265f;
+        if (out.hue2 < 0) out.hue2 += 360;
+    }
+    return out;
 }
 
 float BmpLuma(IWICBitmapSource* source) {

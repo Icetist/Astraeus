@@ -433,6 +433,7 @@ public:
     static constexpr int kVinylSpeedMin = 10, kVinylSpeedMax = 150;
     int stageVinylSound = 0; // a soft needle drop and crackle as the arm lands
     int stageVinylLabel = 0; // the song's name pressed around the label, the sheen's sway and the sleeve's card shading
+    int stageVinylGlow = 0; // the sung line lit softly from behind in the album's color; off until it's asked for
     int stageLyrBtn = 1, stageEditBtn = 1; // the fullscreen player's corner: wrong lyrics, and its editor
     int uiScale = 100; // percent, 80..130, folded into the dpi scale
     enum { kContrastAuto, kContrastOn, kContrastOff };
@@ -519,8 +520,9 @@ public:
     static constexpr int kAppHoverMs = 500, kAppHoverMax = 1000, kAppHoverStep = 50; // the dwell over an app window: default, most, slider step
     int appHoverMs = kAppHoverMs; // how long the mouse rests at the edge over an app before the pill drops
     int hud = 0; // astraeus' own volume and brightness pill, experimental, off by default
-    int vizWave = 0; // fullscreen (and the dashboard's player) draw a waveform across, behind the art, instead of the soft glow
-    int mediaWave = 0; // the media page's own waveform look: off unless picked in settings, whatever fullscreen wears
+    static constexpr int kLookGlow = 1, kLookBars = 2, kLookRim = 4, kLookAll = 7; // the fullscreen visualizer's looks, any of them together
+    int vizLooks = kLookGlow; // fullscreen draws the soft glow, a waveform across behind the art, light round the screen's edge, or a mix. the dashboard's player has no edge: bars if they're on, else the glow
+    int mediaWave = 0; // the media page's one visualizer, whatever fullscreen wears: 0 the soft glow, 1 the waveform, 2 the edge glow (rim::kMedia*)
     int vizFull = 0; // the visualizer ignores how loud windows plays: quiet music still moves it
 
     enum Layout { kLayHorizontal, kLayVertical, kLayouts }; // the panel's shape: the wide island, or a narrow column

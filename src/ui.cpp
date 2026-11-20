@@ -249,6 +249,16 @@ void Card(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float radius) {
     else if (t.chrome) chrome::Seam(c, {r.left + radius, r.top + 0.5f}, {r.right - radius, r.top + 0.5f}, 1.2f); // chrome: the bevel catches the light
 }
 
+void Pop(Canvas& c, const Theme& t, const D2D1_RECT_F& r, float radius, float a) {
+    constexpr float kDrop = 3, kShade = 0.22f; // the drop sits a little below, as light from above would cast it
+    c.Fill(D2D1_RECT_F{r.left - 1, r.top + 1, r.right + 1, r.bottom + kDrop}, radius + 1, Color{0, 0, 0, kShade * a});
+    c.Fill(r, radius, t.veil.Alpha(0.94f * a)); // solid: under glass whatever is behind would read through
+    c.Fill(r, radius, t.cardHi.Alpha(a));
+    c.StrokeV(r, radius, t.hairTop.Alpha(a), t.hairBot.Alpha(a), 1);
+}
+
+float RowHover(Ui& ui, uint32_t id, bool hover) { return ui.Smooth(id, hover ? 1.0f : 0, kRowFade); }
+
 bool IconBtn(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, float size, int glyph, float iconPx,
                 bool enabled, bool lit) {
     D2D1_RECT_F r = {c.x - size / 2, c.y - size / 2, c.x + size / 2, c.y + size / 2};

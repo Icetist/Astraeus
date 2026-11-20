@@ -2,6 +2,7 @@
 // One version for songs without lyrics and one for songs with them.
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 
 #include "anim.h"
 #include "page_sheet.h"
@@ -32,7 +33,7 @@ float PageH(int page, int tab, int songChips, bool vinyl) {
     case kPageSong: return kSlideRow + (songChips + 1) / 2 * kChipRow; // two to a row
     case kPageLyrics: return kChipRow + 4 * kSlideRow;
     case kPageClock: return kChipRow + 2 * kSlideRow;
-    case kPageScene: return 4 * kChipRow + 3 * kSlideRow;
+    case kPageScene: return 6 * kChipRow + 3 * kSlideRow; // nine switches, ten with vinyl's lyric glow: five rows either way, and the media tab's pick under them
     default: return StagePrefs::kKeys * (kKeyH + kChipGap) + kNoteH;
     }
 }
@@ -41,7 +42,7 @@ float PageH(int page, int tab, int songChips, bool vinyl) {
 
 namespace {
 constexpr size_t kShapeFloats = sizeof(StagePrefs::Shape) / sizeof(float);
-constexpr size_t kScenePrefs = 13;
+constexpr size_t kScenePrefs = 15;
 constexpr int kSpinStep = 5; // the spin speed slider's steps, in percent // the switches and numbers after the two layouts in a snapshot: EditSnap and EditLoad keep the same order
 static_assert(sizeof(StagePrefs::Shape) == kShapeFloats * sizeof(float), "a layout is floats only: it goes into a snapshot as they are");
 }
@@ -54,7 +55,7 @@ History::Snap Stage::EditSnap() const { // both versions, then the scene's own s
         const float* f = reinterpret_cast<const float*>(&sh);
         s.insert(s.end(), f, f + kShapeFloats);
     }
-    for (int v : {model.stageArt, model.stageThump, model.stageHide, model.vizOn, model.vizWave, model.vizFull, model.vizGain, model.vizAlpha, model.stageVinyl, model.stageVinylCtl, model.stageVinylSpeed, model.stageVinylSound, model.stageVinylLabel}) s.push_back((float)v);
+    for (int v : {model.stageArt, model.stageThump, model.stageHide, model.vizOn, model.vizLooks, model.vizFull, model.vizGain, model.vizAlpha, model.stageVinyl, model.stageVinylCtl, model.stageVinylSpeed, model.stageVinylSound, model.stageVinylLabel, model.stageVinylGlow, model.mediaWave}) s.push_back((float)v);
     return s;
 }
 
@@ -67,7 +68,7 @@ void Stage::EditLoad(const History::Snap& s) {
         int* field;
         const wchar_t* key;
     } prefs[] = {{&model.stageArt, L"StageArtBg"}, {&model.stageThump, L"StageThump"}, {&model.stageHide, L"StageHide"}, {&model.vizOn, L"Visualizer"},
-                 {&model.vizWave, L"VizWave"}, {&model.vizFull, L"VizFull"}, {&model.vizGain, L"VizGain"}, {&model.vizAlpha, L"VizAlpha"}, {&model.stageVinyl, L"StageVinyl"}, {&model.stageVinylCtl, L"StageVinylCtl"}, {&model.stageVinylSpeed, L"StageVinylSpeed"}, {&model.stageVinylSound, L"StageVinylSound"}, {&model.stageVinylLabel, L"StageVinylLabel"}};
+                 {&model.vizLooks, L"VizLooks"}, {&model.vizFull, L"VizFull"}, {&model.vizGain, L"VizGain"}, {&model.vizAlpha, L"VizAlpha"}, {&model.stageVinyl, L"StageVinyl"}, {&model.stageVinylCtl, L"StageVinylCtl"}, {&model.stageVinylSpeed, L"StageVinylSpeed"}, {&model.stageVinylSound, L"StageVinylSound"}, {&model.stageVinylLabel, L"StageVinylLabel"}, {&model.stageVinylGlow, L"StageVinylGlow"}, {&model.mediaWave, L"MediaWave"}};
     size_t at = StagePrefs::kShapes * kShapeFloats;
     for (const Pref& p : prefs) {
         int v = (int)s[at++];
@@ -317,10 +318,20 @@ void Stage::EditPage(const D2D1_RECT_F& body, bool live) { // the picked page's 
         if (chip("st.ed.sc.thump", L"Cover thump", model.stageThump != 0)) pref(model.stageThump, L"StageThump");
         if (chip("st.ed.sc.hide", L"Hide at rest", model.stageHide != 0)) pref(model.stageHide, L"StageHide");
         if (chip("st.ed.sc.viz", L"Visualizer", model.vizOn != 0)) pref(model.vizOn, L"Visualizer");
-        if (chip("st.ed.sc.wave", L"Waveform", model.vizWave != 0)) pref(model.vizWave, L"VizWave");
+        // the visualizer's looks: any of them together
+        for (auto [id, label, bit] : {std::tuple{"st.ed.sc.glow2", L"Glow", Model::kLookGlow}, std::tuple{"st.ed.sc.wave", L"Waveform", Model::kLookBars}, std::tuple{"st.ed.sc.rim", L"Edge glow", Model::kLookRim}})
+            if (chip(id, label, (model.vizLooks & bit) != 0)) model.SetPref(model.vizLooks, L"VizLooks", model.vizLooks ^ bit);
         if (chip("st.ed.sc.full", L"Any volume", model.vizFull != 0)) pref(model.vizFull, L"VizFull");
         if (chip("st.ed.sc.lyrics", L"Lyrics", model.fullLyrics != 0)) pref(model.fullLyrics, L"FullLyrics"); // always here: the lyrics page shows only while there are lyrics, so off there was off for good
+        if (model.stageVinyl && chip("st.ed.sc.glow", L"Lyric glow", model.stageVinylGlow != 0)) pref(model.stageVinylGlow, L"StageVinylGlow"); // here, not on the lyrics page: vinyl never shows that page
         if (col) y += kChipRow, col = 0;
+        { // the media tab shows one visualizer at a time: which of them, the soft glow by default
+            static const wchar_t* const kMedia[3] = {L"Glow", L"Wave", L"Edge"};
+            c.Text(L"Media tab", Rect(x, y, cw, kChipH), Weight::Regular, 12, look.text);
+            int picked = sheet::Segmented(ui, look, "st.ed.sc.media", Rect(x + cw + kChipGap, y, cw, kChipH), kMedia, 3, model.mediaWave, live);
+            if (picked >= 0 && picked != model.mediaWave) model.SetPref(model.mediaWave, L"MediaWave", picked);
+            y += kChipRow;
+        }
         setting("st.ed.sc.gain", L"Visualizer strength", model.vizGain, L"VizGain", Model::kVizGainMin, Model::kVizGainMax, Model::kSlideStep);
         setting("st.ed.sc.alpha", L"Visualizer opacity", model.vizAlpha, L"VizAlpha", Model::kVizAlphaMin, 100, Model::kSlideStep);
         percent("st.ed.sc.dim", L"Darken the background", s.dim, 0, StagePrefs::kDimHi, 100);

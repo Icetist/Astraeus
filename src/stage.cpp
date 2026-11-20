@@ -422,25 +422,36 @@ void Stage::Backdrop(double now) { // the media page's glow, scaled to the room:
         if (coverBlur) c.Image(coverBlur.Get(), {-gw, -gh, W + gw, H + gh}, 0, glassy ? 0.30f : light ? 0.55f : 0.7f); // glass keeps the desktop showing
         c.Fill(full, 0, light ? Color{1, 1, 1, 0.38f} : Color{0, 0, 0, glassy ? 0.12f : 0.30f}); // wash so the type reads
     }
-    if (model.vizWave && model.vizOn) { // the waveform look: bars across the whole room, behind the cover and the words
-        bool on = StepWave(wave, model, frameDt, model.hasTrack && model.track.playing);
+    // the visualizer's looks, any of them together. with the visualizer off the glow stays, as it always has: its light just has no music to rise with
+    int looks = model.vizOn ? model.vizLooks : Model::kLookGlow;
+    bool playing = model.hasTrack && model.track.playing;
+    bool shaped = (looks & (Model::kLookBars | Model::kLookRim)) && StepWave(wave, model, frameDt, playing); // the bars and the edge share the music's shape, stepped once a frame
+    auto artLayer = [&] { // the opacity slider, eased well up: the whole screen of bright art washes the light out more than the page
         if (art) c.Target()->PushLayer(D2D1::LayerParameters(full, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), 1 - std::pow(1 - model.vizAlpha / 100.0f, 4.0f)), nullptr);
-        float ly = lyrMix * lyrMix * (3 - 2 * lyrMix); // lyrics showing: the bars slide down out of the words' way and dim
-        D2D1_RECT_F band = {W * 0.03f, H * (0.28f + 0.56f * ly), W * 0.97f, H * (0.72f + 0.24f * ly)};
-        if (on) DrawWave(c, wave, band, look, (art ? 0.85f : 0.5f) * (1 - 0.45f * ly));
+    };
+    if (looks & (Model::kLookGlow | Model::kLookBars)) {
+        artLayer();
+        if (looks & Model::kLookGlow) {
+            StepSwell(swell, model, frameDt, playing, kBlobs);
+            if (beat > 0.01f) c.Glow({W / 2, H}, W * (0.45f + 0.15f * beat), H * 0.35f * beat, look.accent.Alpha(0.18f * beat)); // the kick blooms from the floor
+            DrawSwell(c, swell, kBlobs, {0, H * 0.25f, W, H}, look, now); // soft light swelling up from the floor
+            if (art) DrawSwell(c, swell, kBlobs, {0, H * 0.25f, W, H}, look, now); // twice over the art: one pass of soft light disappears into a bright cover
+        }
+        if ((looks & Model::kLookBars) && shaped) { // bars across the whole room, behind the cover and the words
+            float ly = lyrMix * lyrMix * (3 - 2 * lyrMix); // lyrics showing: the bars slide down out of the words' way and dim
+            D2D1_RECT_F band = {W * 0.03f, H * (0.28f + 0.56f * ly), W * 0.97f, H * (0.72f + 0.24f * ly)};
+            DrawWave(c, wave, band, look, (art ? 0.85f : 0.5f) * (1 - 0.45f * ly));
+        }
         if (art) c.Target()->PopLayer();
-        Color floor = light ? Color{1, 1, 1, 1} : Color{0, 0, 0, 1};
-        c.FillV(full, 0, floor.Alpha(light ? 0.05f : 0.10f), floor.Alpha(light ? 0.35f : glassy ? 0.30f : 0.45f));
-        return;
     }
-    StepSwell(swell, model, frameDt, model.hasTrack && model.track.playing, kBlobs);
-    if (art) c.Target()->PushLayer(D2D1::LayerParameters(full, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), 1 - std::pow(1 - model.vizAlpha / 100.0f, 4.0f)), nullptr); // the opacity slider, eased well up: the whole screen of bright art washes it out more than the page
-    if (beat > 0.01f) c.Glow({W / 2, H}, W * (0.45f + 0.15f * beat), H * 0.35f * beat, look.accent.Alpha(0.18f * beat)); // the kick blooms from the floor
-    DrawSwell(c, swell, kBlobs, {0, H * 0.25f, W, H}, look, now); // soft light swelling up from the floor
-    if (art) DrawSwell(c, swell, kBlobs, {0, H * 0.25f, W, H}, look, now); // twice over the art: one pass of soft light disappears into a bright cover
-    if (art) c.Target()->PopLayer();
     Color floor = light ? Color{1, 1, 1, 1} : Color{0, 0, 0, 1};
     c.FillV(full, 0, floor.Alpha(light ? 0.05f : 0.10f), floor.Alpha(light ? 0.35f : glassy ? 0.30f : 0.45f)); // settles the bottom so the room doesn't feel lopsided
+    rimBusy = false;
+    if (looks & Model::kLookRim) { // over the floor's shade: the light sits on top, as light does
+        artLayer();
+        rimBusy = Rim(shaped);
+        if (art) c.Target()->PopLayer();
+    }
 }
 
 void Stage::Clock(float y, float k) { // just the time, faint, top center, unless it's been arranged
@@ -916,6 +927,7 @@ void Stage::Frame(const Theme& media) {
     else if (waiting) lyrics.Sync(ctx.Get(), nullptr, lyrLaidW, LyricSize()); // the old song's lines go, dots wait in their place
     else if (lyrMix < 0.001f) lyrics.Sync(ctx.Get(), nullptr, 0, 0);
     lyrics.Prepare(ctx.Get()); // bakes a few lines' blur, never inside the frame
+    VinylBake(); // and the vinyl room's sung line, before the canvas starts its frame
     bool lyrMoving = anim::Approach(lyrMix, (editing ? editTab == 1 : (lyrOn || waiting) && (!model.stageVinyl || Shown() == kLyrics)) ? 1.0f : 0, editing ? kTabRate : kLyrRate, dt, 0.001f); // the record keeps its place: only the sung line shows under it, unless the words alone are asked for
     bool idle = now - lastMove >= kIdleSec && !ui.Captured();
     if (idle && !cursorGone) { // resting: the cursor goes too, not only when it next moves
@@ -1010,7 +1022,7 @@ void Stage::Frame(const Theme& media) {
     input.pressed = input.released = input.rclick = false;
     input.wheel = 0;
     bool fast = editing || ui.Busy() || ui.Captured() || (show > 0.01f && show < 0.99f) || tip > 0.001f || lyrMoving || lyrics.Busy() || swapDim > 0.001f;
-    bool ambient = left + right > 0.03f || beat > 0.02f || (model.stageVinyl && (vinylSpin > 0 || (vinylArm > 0.002f && vinylArm < 0.998f) || (vinylSlide > 0.002f && vinylSlide < 0.998f))); // the music-driven light, and a record turning or its arm on the move
+    bool ambient = left + right > 0.03f || beat > 0.02f || rimBusy || (model.stageVinyl && (vinylSpin > 0 || (vinylArm > 0.002f && vinylArm < 0.998f) || (vinylSlide > 0.002f && vinylSlide < 0.998f))); // the music-driven light, and a record turning or its arm on the move
     double hz = RefreshOf(screen);
     bool game = GameNow(now); // a game in front elsewhere: nothing needs more than the ambient rate
     UINT sync = editing && (editDrag >= 0 || barHeld) ? 1 : SyncFor(hz, fast && !game ? kFastFps : fast || ambient ? kAmbientFps : kQuietFps); // capped at 60 on fast screens; the slow drift needs far less. a hand on something in the editor: every refresh the screen has

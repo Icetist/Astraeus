@@ -115,6 +115,13 @@ private:
 namespace w {
 inline float ThumbAt(float from, float to, float radius, float v) { return from + radius + (to - from - 2 * radius) * v; } // where a slider's thumb sits: at 0 and at 1 its edge meets the track's end
 void Card(Ui& ui, const Theme& t, const D2D1_RECT_F& r, float radius = 22);
+// everything that floats over a page, menus and tips alike, comes in, sits and highlights the same way
+constexpr float kPopRadius = 14; // a menu's corners; a one-line tip is a pill instead
+constexpr float kPopFade = 20; // how fast a menu or a tip comes in
+constexpr float kRowRadius = 9; // a menu row's highlight
+constexpr float kRowFade = 20; // and how fast that highlight comes and goes
+void Pop(Canvas& c, const Theme& t, const D2D1_RECT_F& r, float radius, float a); // soft drop below, solid body, hairline
+float RowHover(Ui& ui, uint32_t id, bool hover); // a menu row's highlight, 0..1, eased
 bool IconBtn(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, float size, int glyph, float iconPx,
                 bool enabled = true, bool lit = false);
 bool PlayBtn(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, float size, bool playing, bool enabled);

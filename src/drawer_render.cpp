@@ -354,6 +354,7 @@ void Drawer::FreeDev() {
     revealBlur.Reset();
     if (ctx) ctx->SetTarget(nullptr); // nothing left pointing at the backbuffer
     mediaLyr = LyricView{}; // its baked lines belong to this device
+    rim::ForgetMedia(); // so does the card's edge glow's falloff
     canvas.reset();
     cover.Reset();
     coverBlur.Reset();
@@ -1280,7 +1281,7 @@ void Drawer::DrawRailTop(const Theme& t) {
 
 void Drawer::DrawRailTip(const Theme& t) { // a word beside the rail icon under the mouse
     if (railTip >= 0) railTipShown = railTip;
-    float a = ui.Smooth(Ui::Id("rail.tip"), railTip >= 0 ? 1.0f : 0, 18);
+    float a = ui.Smooth(Ui::Id("rail.tip"), railTip >= 0 ? 1.0f : 0, w::kPopFade);
     railTip = -1; // the rail sets it again next frame while the mouse stays
     if (a < 0.01f || railTipShown < 0) return;
     Canvas& c = *canvas;
@@ -1297,10 +1298,7 @@ void Drawer::DrawRailTip(const Theme& t) { // a word beside the rail icon under 
     }
     float w = tw + 34, h = 26, o = (1 - a) * 6;
     D2D1_RECT_F r = Tall() ? Rect(railTipAt.x - w / 2, railTipAt.y - o, w, h) : Rect(railTipAt.x + o, railTipAt.y - h / 2, w, h);
-    c.Fill(Inset(r, -1, -2), h / 2 + 2, Color{0, 0, 0, 0.22f * a}); // a quiet tag: soft shadow, card body, hairline, a small accent tick
-    c.Fill(r, h / 2, t.veil.Alpha(0.94f * a)); // solid: under glass whatever is behind would read through
-    c.Fill(r, h / 2, t.cardHi.Alpha(a));
-    c.StrokeV(r, h / 2, t.hairTop.Alpha(a), t.hairBot.Alpha(a), 1);
+    w::Pop(c, t, r, h / 2, a); // a quiet tag, and a small accent tick
     c.Dot({r.left + 13, (r.top + r.bottom) / 2}, 2.5f, t.accentHi.Alpha(a));
     c.Text(name, {r.left + 22, r.top, r.right - 8, r.bottom}, Weight::Medium, 12, t.text.Alpha(a), Align::Center);
 }

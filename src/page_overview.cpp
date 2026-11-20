@@ -39,7 +39,7 @@ void BatteryTip(PageCtx& p) { // capacity, wear, rate and time, beside the batte
     else if (since < 0) since = ui.Now();
     bool show = batHover && ui.Now() - since > kTipDelay;
     if (batHover && !show) ui.KeepAlive(); // a few calm frames until the delay is up
-    float a = ui.Smooth(Ui::Id("bat.tip"), show ? 1.0f : 0, 16);
+    float a = ui.Smooth(Ui::Id("bat.tip"), show ? 1.0f : 0, w::kPopFade);
     if (a < 0.01f) return;
     if (show && GetTickCount64() - readAt > kTipReadMs) { // the battery's own report, read only while this shows
         m.batInfo = sys::ReadBattery(true);
@@ -64,10 +64,7 @@ void BatteryTip(PageCtx& p) { // capacity, wear, rate and time, beside the batte
     float h = 40 + rows.size() * kTipRow;
     float y = (std::max)(p.area.top, (batTile.top + batTile.bottom) / 2 - h / 2), x = batTile.left - 10 - kTipW + (1 - a) * 6;
     D2D1_RECT_F r = Rect(x, y, kTipW, h);
-    c.Fill(Inset(r, -1, -2), 14, Color{0, 0, 0, 0.22f * a}); // the rail tip's look: soft shadow, solid body, hairline
-    c.Fill(r, 12, t.veil.Alpha(0.94f * a));
-    c.Fill(r, 12, t.cardHi.Alpha(a));
-    c.StrokeV(r, 12, t.hairTop.Alpha(a), t.hairBot.Alpha(a), 1);
+    w::Pop(c, t, r, w::kPopRadius, a); // a card of rows, so a menu's corners rather than a pill
     std::wstring head = (b.pct >= 0 ? std::to_wstring(b.pct) + L"%" : std::wstring(L"Battery")) + L"  ·  " +
                         (b.charging ? L"Charging" : b.ac ? L"Plugged in" : L"On battery") + (b.saver ? L", energy saver" : L"");
     c.Icon(b.charging ? glyph::BatteryCharging : glyph::Battery, {r.left + 20, r.top + 20}, 18, t.accentHi.Alpha(a), true);

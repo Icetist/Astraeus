@@ -10,6 +10,7 @@
 #include "starfall.h"
 #include "entry.h"
 #include "report.h"
+#include "rim.h"
 #include "stageprefs.h"
 #include "tray.h"
 #include "version.h"
@@ -243,8 +244,11 @@ void Media(PageCtx& p, const D2D1_RECT_F& r, bool live) { // what the player is 
             x += wdt + kGap;
             static constexpr int kSketch[] = {preview::kCompact, preview::kPillMusic, preview::kAlbumArt, preview::kArtBg, preview::kVisualizer, preview::kVisualizer, preview::kLyrics}; // in the chips' order; the waveform shows as the visualizer it reshapes
             if (j < (int)std::size(kSketch)) preview::Want(ui, kSketch[j], live && Inside(q, ui.In().mouse));
-            if (!w::Chip(ui, t, Ui::Id("set.media", j), q, opts[j].label, *opts[j].field != 0) || !live) continue;
-            if (opts[j].key) Flip(m, *opts[j].field, opts[j].key);
+            bool wave = opts[j].field == &m.mediaWave; // the media page's one visualizer: lit only for the waveform, the edge glow is picked in fullscreen's editor
+            bool on = wave ? m.mediaWave == rim::kMediaBars : *opts[j].field != 0;
+            if (!w::Chip(ui, t, Ui::Id("set.media", j), q, opts[j].label, on) || !live) continue;
+            if (wave) m.SetPref(m.mediaWave, L"MediaWave", on ? rim::kMediaGlow : rim::kMediaBars);
+            else if (opts[j].key) Flip(m, *opts[j].field, opts[j].key);
             else m.SetArtBack(m.artBack == 0); // shared: halobar's player follows
         }
     }
@@ -324,6 +328,26 @@ void Apps(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the edge over an app
 }
 
 constexpr float kKeyW = 128; // a fullscreen key's capture chip
+
+std::wstring NowPlaying(Model& m) { // for the problem report: the player and what came of its lyrics, never the song itself
+    const sys::Track& tr = m.track;
+    auto yes = [](bool b) { return b ? L"yes" : L"no"; };
+    std::wstring s;
+    if (!m.hasTrack) return L"  Nothing playing\r\n";
+    double ago = tr.stamp ? (double)(GetTickCount64() - tr.stamp) / 1000 : -1;
+    s += L"  App: " + (tr.app.empty() ? std::wstring(L"(unnamed)") : tr.app) + L", music: " + yes(tr.music) + L", " + (tr.playing ? L"playing" : L"paused") + L"\r\n";
+    s += L"  Length: " + (tr.duration > 0 ? fmt::Clock(tr.duration / 1e7) : std::wstring(L"not reported")) + L", position: " +
+         (tr.stamp ? fmt::Clock(tr.position / 1e7) + L", reported " + std::to_wstring((long long)ago) + L" s ago" : std::wstring(L"not reported")) + L"\r\n";
+    s += std::wstring(L"  Lyrics switches: media page ") + yes(m.mediaLyrics != 0) + L", fullscreen " + yes(m.fullLyrics != 0) + L"\r\n";
+    std::wstring state;
+    if (!tr.music) state = L"not looked up (not a music app or site)";
+    else if (tr.duration <= 0) state = L"not looked up (no song length)";
+    else if (auto doc = m.lyrics.Get(sys::LyricSrc::Key(tr.title, tr.artist)); !doc) state = L"not found yet (still looking, or lrclib.net out of reach)";
+    else if (doc->lines.empty()) state = doc->done ? L"none found for this song" : L"looking";
+    else state = std::to_wstring(doc->lines.size()) + L" lines" + (doc->lines.front().words.empty() ? L", by line" : L", word by word") + (doc->interim ? L", early copy" : L"");
+    s += L"  Lyrics: " + state + L"\r\n";
+    return s;
+}
 
 void Fullscreen(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the keys that split the fullscreen player across two screens, and swap its halves
     Ui& ui = p.ui;
@@ -524,7 +548,7 @@ void Problem(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a report for the 
     if (told) ui.Wake(); // it has to turn back with nothing else going on
     const wchar_t* label = !told ? L"Copy report" : copyOk ? L"Copied" : L"Couldn't copy";
     if (Act(ui, t, Ui::Id("set.report"), Rect(in.left, in.top + 2, bw, 30), label, true, false, live)) {
-        copyOk = sys::CopyText(sys::ProblemReport());
+        copyOk = sys::CopyText(sys::ProblemReport(NowPlaying(p.m)));
         copiedAt = ui.Now();
     }
     if (Act(ui, t, Ui::Id("set.report.open"), Rect(in.left + bw + 8, in.top + 2, bw, 30), L"Open GitHub", false, false, live)) {

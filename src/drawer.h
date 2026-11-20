@@ -46,6 +46,7 @@ public:
     void Reconfig(); // astraeus.ini changed on disk: sizes and corners follow without a restart
 
     bool Busy() const { return opened || peeking || alarmBanner || dragging || island; } // user is looking, don't restart now
+    bool UnderFullscreen() const { return fullApp || overFull || hidden; } // a game or a video has the screen: no restart, no notices, until it's done
     bool NeedsFrame() const { return needsFrame || stage; } // main loop polls this to keep rendering
     HANDLE FrameWait() const { return stage ? stage->Wait() : frameWait; } // swapchain waitable, paces to vsync
     void Frame();

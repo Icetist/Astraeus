@@ -12,6 +12,7 @@
 #include "model.h"
 #include "theme.h"
 #include "pages.h"
+#include "rim.h"
 #include "stageprefs.h"
 #include "ui.h"
 
@@ -69,6 +70,11 @@ private:
     void VinylLabelText(D2D1_POINT_2F mid, float radius, float k); // the song's name pressed around the label, turning with it
     int vinylLine = -1; // the sung line shown, and when it came
     double vinylLineAt = 0;
+    void VinylBake(); // outside BeginDraw: the sung line's bloom, blurred once a line as the full lyrics do
+    ComPtr<ID2D1Bitmap1> vinylHaze; // that line in white, blurred; tinted to the album's color when drawn
+    ComPtr<ID2D1SolidColorBrush> vinylTint;
+    std::wstring vinylHazeFor, vinylWant; // the line it was baked for, and the line the last frame showed
+    float vinylHazeK = 0, vinylHazeW = 0, vinylWantK = 0, vinylWantW = 0; // and their scales and text widths
     void SyncLyrics(double now);
     D2D1_RECT_F LyricRect() const; // the column the lyrics scroll in, right of the cover
     float LyricSize() const;
@@ -149,6 +155,9 @@ private:
     static constexpr int kBlobs = 6;
     Swell swell; // soft light rising along the bottom of the screen
     Waveform wave; // or bars across the room, with the waveform look
+    bool Rim(bool shaped); // the edge glow, with the music's shape already stepped this frame (shaped: any of it standing): light round the screen's edge, swelling with the music and flowing along it. stage_rim.cpp. true while it's lit
+    EdgeGlow rim; // its flow and its baked falloff, on this window's device
+    bool rimBusy = false; // the music still lighting it: frames go on
 
     int mode = 0; // the panel's appearance when the stage opened: 0 dark, 1 light, 2 glass, 3 custom
     bool LightRoom() const { return mode == 1 || (mode == 3 && theme::Luma(look.bg) >= 0.18f); }

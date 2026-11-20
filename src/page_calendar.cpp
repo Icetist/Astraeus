@@ -471,7 +471,7 @@ void DrawCalendar(PageCtx& p, float k) {
     static const Feast* shown = nullptr; // keeps the last greeting while it fades out
     static D2D1_POINT_2F shownAt{};
     if (greet) shown = greet, shownAt = greetAt;
-    float ga = ui.Smooth(Ui::Id("cal.greet"), greet ? 1.0f : 0, 18);
+    float ga = ui.Smooth(Ui::Id("cal.greet"), greet ? 1.0f : 0, w::kPopFade);
     if (shown && ga > 0.01f) {
         std::wstring hi = shown->greet;
         float gw = 42, gh = 26, lift = (1 - ga) * 6;
@@ -481,10 +481,7 @@ void DrawCalendar(PageCtx& p, float k) {
             gw += gm.widthIncludingTrailingWhitespace;
         float gx = std::clamp(shownAt.x - gw / 2, grid.left, grid.right - gw);
         D2D1_RECT_F r = Rect(gx, shownAt.y - gh - 6 + lift, gw, gh);
-        c.Fill(Inset(r, -1, -2), gh / 2 + 2, Color{0, 0, 0, 0.22f * ga}); // a quiet tag, like the rail's: soft shadow, card body, hairline
-        c.Fill(r, gh / 2, t.veil.Alpha(0.94f * ga)); // solid: under glass the days behind would read through
-        c.Fill(r, gh / 2, t.cardHi.Alpha(ga));
-        c.StrokeV(r, gh / 2, t.hairTop.Alpha(ga), t.hairBot.Alpha(ga), 1);
+        w::Pop(c, t, r, gh / 2, ga); // a quiet tag, like the rail's
         c.Icon(glyph::Sparkle, {r.left + 16, (r.top + r.bottom) / 2}, 12, t.accentHi.Alpha(ga), true);
         c.Text(hi, Rect(r.left + 26, r.top, gw - 36, gh), Weight::Medium, 12, t.text.Alpha(ga), Align::Center);
     }

@@ -8,6 +8,7 @@
 
 #include "faces.h"
 #include "glyphs.h"
+#include "page_sheet.h"
 
 namespace {
 
@@ -394,19 +395,10 @@ D2D1_RECT_F DeskPill::BarRect() const {
 }
 
 bool DeskPill::Seg(const Theme& t, const char* key, const D2D1_RECT_F& r, const wchar_t* const* names, int n, int& value) {
-    Canvas& c = *canvas;
-    bool changed = false;
-    c.Fill(r, Height(r) / 2, t.track);
-    float w = Width(r) / n, x = ui.Smooth(Ui::Id(key, 99), r.left + w * value, 18);
-    c.Fill(Rect(x + 2, r.top + 2, w - 4, Height(r) - 4), (Height(r) - 4) / 2, t.accent);
-    for (int i = 0; i < n; ++i) {
-        D2D1_RECT_F q = Rect(r.left + w * i, r.top, w, Height(r));
-        Ui::Hit h = ui.Button(Ui::Id(key, i), q);
-        ui.Mark(Ui::Role::Toggle, i == value);
-        if (h.clicked && i != value) value = i, changed = true;
-        c.Text(names[i], q, Weight::Medium, 11.5f, i == value ? t.onAccent : t.text, Align::Center);
-    }
-    return changed;
+    int picked = sheet::Segmented(ui, t, key, r, names, n, value, true); // the same switch as settings', so it reads the same here
+    if (picked < 0) return false;
+    value = picked;
+    return true;
 }
 
 void DeskPill::DrawBar(const Theme& t) {
@@ -485,7 +477,7 @@ void DeskPill::DrawBar(const Theme& t) {
     }
     int rows = ((int)offered.size() + kTileCols - 1) / kTileCols;
     float hintY = y + rows * kTileH + (std::max)(rows - 1, 0) * kTileGap + kRowGap;
-    float hintA = ui.Smooth(Ui::Id("dk.hint"), hinted >= 0 ? 1.0f : 0, 14);
+    float hintA = ui.Smooth(Ui::Id("dk.hint"), hinted >= 0 ? 1.0f : 0, w::kPopFade);
     static int lastHint = -1; // stays put while it fades, so the words don't vanish before the fade does
     if (hinted >= 0) lastHint = hinted;
     if (lastHint >= 0 && hintA > 0.01f) {

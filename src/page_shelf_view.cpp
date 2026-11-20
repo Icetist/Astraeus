@@ -381,11 +381,9 @@ void Menu(PageCtx& p, const D2D1_RECT_F& area) {
     float x = v.clearMenu ? v.menuAt.x - kMenuW : v.menuAt.x, y = v.menuAt.y;
     x = (std::clamp)(x, area.left, area.right - kMenuW);
     if (y + h > area.bottom) y = (std::max)(area.top, v.clearMenu ? area.bottom - h : v.menuAt.y - h); // no room below: it opens upward
-    float k = ui.SmoothFrom(Ui::Id("sh.menu.in", (int)(v.menu ^ (v.clearMenu ? 0x5A5A : 0))), 1, 0, 24);
+    float k = ui.SmoothFrom(Ui::Id("sh.menu.in", (int)(v.menu ^ (v.clearMenu ? 0x5A5A : 0))), 1, 0, w::kPopFade);
     D2D1_RECT_F box = Rect(x, y + (1 - k) * 6, kMenuW, h);
-    c.Fill(Rect(box.left, box.top + 4, kMenuW, h), 14, Color{0, 0, 0, 0.22f * k}); // a soft drop below
-    c.Fill(box, 14, Solid(t));
-    c.StrokeV(box, 14, t.hairTop.Mix(t.accent.Alpha(0.5f), 0.4f), t.hairBot, 1);
+    w::Pop(c, t, box, w::kPopRadius, k);
     float ry = box.top + kMenuPad;
     if (!cap.empty()) {
         c.Text(cap, Rect(box.left + 14, ry, kMenuW - 28, kMenuCap - 4), Weight::Light, 11, t.textDim);
@@ -401,8 +399,8 @@ void Menu(PageCtx& p, const D2D1_RECT_F& area) {
         D2D1_RECT_F row = Rect(box.left + 5, ry, kMenuW - 10, kMenuRow);
         uint32_t id = Ui::Id("sh.menu.row", i++);
         Ui::Hit hit = ui.Button(id, row);
-        float hv = ui.Smooth(id, hit.hover ? 1.0f : 0, 20);
-        if (hv > 0.01f) c.Fill(row, 9, (e.danger ? sheet::kDanger.Alpha(0.22f) : t.track).Alpha(hv));
+        float hv = w::RowHover(ui, id, hit.hover);
+        if (hv > 0.01f) c.Fill(row, w::kRowRadius, (e.danger ? sheet::kDanger.Alpha(0.22f) : t.track).Alpha(hv));
         c.Text(e.label, Inset(row, 10, 0), Weight::Regular, 12, e.danger ? sheet::kDanger : t.text);
         if (hit.clicked) {
             uint64_t target = v.menu;

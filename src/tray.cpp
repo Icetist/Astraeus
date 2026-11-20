@@ -17,7 +17,9 @@ namespace tray {
 namespace {
 
 constexpr float kW = 252, kPad = 6, kHead = 56, kRow = 38, kSep = 9; // layout in dips
-constexpr UINT_PTR kAnimTimer = 1; // drives the switch slide
+constexpr UINT_PTR kAnimTimer = 1; // drives the switch slide and the row highlights
+constexpr float kLitStep = 0.26f; // a row highlight's ease per 15 ms tick: the panel menus' pace
+constexpr float kRowRadius = 9; // a row highlight's corners, as the panel menus'
 constexpr UINT_PTR kSpinTimer = 2; // drives the update spinner
 constexpr int kSepCmd = 0;
 const Color kDanger = Color::Rgb(0xFF8A80); // exit hover tint
@@ -41,6 +43,7 @@ struct Menu {
     bool startup = false;
     float knob = 0; // switch position 0..1, eased toward startup
     int hover = -1; // item index under mouse or keyboard focus
+    float lit[kCount] = {}; // each row's highlight 0..1, eased like the panel's menus
     bool tracking = false; // leave events armed
     float scale = 1; // dpi / 96
     ComPtr<ID2D1HwndRenderTarget> rt; // plain hwnd target, no swapchain needed
@@ -165,6 +168,11 @@ void Paint() {
     c.Text(L"Astraeus", Rect(kPad + 48, 13, 160, 18), Weight::Medium, 14, t.text);
     c.Text(L"Dynamic island", Rect(kPad + 48, 30, 160, 14), Weight::Light, 11, t.textLow);
 
+    for (int i = 0; i < kCount; ++i)
+        if (g->lit[i] != (i == g->hover ? 1.0f : 0.0f)) { // a highlight still to fade: the timer eases it
+            SetTimer(g->hwnd, kAnimTimer, 15, nullptr);
+            break;
+        }
     for (int i = 0; i < kCount; ++i) {
         const Item& it = kItems[i];
         float y = Top(i);
@@ -175,7 +183,11 @@ void Paint() {
         D2D1_RECT_F r = {kPad, y + 1, kW - kPad, y + kRow - 1}; // 1px gap between pills
         float cy = (r.top + r.bottom) / 2;
         bool hot = i == g->hover, danger = it.cmd == kExit;
-        if (hot) c.Fill(r, 10, danger ? kDanger.Alpha(0.14f) : t.cardHi.Mix(t.track, 0.6f)); // hover pill
+        if (g->lit[i] > 0.01f) { // hover pill, fading in and out
+            Color pill = danger ? kDanger.Alpha(0.14f) : t.cardHi.Mix(t.track, 0.6f);
+            pill.a *= g->lit[i];
+            c.Fill(r, kRowRadius, pill);
+        }
         Color ink = hot && danger ? kDanger : t.text;
         Color icon = hot ? (danger ? kDanger : t.accentHi) : t.textDim;
         if (it.cmd == kUpdate) UpdIcon(c, {r.left + 22, cy}, icon);
@@ -290,10 +302,15 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         float target = g->startup ? 1.0f : 0.0f;
         g->knob += (target - g->knob) * 0.3f; // ease toward target each tick
-        if (std::fabs(target - g->knob) < 0.01f) {
-            g->knob = target;
-            KillTimer(hwnd, kAnimTimer); // settled, stop ticking
+        bool settled = std::fabs(target - g->knob) < 0.01f;
+        if (settled) g->knob = target;
+        for (int i = 0; i < kCount; ++i) { // the row highlights, at the panel menus' pace
+            float want = i == g->hover ? 1.0f : 0.0f;
+            g->lit[i] += (want - g->lit[i]) * kLitStep;
+            if (std::fabs(want - g->lit[i]) < 0.01f) g->lit[i] = want;
+            else settled = false;
         }
+        if (settled) KillTimer(hwnd, kAnimTimer); // settled, stop ticking
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }

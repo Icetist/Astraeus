@@ -149,12 +149,13 @@ std::wstring LogPick(const std::wstring& log) {
     return out;
 }
 
-std::wstring ProblemReport() {
+std::wstring ProblemReport(const std::wstring& now) {
     std::wstring s = L"Astraeus problem report\r\nVersion: " APP_VER_W L"\r\n" + Pc() + L"\r\nSettings:\r\n";
     for (const wchar_t* name : kShared) {
         int v = ReadNum(name, kUnset);
         if (v != kUnset) s += std::wstring(L"  ") + name + L" = " + std::to_wstring(v) + L"\r\n";
     }
+    if (!now.empty()) s += L"\r\nNow playing:\r\n" + now; // the player and its lyrics: a lyrics report answers itself
     std::wstring log = LogPick(LogTail());
     s +=L"\r\nRecent log:\r\n" + (log.empty() ? std::wstring(L"  (empty)\r\n") : log);
     std::wstring home = Env(L"USERPROFILE");

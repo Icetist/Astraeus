@@ -210,7 +210,7 @@ void Board::TileMedia(const D2D1_RECT_F& r, float k) { // the song: cover, words
     if (model.vizOn && has) { // the music's light, in the look picked in settings: bars across the tile behind the cover, or the glow rising from its floor
         D2D1_ROUNDED_RECT card = D2D1::RoundedRect(r, kRadius, kRadius);
         bool play = tr.playing;
-        if (model.vizWave) {
+        if (model.vizLooks & Model::kLookBars) { // a tile has no screen edge: bars if they're on, else the glow
             if (StepWave(wave, model, ui.Dt(), play)) {
                 float mid = (art.top + art.bottom) / 2, hh = side * 0.45f;
                 DrawWave(c, wave, {r.left + pad * 0.5f, mid - hh, r.right - pad * 0.5f, mid + hh}, m, 0.5f, &card);

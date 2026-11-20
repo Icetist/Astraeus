@@ -6,6 +6,7 @@
 #include "glyphs.h"
 #include "lyricview.h"
 #include "pages.h"
+#include "rim.h"
 
 namespace {
 
@@ -42,11 +43,27 @@ void Wave(PageCtx& p, const D2D1_RECT_F& r, float fraction, bool playing, bool c
 constexpr int kBlobs = 5; // a few big soft blobs across the media card
 Swell vizSwell;
 Waveform vizWave;
+EdgeGlow mediaRim; // the edge glow round the card: its own flow, and a falloff baked on the panel's device
+constexpr float kCardR = 24; // the card's corners, which the light keeps inside
+constexpr float kRimSize = 0.12f; // the light reaches this share of the card's short side inward at rest
+constexpr float kLightCard = 0.5f; // a card this bright is a light one: the light paints rather than adds
 
 void DrawViz(PageCtx& p, const D2D1_RECT_F& r) { // soft light swelling up from the bottom of the card: bass on the left, treble on the right
     if (!p.m.vizOn || !p.m.hasTrack) return;
     Ui& ui = p.ui;
-    if (p.m.mediaWave) { // or bars the whole width of the card, behind the art and the words: its own switch in settings
+    if (p.m.mediaWave == rim::kMediaRim) { // or light round the card's edge, as fullscreen can wear round the screen
+        bool playing = p.m.track.playing, shaped = StepWave(vizWave, p.m, ui.Dt(), playing);
+        float pl = 0, pr = 0;
+        if (playing) p.m.Levels(pl, pr);
+        bool lit = mediaRim.Step(vizWave, shaped, (std::sqrt(pl) + std::sqrt(pr)) / 2, playing, p.m.VizGain(), ui.Dt(), p.m.reduceMotion != 0);
+        if (lit || playing) ui.KeepAlive(); // frames go on while it plays, or nothing asks for the music again
+        ComPtr<ID2D1DeviceContext> dc;
+        if (!lit || FAILED(ui.C().Target()->QueryInterface(IID_PPV_ARGS(&dc)))) return;
+        bool light = theme::Luma(p.media.card) >= kLightCard;
+        mediaRim.Draw(dc.Get(), vizWave, r, kCardR, (std::min)(Width(r), Height(r)) * kRimSize, light ? p.media.accent : p.media.accentHi, rim::Second(theme::FromCol(p.media.accent), light), light, ui.Dt());
+        return;
+    }
+    if (p.m.mediaWave == rim::kMediaBars) { // or bars the whole width of the card, behind the art and the words
         bool alive = StepWave(vizWave, p.m, ui.Dt(), p.m.track.playing);
         if (alive || (p.m.hasTrack && p.m.track.playing)) ui.KeepAlive(); // a quiet moment drops every bar: frames go on while it plays, or nothing asks for the music again and its capture is let go
         if (!alive) return;
@@ -221,11 +238,9 @@ void SourceMenu(PageCtx& p) {
         menuOpen = false;
         return;
     }
-    float a = ui.SmoothFrom(Ui::Id("md.menu", menuNth), 1, 0, 20);
-    c.Glow({(box.left + box.right) / 2, box.top + h * 0.6f}, Width(box) * 0.75f, h * 0.8f, Color{0, 0, 0, 0.45f * a});
-    c.Target()->PushLayer(D2D1::LayerParameters(Inset(box, -2, -2), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), a), nullptr);
-    c.Fill(box, 16, t.cardHi.Alpha(1));
-    c.StrokeV(box, 16, t.hairTop, t.hairBot, 1);
+    float a = ui.SmoothFrom(Ui::Id("md.menu", menuNth), 1, 0, w::kPopFade);
+    c.Target()->PushLayer(D2D1::LayerParameters(D2D1_RECT_F{box.left - 2, box.top - 2, box.right + 2, box.bottom + 5}, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), a), nullptr); // room for the drop below
+    w::Pop(c, t, box, w::kPopRadius, 1);
     c.TextSp(L"PLAYING NOW", Rect(box.left + 14, box.top + 10, Width(box) - 28, 14), Weight::Medium, 10, t.textLow, 1.4f);
     float ry = box.top + kMenuHead;
     const sys::MediaSource* pick = nullptr;
@@ -235,7 +250,9 @@ void SourceMenu(PageCtx& p) {
         Ui::Hit hit = ui.Button(Ui::Id("md.src", (int)i), row);
         std::wstring title = s.title.empty() ? s.app : s.title, state = s.playing ? L"Playing" : L"Paused";
         ui.Name(title + L", " + s.app + L", " + state);
-        if (s.followed || hit.hover) c.Fill(row, 11, s.followed ? t.accent.Alpha(hit.hover ? 0.22f : 0.14f) : t.text.Alpha(0.07f));
+        float hv = w::RowHover(ui, Ui::Id("md.src.hv", (int)i), hit.hover);
+        if (s.followed) c.Fill(row, w::kRowRadius, t.accent.Alpha(0.14f + 0.08f * hv));
+        else if (hv > 0.01f) c.Fill(row, w::kRowRadius, t.text.Alpha(0.07f * hv));
         D2D1_POINT_2F thumb = {row.left + 7 + kMenuThumb / 2, (row.top + row.bottom) / 2};
         c.Fill(Rect(thumb.x - kMenuThumb / 2, thumb.y - kMenuThumb / 2, kMenuThumb, kMenuThumb), 9, t.track.Alpha(1));
         c.Icon(glyph::Music, thumb, 19, s.playing ? t.accentHi : t.textDim);
@@ -250,7 +267,8 @@ void SourceMenu(PageCtx& p) {
     else if (pinned) {
         D2D1_RECT_F back = Rect(box.left + kMenuPad, ry, Width(box) - 2 * kMenuPad, kMenuBack - 2);
         Ui::Hit hit = ui.Button(Ui::Id("md.src.auto"), back);
-        if (hit.hover) c.Fill(back, 10, t.text.Alpha(0.07f));
+        float hv = w::RowHover(ui, Ui::Id("md.src.auto.hv"), hit.hover);
+        if (hv > 0.01f) c.Fill(back, w::kRowRadius, t.text.Alpha(0.07f * hv));
         c.Text(L"Go back to following what's playing", back, Weight::Regular, 12, t.textDim, Align::Center);
         if (hit.clicked) m.media.Follow(L""), menuOpen = false;
     }
@@ -501,3 +519,5 @@ void FlipArt(PageCtx& p, const D2D1_RECT_F& art, float radius, float iconPx) {
     if (turning) c.Fill(art, radius, Color{0, 0, 0, 0.35f * (1 - sx)}); // its far side in shade
     c.Target()->SetTransform(was);
 }
+
+void rim::ForgetMedia() { mediaRim.Forget(); }

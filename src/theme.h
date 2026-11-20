@@ -8,6 +8,7 @@ struct Seed {
     int rgb = -1; // the exact color this came from, if any: the custom look keeps it as the accent
     int bg = 0x121826; // custom look: the panel's background, 0xRRGGBB
     int tint = -1; // glass: its tint, 0xRRGGBB; -1 the plain dark one
+    float hue2 = -1; // a cover's next strongest hue, well apart from the first; -1 when it has only the one
 };
 
 struct Theme {
