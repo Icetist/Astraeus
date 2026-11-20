@@ -237,6 +237,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     stageArt = flag(L"StageArtBg", 0);
     vizAlpha = (std::clamp)(sys::ReadNum(kVizAlphaVal, 60), kVizAlphaMin, 100);
     vizGain = (std::clamp)(sys::ReadNum(kVizGainVal, 100), kVizGainMin, kVizGainMax);
+    rimGlow = (std::clamp)(sys::ReadNum(L"RimGlow", 100), kRimGlowMin, kRimGlowMax);
     keyOnly = flag(L"KeyOnly", 0);
     appKeyOnly = flag(L"AppKeyOnly", 0);
     appHoverMs = (std::clamp)(sys::ReadNum(L"AppHoverMs", kAppHoverMs), 0, kAppHoverMax);

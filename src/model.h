@@ -514,6 +514,9 @@ public:
     int vizAlpha = 60; // percent: how opaque the visualizer sits over the album art, shared with halobar
     int vizGain = 100; // percent: how hard the visualizer answers the music, shared with halobar
     float VizGain() const { return vizGain / 100.0f; }
+    static constexpr int kRimGlowMin = 25, kRimGlowMax = 200; // percent range of the edge glow's slider
+    int rimGlow = 100; // percent: how far in the edge glow reaches and how bright it is, together
+    float RimGlow() const { return rimGlow / 100.0f; }
     bool Levels(float& left, float& right); // the meter's peaks, scaled by the sensitivity
     int keyOnly = 0; // only the shortcut opens the closed island: hover and clicks on it do nothing
     int appKeyOnly = 0; // an app window under the edge: hovering opens nothing, only the shortcut does

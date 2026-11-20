@@ -106,17 +106,26 @@ Seed FromBmp(IWICBitmapSource* source) {
     float hue = std::atan2(sn[best], cs[best]) * 180 / 3.14159265f; // circular mean within winning bin
     if (hue < 0) hue += 360;
     Seed out{hue, sat[best] / weight[best]}; // weighted avg saturation
-    constexpr int kApart = 3; // bins: a second color must be at least 45 degrees off the first, or it's the same color
-    constexpr float kEnough = 0.12f; // and hold this share of the first's weight, or it's a speck
-    int next = -1;
-    for (int b = 0; b < bins; ++b) {
-        int gap = std::abs(b - best);
-        if ((std::min)(gap, bins - gap) < kApart || weight[b] < weight[best] * kEnough) continue;
-        if (next < 0 || weight[b] > weight[next]) next = b;
-    }
-    if (next >= 0) {
-        out.hue2 = std::atan2(sn[next], cs[next]) * 180 / 3.14159265f;
-        if (out.hue2 < 0) out.hue2 += 360;
+    constexpr int kApart = 3; // bins: another color must be at least 45 degrees off every one taken, or it's the same color
+    constexpr float kEnough = 0.06f; // and hold this share of the first's weight, or it's a speck. a wide net: a cover's lesser colors count too
+    int taken[1 + Seed::kMore] = {best}, n = 1;
+    while (n < 1 + Seed::kMore) {
+        int next = -1;
+        for (int b = 0; b < bins; ++b) {
+            if (weight[b] < weight[best] * kEnough) continue;
+            bool alike = false;
+            for (int k = 0; k < n; ++k) {
+                int gap = std::abs(b - taken[k]);
+                alike = alike || (std::min)(gap, bins - gap) < kApart;
+            }
+            if (!alike &&(next < 0 || weight[b] > weight[next])) next = b;
+        }
+        if (next < 0) break;
+        int lo = (next + bins - 1) % bins, hi = (next + 1) % bins;
+        float y = sn[next] + 0.5f * (sn[lo] + sn[hi]), x = cs[next] + 0.5f * (cs[lo] + cs[hi]); // a color split over two bins comes out as their average
+        float h2 = std::atan2(y, x) * 180 / 3.14159265f;
+        out.more[n - 1] = h2 < 0 ? h2 + 360 : h2;
+        taken[n++] = next;
     }
     return out;
 }

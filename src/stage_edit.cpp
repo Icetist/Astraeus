@@ -33,7 +33,7 @@ float PageH(int page, int tab, int songChips, bool vinyl) {
     case kPageSong: return kSlideRow + (songChips + 1) / 2 * kChipRow; // two to a row
     case kPageLyrics: return kChipRow + 4 * kSlideRow;
     case kPageClock: return kChipRow + 2 * kSlideRow;
-    case kPageScene: return 6 * kChipRow + 3 * kSlideRow; // nine switches, ten with vinyl's lyric glow: five rows either way, and the media tab's pick under them
+    case kPageScene: return 6 * kChipRow + 4 * kSlideRow; // nine switches, ten with vinyl's lyric glow: five rows either way, and the media tab's pick under them
     default: return StagePrefs::kKeys * (kKeyH + kChipGap) + kNoteH;
     }
 }
@@ -42,7 +42,7 @@ float PageH(int page, int tab, int songChips, bool vinyl) {
 
 namespace {
 constexpr size_t kShapeFloats = sizeof(StagePrefs::Shape) / sizeof(float);
-constexpr size_t kScenePrefs = 15;
+constexpr size_t kScenePrefs = 16;
 constexpr int kSpinStep = 5; // the spin speed slider's steps, in percent // the switches and numbers after the two layouts in a snapshot: EditSnap and EditLoad keep the same order
 static_assert(sizeof(StagePrefs::Shape) == kShapeFloats * sizeof(float), "a layout is floats only: it goes into a snapshot as they are");
 }
@@ -55,7 +55,7 @@ History::Snap Stage::EditSnap() const { // both versions, then the scene's own s
         const float* f = reinterpret_cast<const float*>(&sh);
         s.insert(s.end(), f, f + kShapeFloats);
     }
-    for (int v : {model.stageArt, model.stageThump, model.stageHide, model.vizOn, model.vizLooks, model.vizFull, model.vizGain, model.vizAlpha, model.stageVinyl, model.stageVinylCtl, model.stageVinylSpeed, model.stageVinylSound, model.stageVinylLabel, model.stageVinylGlow, model.mediaWave}) s.push_back((float)v);
+    for (int v : {model.stageArt, model.stageThump, model.stageHide, model.vizOn, model.vizLooks, model.vizFull, model.vizGain, model.vizAlpha, model.stageVinyl, model.stageVinylCtl, model.stageVinylSpeed, model.stageVinylSound, model.stageVinylLabel, model.stageVinylGlow, model.mediaWave, model.rimGlow}) s.push_back((float)v);
     return s;
 }
 
@@ -68,7 +68,7 @@ void Stage::EditLoad(const History::Snap& s) {
         int* field;
         const wchar_t* key;
     } prefs[] = {{&model.stageArt, L"StageArtBg"}, {&model.stageThump, L"StageThump"}, {&model.stageHide, L"StageHide"}, {&model.vizOn, L"Visualizer"},
-                 {&model.vizLooks, L"VizLooks"}, {&model.vizFull, L"VizFull"}, {&model.vizGain, L"VizGain"}, {&model.vizAlpha, L"VizAlpha"}, {&model.stageVinyl, L"StageVinyl"}, {&model.stageVinylCtl, L"StageVinylCtl"}, {&model.stageVinylSpeed, L"StageVinylSpeed"}, {&model.stageVinylSound, L"StageVinylSound"}, {&model.stageVinylLabel, L"StageVinylLabel"}, {&model.stageVinylGlow, L"StageVinylGlow"}, {&model.mediaWave, L"MediaWave"}};
+                 {&model.vizLooks, L"VizLooks"}, {&model.vizFull, L"VizFull"}, {&model.vizGain, L"VizGain"}, {&model.vizAlpha, L"VizAlpha"}, {&model.stageVinyl, L"StageVinyl"}, {&model.stageVinylCtl, L"StageVinylCtl"}, {&model.stageVinylSpeed, L"StageVinylSpeed"}, {&model.stageVinylSound, L"StageVinylSound"}, {&model.stageVinylLabel, L"StageVinylLabel"}, {&model.stageVinylGlow, L"StageVinylGlow"}, {&model.mediaWave, L"MediaWave"}, {&model.rimGlow, L"RimGlow"}};
     size_t at = StagePrefs::kShapes * kShapeFloats;
     for (const Pref& p : prefs) {
         int v = (int)s[at++];
@@ -334,6 +334,8 @@ void Stage::EditPage(const D2D1_RECT_F& body, bool live) { // the picked page's 
         }
         setting("st.ed.sc.gain", L"Visualizer strength", model.vizGain, L"VizGain", Model::kVizGainMin, Model::kVizGainMax, Model::kSlideStep);
         setting("st.ed.sc.alpha", L"Visualizer opacity", model.vizAlpha, L"VizAlpha", Model::kVizAlphaMin, 100, Model::kSlideStep);
+        setting("st.ed.sc.rimglow", L"Edge glow", model.rimGlow, L"RimGlow", Model::kRimGlowMin, Model::kRimGlowMax, Model::kSlideStep,
+                (model.vizLooks & Model::kLookRim) || model.mediaWave == rim::kMediaRim); // its reach and brightness together, live only where it's worn
         percent("st.ed.sc.dim", L"Darken the background", s.dim, 0, StagePrefs::kDimHi, 100);
         break;
     default: {

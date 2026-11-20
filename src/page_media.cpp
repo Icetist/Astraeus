@@ -60,7 +60,9 @@ void DrawViz(PageCtx& p, const D2D1_RECT_F& r) { // soft light swelling up from 
         ComPtr<ID2D1DeviceContext> dc;
         if (!lit || FAILED(ui.C().Target()->QueryInterface(IID_PPV_ARGS(&dc)))) return;
         bool light = theme::Luma(p.media.card) >= kLightCard;
-        mediaRim.Draw(dc.Get(), vizWave, r, kCardR, (std::min)(Width(r), Height(r)) * kRimSize, light ? p.media.accent : p.media.accentHi, rim::Second(theme::FromCol(p.media.accent), light), light, ui.Dt());
+        Color cols[rim::kHues];
+        rim::Colors(p.mediaSeed ? *p.mediaSeed : theme::FromCol(p.media.accent), light, cols);
+        mediaRim.Draw(dc.Get(), vizWave, r, kCardR, (std::min)(Width(r), Height(r)) * kRimSize, cols, light, p.m.RimGlow(), ui.Dt());
         return;
     }
     if (p.m.mediaWave == rim::kMediaBars) { // or bars the whole width of the card, behind the art and the words

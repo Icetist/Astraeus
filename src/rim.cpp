@@ -21,10 +21,15 @@ constexpr float kSwell[EdgeGlow::kSwells] = {0.9f, 0.6f, 0.45f}; // how far each
 constexpr float kFlow[EdgeGlow::kSwells] = {0.045f, 0.065f, 0.085f}; // turns a second each drifts with the music barely there
 constexpr float kRush = 1.5f; // how much quicker its part of the music drives it, times the strength slider. kept small: a slow song is just as busy for its loudness
 constexpr float kKick = 16; // and each beat throws it on, fading as the beat does: the low end goes about an eighth of a lap a beat, so the tempo sets the pace. a dense beat races, a slow one drifts
-constexpr float kTurn = 0.06f; // turns a second the two colors flow round, before the music hurries them
+constexpr float kTurn = 0.06f; // turns a second the colors flow round, before the music hurries them
 constexpr float kPeak = 3; // sharpens each swell, so they read as swells and not a ripple
 constexpr float kNextHue = 50; // a cover with one color: its second is this many degrees round
-constexpr float kTwoRate = 3.75f; // a new song's second color eases in over about a second, as the room's own colors do
+constexpr float kColRate = 3.75f; // a new song's colors ease in over about a second, as the room's own colors do
+constexpr float kDarkSat = 0.82f, kDarkLit = 0.60f; // on dark: full, rich colors. paler ones stack to white where the light adds up
+constexpr float kLightSat = 0.75f, kLightLit = 0.46f; // on light: deep enough to show against it
+constexpr float kGreySat = 0.22f; // a cover with no color to speak of: only a tint of the theme's hue
+constexpr float kGreyChroma = 0.08f; // below this a cover has no color to speak of
+constexpr float kGlowLit = 0.6f; // the glow slider's share in brightness; the rest of the light is fixed
 constexpr float kRise = 34, kFall = 7; // the level follows the music up quickly and down more slowly
 constexpr float kAverage = 2.5f; // the running average a beat stands out from
 constexpr float kBeatOver = 1.2f, kBeatFloor = 0.035f, kBeatGap = 0.2f; // a beat: this far over the average, and not sooner than this after the last
@@ -40,11 +45,15 @@ float Band(const Waveform& w, int from, int to) {
 
 }
 
-Color rim::Second(const Seed& base, bool light) {
-    Seed two = base;
-    two.hue = base.hue2 >= 0 ? base.hue2 : std::fmod(base.hue + kNextHue, 360.0f);
-    Theme t = Theme::From(two);
-    return light ? t.accent : t.accentHi; // a light surface keeps the deeper color, or the light washes out
+void rim::Colors(const Seed& base, bool light, Color out[kHues]) {
+    float hue[1 + Seed::kMore] = {base.hue};
+    int n = 1;
+    for (float h : base.more)
+        if (h >= 0) hue[n++] = h;
+    if (n == 1) hue[n++] = std::fmod(base.hue + kNextHue, 360.0f); // one color: a neighbour of it, so the light still flows
+    static constexpr int kOrder[1 + Seed::kMore][kHues] = {{0, 0, 0, 0}, {0, 1, 0, 1}, {0, 1, 2, 1}, {0, 1, 2, 3}}; // round the edge, never the same color twice in a row
+    float sat = base.chroma < kGreyChroma ? kGreySat : light ? kLightSat : kDarkSat;
+    for (int i = 0; i < kHues; ++i) out[i] = theme::Hsl(hue[kOrder[n - 1][i]], sat, light ? kLightLit : kDarkLit);
 }
 
 bool EdgeGlow::Step(const Waveform& w, bool shaped, float level, bool playing, float gain, float dt, bool calm) {
@@ -62,7 +71,7 @@ bool EdgeGlow::Step(const Waveform& w, bool shaped, float level, bool playing, f
     return true;
 }
 
-void EdgeGlow::Draw(ID2D1DeviceContext* ctx, const Waveform& w, const D2D1_RECT_F& box, float radius, float size, Color one, Color twoWant, bool light, float dt) {
+void EdgeGlow::Draw(ID2D1DeviceContext* ctx, const Waveform& w, const D2D1_RECT_F& box, float radius, float size, const Color want[rim::kHues], bool light, float glow, float dt) {
     if (!fade) { // white, fading inward from the edge: tinted by whatever brush it's drawn with
         std::vector<uint32_t> px(4 * kFadePx);
         for (int y = 0; y < kFadePx; ++y) {
@@ -74,8 +83,11 @@ void EdgeGlow::Draw(ID2D1DeviceContext* ctx, const Waveform& w, const D2D1_RECT_
         ctx->CreateBitmap({4, (UINT32)kFadePx}, px.data(), 16, bp, &fade);
         if (!fade) return;
     }
-    if (!twoSet) two = twoWant, twoSet = true;
-    two = two.Mix(twoWant, (std::min)(1.0f, dt * kTwoRate));
+    float ease = colsSet ? (std::min)(1.0f, dt * kColRate) : 1.0f;
+    for (int i = 0; i < rim::kHues; ++i) cols[i] = cols[i].Mix(want[i], ease);
+    colsSet = true;
+    size *= glow;
+    float bright = 1 + kGlowLit * (glow - 1);
     float energy[kSwells] = {Band(w, 0, kLow), Band(w, kLow, kMid), Band(w, kMid, Waveform::kBars)};
     float W = box.right - box.left, H = box.bottom - box.top, P = 2 * (W + H);
     auto thick = [&](float s) { // how far in the light reaches at s, in sizes
@@ -87,8 +99,12 @@ void EdgeGlow::Draw(ID2D1DeviceContext* ctx, const Waveform& w, const D2D1_RECT_
         return v;
     };
     auto color = [&](float s, float v) { // thicker is brighter too: the swell is more light, not just more reach
-        float m = 0.5f + 0.5f * std::cos(2 * kPi * (s / P - turn));
-        return one.Mix(two, m).Alpha(Clamp01(0.5f + 0.45f * v));
+        float f = s / P - turn;
+        f = (f - std::floor(f)) * rim::kHues;
+        int i = (std::min)((int)f, rim::kHues - 1);
+        float m = f - i;
+        m = m * m * (3 - 2 * m); // each color holds a moment before it hands over
+        return cols[i].Mix(cols[(i + 1) % rim::kHues], m).Alpha(Clamp01((0.5f + 0.45f * v) * bright));
     };
 
     float l = box.left, t = box.top, r = box.right, b = box.bottom;

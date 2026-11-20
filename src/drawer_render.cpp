@@ -728,6 +728,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
     if (pc.flip > 0.999f) coverPrev.Reset(); // turned: the old one can go
     pc.backdrop = backA;
     pc.dc = ctx.Get();
+    pc.mediaSeed = &mediaSeed;
     pc.lyrics = &mediaLyr;
     constexpr double kLyrWaitSec = 12; // how long the column waits for a new song's lines before giving way
     pc.lyricsWaiting = !medKey.empty() && !medDoc && ui.Now() - medKeyAt < kLyrWaitSec;

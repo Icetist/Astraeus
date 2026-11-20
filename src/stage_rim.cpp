@@ -13,6 +13,8 @@ bool Stage::Rim(bool shaped) {
     Seed base = artSeeded ? artSeed : theme::FromCol(look.accent);
     base.look = mode, base.bg = model.CustomBg();
     bool light = LightRoom();
-    rim.Draw(ctx.Get(), wave, {0, 0, W, H}, 0, (std::min)(W, H) * kSize, light ? look.accent : look.accentHi, rim::Second(base, light), light, frameDt);
+    Color cols[rim::kHues];
+    rim::Colors(base, light, cols);
+    rim.Draw(ctx.Get(), wave, {0, 0, W, H}, 0, (std::min)(W, H) * kSize, cols, light, model.RimGlow(), frameDt);
     return true;
 }

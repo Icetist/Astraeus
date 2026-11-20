@@ -19,6 +19,7 @@ struct PageCtx {
     bool wantClose = false; // page asks drawer to retract
     bool wantStage = false; // media page asks for the fullscreen stage
     int wantPage = -1; // a page asks to switch to another, e.g. the home media card to the media page
+    const Seed* mediaSeed = nullptr; // what the media palette came from: a cover's other colors ride along in it
     const wchar_t* hint = nullptr; // a short tip the drawer shows just outside the panel, next to hintRect
     D2D1_RECT_F hintRect{};
     float hintFade = 0;
