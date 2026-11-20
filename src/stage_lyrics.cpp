@@ -21,6 +21,20 @@ bool IsRtlText(const std::wstring& s) {
     return false;
 }
 
+template <typename R>
+void RowBounds(const R& row, float& minLo, float& maxHi) {
+    minLo = 0;
+    maxHi = row.w;
+    if (!row.lead.spans.empty()) {
+        minLo = row.lead.spans[0].left;
+        maxHi = row.lead.spans[0].left + row.lead.spans[0].width;
+        for (size_t k = 1; k < row.lead.spans.size(); ++k) {
+            minLo = (std::min)(minLo, row.lead.spans[k].left);
+            maxHi = (std::max)(maxHi, row.lead.spans[k].left + row.lead.spans[k].width);
+        }
+    }
+}
+
 }
 
 bool LyricView::Lay(Piece& pc, const std::wstring& text, IDWriteTextFormat* f, float lineH) {
@@ -104,10 +118,14 @@ void LyricView::Ink(ID2D1DeviceContext* ctx, const Row& row, D2D1_POINT_2F at, I
 }
 
 void LyricView::Bake(ID2D1DeviceContext* ctx, Row& row) { // the line in white, blurred once into a small texture
+    float minLo = 0, maxHi = row.w;
+    RowBounds(row, minLo, maxHi);
+    float contentW = (std::max)(0.0f, maxHi - minLo);
+    if (row.haze || row.h <= 0 || contentW <= 0) return;
     float dx = 96, dy = 96;
     ctx->GetDpi(&dx, &dy);
     float dpi = dx * kHazeRes;
-    D2D1_SIZE_U px = {(UINT32)std::ceil((row.w + 2 * pad) * dpi / 96), (UINT32)std::ceil((row.h + 2 * pad) * dpi / 96)};
+    D2D1_SIZE_U px = {(UINT32)std::ceil((contentW + 2 * pad) * dpi / 96), (UINT32)std::ceil((row.h + 2 * pad) * dpi / 96)};
     if (!px.width || !px.height) return;
     D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi, dpi);
     ComPtr<ID2D1Bitmap1> src, out;
@@ -123,7 +141,7 @@ void LyricView::Bake(ID2D1DeviceContext* ctx, Row& row) { // the line in white, 
     ctx->SetTarget(src.Get());
     ctx->BeginDraw();
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
-    Ink(ctx, row, {pad, pad}, ink.Get());
+    Ink(ctx, row, {pad - minLo, pad}, ink.Get());
     bool ok = SUCCEEDED(ctx->EndDraw());
     blur->SetInput(0, src.Get());
     blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, size * kHazeSigma);
@@ -172,13 +190,15 @@ float LyricView::Sweep(const Row& row, double t) const { // characters of the le
 
 void LyricView::Haze(ID2D1DeviceContext* ctx, const Row& row, D2D1_POINT_2F at, float scale, Color col) { // the baked blur, tinted
     if (!row.haze || col.a < 0.004f) return;
+    float minLo = 0, maxHi = row.w;
+    RowBounds(row, minLo, maxHi);
     ink->SetColor(col.D2D());
     D2D1_MATRIX_3X2_F base;
     ctx->GetTransform(&base); // the dashboard paints with an offset into its surface
     ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x + width * style.align / 2, at.y + row.h / 2}) * *D2D1::Matrix3x2F::ReinterpretBaseType(&base));
     D2D1_ANTIALIAS_MODE was = ctx->GetAntialiasMode();
     ctx->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED); // opacity masks need it
-    D2D1_RECT_F dst = {at.x - pad, at.y - pad, at.x + row.w + pad, at.y + row.h + pad};
+    D2D1_RECT_F dst = {at.x + minLo - pad, at.y - pad, at.x + maxHi + pad, at.y + row.h + pad};
     ctx->FillOpacityMask(row.haze.Get(), ink.Get(), &dst, nullptr);
     ctx->SetAntialiasMode(was);
     ctx->SetTransform(base);
@@ -323,7 +343,9 @@ double LyricView::Draw(ID2D1DeviceContext* ctx, Canvas& c, Ui& ui, const D2D1_RE
         bottom = bottom * bottom * (3 - 2 * bottom);
         float fade = top * bottom; // gone before it reaches the edge, no hard cut under the clock
         float al = alpha * fade;
-        D2D1_RECT_F hit = {r.left - 16, y0 - rowGap * 0.4f, r.left + row.w + 16, y0 + row.h + rowGap * 0.4f};
+        float minLo = 0, maxHi = row.w;
+        RowBounds(row, minLo, maxHi);
+        D2D1_RECT_F hit = {r.left + minLo - 16, y0 - rowGap * 0.4f, r.left + maxHi + 16, y0 + row.h + rowGap * 0.4f};
         Ui::Hit h = al > 0.2f ? ui.Button(Ui::Id("ly.row", i), hit) : Ui::Hit{};
         moving |= anim::Approach(row.hover, h.hover ? 1.0f : 0, 14, dt, 0.01f);
         if (h.clicked) seek = row.src->start; // tap a line to jump there
