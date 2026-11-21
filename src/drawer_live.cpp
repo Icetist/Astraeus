@@ -181,35 +181,49 @@ void Drawer::FitSize() { // the panel's size: the ini's, or the compact column's
 
 bool Drawer::WantReserve() const {
     if (hidden || stage || overFull) return false;
-    if (Pinned()) return true;
-    if (model.pillReserve && (island || model.pillAlways)) return true;
-    return false;
+    return Pinned() || model.pillReserve;
 }
 
-void Drawer::Reserve(bool on) { // pinned or island reservation: the shell keeps room clear, as it does for a taskbar
+void Drawer::Reserve(bool on, bool force) { // pinned or island reservation: the shell keeps room clear, as it does for a taskbar
     APPBARDATA abd = {sizeof(abd)};
     abd.hWnd = hwnd;
     if (!on) {
-        if (barOn) SHAppBarMessage(ABM_REMOVE, &abd);
+        if (!barOn) return;
+        SHAppBarMessage(ABM_REMOVE, &abd);
         barOn = false;
+        barMon = nullptr;
+        barEdge = (UINT)-1;
+        barDepth = 0;
+        barRc = {};
         return;
     }
+    HMONITOR targetMon = mon ? mon : MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+    UINT targetEdge = edgeNow == 0 ? ABE_TOP : edgeNow == 1 ? ABE_LEFT : ABE_RIGHT;
+    float wantD = Pinned() ? (Depth() + 2) : (kIslandH + 2);
+    LONG targetDepth = (LONG)(wantD * scale + 0.5f); // its depth on screen, a hair more so a window's shadow doesn't touch it
+
+    if (barOn && !force && barMon == targetMon && barEdge == targetEdge && barDepth == targetDepth)
+        return;
+
     if (!barOn) {
         abd.uCallbackMessage = kBarMsg;
         if (!SHAppBarMessage(ABM_NEW, &abd)) return;
         barOn = true;
     }
     MONITORINFO mi = {sizeof(mi)};
-    GetMonitorInfoW(mon ? mon : MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
-    float wantD = Pinned() ? (Depth() + 2) : (kIslandH + 2);
-    LONG d = (LONG)(wantD * scale + 0.5f); // its depth on screen, a hair more so a window's shadow doesn't touch it
-    abd.uEdge = edgeNow == 0 ? ABE_TOP : edgeNow == 1 ? ABE_LEFT : ABE_RIGHT;
+    GetMonitorInfoW(targetMon, &mi);
+    abd.uEdge = targetEdge;
     abd.rc = mi.rcMonitor;
     SHAppBarMessage(ABM_QUERYPOS, &abd); // other bars already there move it inward
-    if (edgeNow == 0) abd.rc.bottom = abd.rc.top + d;
-    else if (edgeNow == 1) abd.rc.right = abd.rc.left + d;
-    else abd.rc.left = abd.rc.right - d;
+    if (targetEdge == ABE_TOP) abd.rc.bottom = abd.rc.top + targetDepth;
+    else if (targetEdge == ABE_LEFT) abd.rc.right = abd.rc.left + targetDepth;
+    else abd.rc.left = abd.rc.right - targetDepth;
+    if (force && EqualRect(&barRc, &abd.rc)) return;
+    barRc = abd.rc;
     SHAppBarMessage(ABM_SETPOS, &abd);
+    barMon = targetMon;
+    barEdge = targetEdge;
+    barDepth = targetDepth;
 }
 
 void Drawer::SyncBoard() { // each screen set to a dashboard gets one, unless it was switched back to the desktop for now

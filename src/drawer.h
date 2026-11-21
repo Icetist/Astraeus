@@ -85,7 +85,7 @@ private:
     static constexpr int kBoardFocusKey = 0x52A4; // ctrl+alt+shift+d: the keyboard into its dashboard
     void BoardKey();
     int layNow = Model::kLayHorizontal; // the layout the window is built for
-    bool pinNow = false, floatNow = false, pillReserveNow = false; // and the options
+    bool pinNow = false, floatNow = false; // and the options
     bool Tall() const { return Side() || layNow == Model::kLayVertical; } // pages in their narrow column, the rail across the top
     bool Pinned() const { return pinNow; } // the panel stays open, the screen makes room for it
     bool WantReserve() const;
@@ -94,7 +94,12 @@ private:
     static constexpr float kFloatGap = 14; // the floating card's gap from the edge
     static constexpr float kCompactMaxH = 680; // the compact column's height at most
     bool barOn = false; // pinned: the panel's room is reserved, maximized windows end where it starts
-    void Reserve(bool on); // that reservation, as a shell appbar
+    HMONITOR barMon = nullptr; // screen the appbar is registered on
+    UINT barEdge = (UINT)-1; // edge the appbar is registered on
+    LONG barDepth = 0; // depth in screen pixels
+    RECT barRc = {}; // last rect registered with ABM_SETPOS
+    void Reserve(bool on, bool force = false); // that reservation, as a shell appbar
+    void SyncReserve(bool force = false) { Reserve(WantReserve(), force); }
     static constexpr UINT kBarMsg = WM_APP + 62; // the shell's appbar notices
     enum : UINT_PTR { kHoverTimer = 1, kCloseTimer, kReleaseTimer, kPeekTimer, kDevTimer, kFollowTimer, kTrimTimer = 8, kFullTimer, kGreetTimer, kDeskTimer, kAdoptTimer, kPasteTimer, kLongTimer }; // all one-shot; 7 is the model's
     static constexpr UINT kAdoptMsg = WM_APP + 60; // a hover strip on another screen asks the panel to come over
@@ -366,7 +371,7 @@ private:
     float winW = 0; // current window length along the edge in dips
     int edgeNow = 0, screensNow = 0; // placement the window is built for
     std::wstring screenNow; // the picked screen the window is built for
-    bool PlaceStale() const { return model.Edge() != edgeNow || model.screens != screensNow || model.screen != screenNow || model.layout != layNow || (model.pinned != 0) != pinNow || (model.floating != 0) != floatNow || (model.pillReserve != 0) != pillReserveNow; }
+    bool PlaceStale() const { return model.Edge() != edgeNow || model.screens != screensNow || model.screen != screenNow || model.layout != layNow || (model.pinned != 0) != pinNow || (model.floating != 0) != floatNow; }
     HMONITOR mon = nullptr; // screen we live on, null = primary
     std::vector<HWND> strips; // hover strips on other screens, all-screens mode only
     D2D1_MATRIX_3X2_F shapeXform = D2D1::Matrix3x2F::Identity(); // this frame's shape placement, the glass mask reuses it
