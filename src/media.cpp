@@ -90,6 +90,8 @@ std::wstring AppName(const std::wstring& id) { // aumid or exe path -> display n
     struct Known { const wchar_t* key; const wchar_t* name; };
     static const Known kContains[] = { // substring match on full id
         {L"spotify", L"Spotify"}, {L"zunemusic", L"Media Player"}, {L"zunevideo", L"Movies & TV"},
+        {L"youtube music", L"YouTube Music"}, {L"ytmdesktop", L"YouTube Music"},
+        {L"cinhimbnkk", L"YouTube Music"}, {L"pjibgclleladliembfgfagdaldikeohf", L"Spotify"},
     };
     const std::wstring low = Lower(seg);
     for (const auto& k : kContains)
@@ -103,7 +105,7 @@ std::wstring AppName(const std::wstring& id) { // aumid or exe path -> display n
         seg.resize(p);
     if (auto p = seg.rfind(L'.'); p != std::wstring::npos && p + 1 < seg.size()) seg = seg.substr(p + 1); // "vendor.app" -> app
     if (seg.empty()) return id;
-    if (IsHex16(seg)) return L"Browser";
+    if (IsHex16(seg) || seg.find(L"_crx_") != std::wstring::npos) return L"Browser";
 
     static const Known kExact[] = { // exact match after stripping
         {L"chrome", L"Chrome"}, {L"msedge", L"Edge"}, {L"zen", L"Zen"}, {L"firefox", L"Firefox"},
@@ -127,9 +129,9 @@ int64_t ElapsedAt(const Track& t, uint64_t tickMs) { // extrapolate position fro
 
 bool MusicApp(const std::wstring& id) { // the players people listen to music in, by their app id
     static const wchar_t* const kApps[] = {L"spotify", L"applemusic", L"itunes", L"tidal", L"deezer", L"amazonmusic", L"amazon music", L"youtube-music",
-                                           L"youtubemusic", L"soundcloud", L"pandora", L"qobuz", L"cider", L"plexamp", L"foobar2000", L"musicbee",
+                                           L"youtubemusic", L"youtube music", L"ytmdesktop", L"soundcloud", L"pandora", L"qobuz", L"cider", L"plexamp", L"foobar2000", L"musicbee",
                                            L"aimp", L"winamp", L"zunemusic", L"dopamine", L"anghami", L"jiosaavn",
-                                           L"cinhimbnkkaeohfgghhklpknlkffjgod", L"pjibgclleladliembfgfagdaldikeohf"}; // youtube music and spotify installed as web apps
+                                           L"cinhimbnkk", L"cinhimbnkkaeohfgghhklpknlkffjgod", L"pjibgclleladliembfgfagdaldikeohf"}; // youtube music and spotify installed as web apps
     const std::wstring low = Lower(id);
     for (const wchar_t* k : kApps)
         if (low.find(k) != std::wstring::npos) return true;
