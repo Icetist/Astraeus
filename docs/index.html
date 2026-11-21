@@ -1,16 +1,17 @@
 <!doctype html>
-<html lang="en" class="no-js" data-theme="light">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Astraeus: a dynamic island for Windows</title>
-<meta name="description" content="Astraeus is a native dynamic island for Windows 10 and 11. A panel drips open from the edge of your screen with your music, synced lyrics, quick toggles, system stats and everyday tools. One small C++ executable, free and open source.">
+<meta name="description" content="Astraeus is a native dynamic island for Windows 10 and 11: a panel that drips open from the edge of your screen with your music, synced lyrics, quick toggles, live stats and everyday tools. Free and open source.">
 <link rel="canonical" href="https://icetist.github.io/Astraeus/">
-<meta name="theme-color" content="#f5f5f7">
+<meta name="theme-color" content="#0b0b0b">
+<meta name="color-scheme" content="dark light">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Astraeus">
 <meta property="og:title" content="Astraeus: a dynamic island for Windows">
-<meta property="og:description" content="A panel that drips open from the edge of your screen with your music, synced lyrics, quick toggles, system stats and tools. Native C++, one file, free and open source.">
+<meta property="og:description" content="A panel that drips open from the edge of your screen with your music, synced lyrics, quick toggles, live stats and tools. Native C++, one file, free and open source.">
 <meta property="og:url" content="https://icetist.github.io/Astraeus/">
 <meta property="og:image" content="https://icetist.github.io/Astraeus/assets/img/og.png">
 <meta property="og:image:width" content="1200">
@@ -20,226 +21,830 @@
 <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="assets/img/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
-<link rel="preload" href="assets/fonts/outfit-300.woff2" as="font" type="font/woff2" crossorigin>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Astraeus","operatingSystem":"Windows 10, Windows 11","applicationCategory":"UtilitiesApplication","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://www.gnu.org/licenses/gpl-3.0.html","downloadUrl":"https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe","url":"https://icetist.github.io/Astraeus/","description":"A native dynamic island for Windows: a panel with your music, synced lyrics, quick toggles, system stats and everyday tools."}</script>
+<link rel="preload" href="assets/fonts/outfit-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="assets/fonts/outfit-500.woff2" as="font" type="font/woff2" crossorigin>
-<script>try { if (localStorage.getItem("astraeus-theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch (e) {}</script>
-<link rel="stylesheet" href="assets/site.css">
-<script src="assets/vendor/gsap.min.js" defer></script>
-<script src="assets/vendor/ScrollTrigger.min.js" defer></script>
-<script src="assets/vendor/lenis.min.js" defer></script>
-<script src="assets/app.js" type="module"></script>
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Astraeus","operatingSystem":"Windows 10, Windows 11","applicationCategory":"UtilitiesApplication","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://www.gnu.org/licenses/gpl-3.0.html","url":"https://icetist.github.io/Astraeus/","downloadUrl":"https://github.com/Icetist/Astraeus/releases/latest","codeRepository":"https://github.com/Icetist/Astraeus"}</script>
+<script>
+// the theme before the first paint, so a returning visitor never sees the wrong one flash
+(function () { var t = "night"; try { t = localStorage.getItem("astraeus-look") || t; } catch (e) {} document.documentElement.dataset.look = t; })();
+</script>
+<style>
+@font-face { font-family: "Outfit"; font-weight: 200; font-display: swap; src: url("assets/fonts/outfit-200.woff2") format("woff2"); }
+@font-face { font-family: "Outfit"; font-weight: 300; font-display: swap; src: url("assets/fonts/outfit-300.woff2") format("woff2"); }
+@font-face { font-family: "Outfit"; font-weight: 400; font-display: swap; src: url("assets/fonts/outfit-400.woff2") format("woff2"); }
+@font-face { font-family: "Outfit"; font-weight: 500; font-display: swap; src: url("assets/fonts/outfit-500.woff2") format("woff2"); }
+:root {
+  --m: clamp(18px, 2.4vw, 34px); /* the page's margin */
+  --mono: "Cascadia Mono", "SF Mono", "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --ease: cubic-bezier(.22, 1, .36, 1);
+  --pw: 40vh; --kh: 50vh; --s: 1; /* the panel's half width and scaled height, the figures' scale: set from the script */
+}
+/* the three looks: night by default, the paper the app's light look prints on, and the violet ink itself */
+:root, [data-look="night"] { --bg: hsl(0 0% 4.5%); --fg: hsl(40 8% 94%); } /* black and white, nothing else: the liquid is the color */
+[data-look="paper"] { --bg: hsl(40 8% 95%); --fg: hsl(0 0% 6%); }
+* { box-sizing: border-box; }
+html { background: var(--bg); color: var(--fg); -webkit-text-size-adjust: 100%; }
+html.lenis, html.lenis body { height: auto; }
+.lenis.lenis-smooth { scroll-behavior: auto !important; }
+body { margin: 0; font: 400 16px/1.45 "Outfit", system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow-x: clip; }
+::selection { background: var(--fg); color: var(--bg); }
+a { color: inherit; }
+.ink { color: var(--fg); transition: color .6s var(--ease); }
+body.inv .ink { color: var(--bg); }
+canvas#liquid { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; }
+.grain { position: fixed; inset: -50%; z-index: 1; pointer-events: none; opacity: .045; /* behind the words: film grain on the ground, the liquid's edge carries the rest */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1.6 -.3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: grain .9s steps(5) infinite; }
+@keyframes grain { 20% { transform: translate(-3%, 2%); } 40% { transform: translate(2%, -3%); } 60% { transform: translate(-2%, -1%); } 80% { transform: translate(3%, 3%); } }
+.skip { position: fixed; left: 12px; top: -60px; z-index: 30; padding: 10px 14px; border-radius: 99px; background: var(--fg); color: var(--bg); }
+.skip:focus { top: 12px; }
+:focus-visible { outline: 1.5px solid currentColor; outline-offset: 3px; border-radius: 4px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------- the fixed layer over the liquid ---------- */
+.ui { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
+.ui a, .ui button, .ui .strip { pointer-events: auto; }
+.bar { mix-blend-mode: difference; color: #fff !important; } /* black and white only, so inverting is exact: the header reads on the liquid or off it */
+.bar { position: fixed; z-index: 3; left: var(--m); right: var(--m); top: 14px; display: flex; justify-content: space-between; align-items: center; font-size: 13.5px; pointer-events: none; }
+.bar > * { pointer-events: auto; }
+.bar b { font-weight: 500; letter-spacing: -.01em; }
+.bar-r { display: flex; align-items: center; gap: 18px; }
+.look-btn, .dl-btn { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 13px; border: 1px solid currentColor; border-radius: 99px; background: none; font: inherit; color: inherit; cursor: pointer; text-decoration: none; }
+.look-btn i { width: 11px; height: 11px; border-radius: 50%; border: 1px solid currentColor; background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
+.dl-btn { background: currentColor; }
+.dl-btn span { color: #000; }
+.mono { font: 500 10.5px/1.55 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.ov { position: absolute; inset: 0; opacity: 0; visibility: hidden; transition: opacity .45s, visibility 0s .45s; }
+.ov.on { opacity: 1; visibility: visible; transition: opacity .7s .12s, visibility 0s; }
+.fig { position: absolute; white-space: nowrap; }
+.fig::before { content: "■ "; }
+.cross { position: absolute; width: 11px; height: 11px; translate: -50% -50%; }
+.cross::before, .cross::after { content: ""; position: absolute; background: currentColor; }
+.cross::before { left: 5px; top: 0; width: 1px; height: 11px; }
+.cross::after { top: 5px; left: 0; width: 11px; height: 1px; }
+.call { position: absolute; display: flex; align-items: center; gap: 7px; white-space: nowrap; translate: 0 -50%; }
+.call i { position: relative; display: block; height: 1px; background: currentColor; transform-origin: left; }
+.call i::before { content: ""; position: absolute; left: -7px; top: -3px; width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; }
+.call.r i { transform-origin: right; }
+.call.r i::before { left: auto; right: -7px; }
+.copy { position: absolute; width: min(330px, 80vw); }
+.copy p { margin: 7px 0 0; font-size: clamp(16px, 1.25vw, 19px); line-height: 1.32; }
+.hero-t { font-size: min(10.6vw, 24vh) !important; line-height: .84 !important; }
+.big { -webkit-text-stroke: .022em currentColor; paint-order: stroke fill; } /* heavier than the font's heaviest file: ink, not hairline */
+.big small { -webkit-text-stroke: 0; }
+.big { pointer-events: auto; position: absolute; font-weight: 500; letter-spacing: -.065em; line-height: .78; white-space: nowrap; font-size: min(17vw, 30vh); }
+.big small { display: block; font: 400 clamp(17px, 1.5vw, 22px)/1.2 "Outfit"; letter-spacing: -.01em; margin-top: 2.2vh; }
+.big.r { text-align: right; }
+.scale { position: absolute; right: var(--m); bottom: 40px; display: grid; justify-items: end; gap: 3px; }
+.scale i { width: 46px; height: 5px; border: 1px solid currentColor; border-top: 0; }
+.foot { position: absolute; right: var(--m); bottom: 15px; text-align: right; }
+.cue { position: absolute; left: 50%; bottom: 18px; translate: -50% 0; display: flex; align-items: center; gap: 10px; }
+.cue i { width: 1px; height: 18px; background: currentColor; animation: cue 1.8s var(--ease) infinite; transform-origin: top; }
+@keyframes cue { 0% { transform: scaleY(0); } 60% { transform: scaleY(1); opacity: 1; } 100% { opacity: 0; } }
+.read { position: fixed; left: var(--m); bottom: 15px; z-index: 3; pointer-events: none; }
+.get { display: inline-flex; align-items: center; gap: 10px; margin-top: 22px; height: 54px; padding: 0 28px; border-radius: 99px; background: var(--fg); color: var(--bg); text-decoration: none; font-size: 17px; font-weight: 500; transition: transform .5s var(--ease); }
+body.inv .get { background: var(--bg); color: var(--fg); }
+.get:hover { transform: scale(1.04); }
+
+/* the real thing: a strip of screenshots you can fling */
+.strip { position: absolute; left: 0; top: 50%; translate: 0 -50%; display: flex; gap: 2.4vw; padding: 0 var(--m); cursor: grab; touch-action: pan-y; will-change: transform; }
+.strip.drag { cursor: grabbing; }
+.strip figure { margin: 0; flex: none; width: min(58vw, 150vh); user-select: none; }
+.strip figure.wide { width: min(86vw, 190vh); }
+.strip img { display: block; width: 100%; height: auto; border-radius: 14px; pointer-events: none; box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 18%, transparent), 0 30px 80px rgba(0, 0, 0, .35); }
+.strip figcaption { margin-top: 12px; }
+
+.track { position: relative; z-index: 1; }
+
+/* ---------- the end: links, support and credits, on paper of its own ---------- */
+.end { position: relative; z-index: 4; background: var(--bg); color: var(--fg); padding: 12vh var(--m) 26px; content-visibility: auto; contain-intrinsic-size: auto 1100px; }
+.end-word { margin: 0 0 8vh; font-weight: 500; font-size: min(24vw, 46vh); letter-spacing: -.07em; line-height: .8; }
+.cols { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3vw; }
+.cols h3 { margin: 0 0 14px; }
+.cols ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid currentColor; }
+.cols li { border-bottom: 1px solid color-mix(in srgb, currentColor 35%, transparent); }
+.cols li a, .cols li span { display: flex; justify-content: space-between; padding: 9px 0; text-decoration: none; font-size: 15px; }
+.cols li a:hover { padding-left: 6px; transition: padding .3s var(--ease); }
+.end-foot { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; margin-top: 9vh; }
+.pills { display: flex; gap: 10px; }
+.pill { height: 40px; padding: 0 18px; border: 1px solid currentColor; border-radius: 99px; background: none; color: inherit; font: inherit; font-size: 14px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+.pill:hover { background: var(--fg); color: var(--bg); }
+
+/* tablets: the panel fills the width, so its callouts have nowhere to go */
+@media (max-width: 1000px) { .call, .cross { display: none; } }
+/* phones: one column; words above the figure, the big number below it */
+@media (max-width: 760px) {
+  .scale, .read, .cue, .spec, .dl-btn { display: none; }
+  [data-look="night"] .bar { mix-blend-mode: difference; color: #fff; } /* over the liquid or off it, the header reads */
+  .ov .copy { left: var(--m) !important; right: var(--m) !important; top: 14vh !important; bottom: auto !important; width: auto; text-align: left !important; }
+  .ov .big { left: var(--m) !important; right: auto !important; top: auto !important; bottom: 9vh !important; font-size: 21vw !important; text-align: left; }
+  .ov[data-name="the panel"] .copy { top: calc(var(--kh) * .48 + 56px) !important; }
+  .ov[data-name="get it"] .big { top: 12vh !important; bottom: auto !important; }
+  .ov[data-name="get it"] .copy:first-of-type { top: auto !important; bottom: 8vh !important; }
+  .ov[data-name="get it"] .copy + .copy { display: none; }
+  .foot { left: var(--m); right: var(--m); bottom: 10px; text-align: left; font-size: 9px; }
+  .fig { font-size: 9.5px; }
+  .cols { grid-template-columns: 1fr; gap: 30px; }
+  .strip figure { width: 82vw; }
+  .end-foot { flex-direction: column; align-items: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) { .grain, .cue i { animation: none; } }
+
+/* no browser scrollbar: a hairline down the right edge says how far you are */
+html { scrollbar-width: none; }
+html::-webkit-scrollbar { display: none; }
+.progress { position: fixed; right: 0; top: 0; bottom: 0; width: 2px; z-index: 6; pointer-events: none; }
+.progress i { display: block; width: 100%; height: 100%; background: currentColor; transform-origin: top; transform: scaleY(0); opacity: .55; }
+
+/* the stage's number, large and faint behind everything */
+.numeral { position: absolute; right: -2vw; top: 50%; translate: 0 -50%; font-weight: 300; font-size: min(52vw, 92vh); line-height: .8; letter-spacing: -.08em; opacity: .045; pointer-events: none; }
+
+/* a spec sheet on every stage: the real numbers, small */
+.spec { position: absolute; display: grid; grid-template-columns: auto auto; column-gap: 22px; row-gap: 2px; padding-top: 8px; border-top: 1px solid currentColor; }
+.spec dt { opacity: .55; }
+.spec dd { margin: 0; text-align: right; }
+
+/* the loading screen: the island is the progress bar */
+/* the loader is the page's own liquid: the island grows along the top while a counter, set like the title, counts where the title will be */
+.loader { position: fixed; inset: 0; z-index: 50; color: var(--fg); pointer-events: none; }
+.loader-t, .loader-b { position: absolute; left: var(--m); right: var(--m); display: flex; justify-content: space-between; align-items: end; }
+.loader-t { top: 60px; } .loader-b { bottom: 16px; }
+.loader-mid { position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(300px, 70vw); display: flex; flex-wrap: wrap; justify-content: space-between; row-gap: 9px; }
+.loader-mid i { flex-basis: 100%; height: 1px; background: color-mix(in srgb, currentColor 22%, transparent); }
+.loader-mid b { display: block; height: 100%; background: currentColor; transform-origin: left; transform: scaleX(0); }
+.loader-mid span:last-of-type { font-variant-numeric: tabular-nums; }
+.loader-scale { display: grid; justify-items: end; gap: 3px; }
+.loader-scale i { width: 46px; height: 5px; border: 1px solid currentColor; border-top: 0; }
+html:not(.ready) .ui, html:not(.ready) .bar, html:not(.ready) .read, html:not(.ready) .progress { opacity: 0; }
+.ui, .bar, .read { transition: opacity .8s var(--ease); }
+
+/* the cursor: a dot and a ring, inverted over whatever is under them, with a word for what a press would do */
+.cur { position: fixed; left: 0; top: 0; z-index: 60; pointer-events: none; mix-blend-mode: difference; color: #fff; display: none; opacity: 0; } /* shown on the first move, never parked in a corner */
+html.has-cur .cur { display: block; }
+html.has-cur, html.has-cur a, html.has-cur button, html.has-cur .strip { cursor: none; }
+.cur-dot, .cur-ring { position: absolute; left: 0; top: 0; border-radius: 50%; translate: -50% -50%; }
+.cur-dot { width: 5px; height: 5px; background: #fff; }
+.cur-ring { width: 34px; height: 34px; border: 1px solid #fff; transition: width .4s var(--ease), height .4s var(--ease); }
+.cur.big .cur-ring { width: 74px; height: 74px; }
+.cur-word { position: absolute; left: 24px; top: 14px; white-space: nowrap; opacity: 0; transition: opacity .25s; }
+.cur.big .cur-word { left: 44px; top: 30px; opacity: 1; }
+
+/* the screenshots on a curve: the middle one faces you, the rest bend away into the dark */
+.stage-real { perspective: 1300px; }
+.strip figure { transform-style: preserve-3d; will-change: transform; transition: filter .3s; }
+.strip figcaption { display: flex; justify-content: space-between; }
+/* the room: a monitor on the desk, then you're inside its screen */
+.room { position: absolute; inset: 0; overflow: hidden; }
+.monitor { position: absolute; left: 50%; top: 50%; width: var(--mon-w); translate: -50% -50%; transform-origin: 50% 50%; will-change: transform; }
+.mon-screen { position: relative; aspect-ratio: 1366 / 767; border-radius: 1.1vh; overflow: hidden; background: #000; box-shadow: 0 0 0 .9vh #0c0c10, 0 0 0 calc(.9vh + 1px) color-mix(in srgb, var(--fg) 22%, transparent), 0 50px 140px rgba(0, 0, 0, .55); }
+.mon-neck { position: absolute; left: 50%; top: 100%; width: 7%; height: 12vh; translate: -50% .9vh; background: linear-gradient(90deg, #121218, #23232c 50%, #121218); }
+.mon-foot { position: absolute; left: 50%; top: calc(100% + 12vh); width: 30%; height: 1.4vh; translate: -50% .9vh; border-radius: 1vh 1vh .4vh .4vh; background: linear-gradient(#26262f, #111116); }
+.shot { position: absolute; inset: 0; margin: 0; will-change: clip-path; }
+.shot img { display: block; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 45%; will-change: transform; }
+.room-words { position: absolute; left: var(--m); top: 50%; translate: 0 -50%; width: min(330px, 30vw); will-change: opacity, transform; }
+.room-words p { margin: 7px 0 16px; font-size: clamp(16px, 1.25vw, 19px); line-height: 1.32; }
+.room-words ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid currentColor; }
+.room-words li { padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
+.room-cap { position: absolute; left: var(--m); bottom: 40px; color: #fff; text-shadow: 0 1px 12px rgba(0, 0, 0, .6); opacity: 0; } /* full-bleed: a quiet caption, on the picture's own shade */
+.room::after { content: ""; position: absolute; inset: auto 0 0; height: 22vh; background: linear-gradient(transparent, rgba(0, 0, 0, .35)); opacity: var(--scrim, 0); pointer-events: none; }
+.real-n { position: absolute; left: var(--m); bottom: 8vh; font-weight: 500; font-size: min(14vw, 24vh); letter-spacing: -.07em; line-height: .8; font-variant-numeric: tabular-nums; }
+</style>
 </head>
 <body>
-<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="chromefill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset=".38" stop-color="#d9d9e0"/><stop offset=".52" stop-color="#7d7d88"/><stop offset=".68" stop-color="#c4c4cc"/><stop offset="1" stop-color="#fbfbfd"/></linearGradient></defs><symbol id="i-home" viewBox="0 96 960 960"><path d="M200 536Q175 536 157.5 518.5Q140 501 140 476V296Q140 271 157.5 253.5Q175 236 200 236H380Q405 236 422.5 253.5Q440 271 440 296V476Q440 501 422.5 518.5Q405 536 380 536ZM200 916Q175 916 157.5 898.5Q140 881 140 856V676Q140 651 157.5 633.5Q175 616 200 616H380Q405 616 422.5 633.5Q440 651 440 676V856Q440 881 422.5 898.5Q405 916 380 916ZM580 536Q555 536 537.5 518.5Q520 501 520 476V296Q520 271 537.5 253.5Q555 236 580 236H760Q785 236 802.5 253.5Q820 271 820 296V476Q820 501 802.5 518.5Q785 536 760 536ZM580 916Q555 916 537.5 898.5Q520 881 520 856V676Q520 651 537.5 633.5Q555 616 580 616H760Q785 616 802.5 633.5Q820 651 820 676V856Q820 881 802.5 898.5Q785 916 760 916ZM200 476H380V296H200ZM580 476H760V296H580ZM580 856H760V676H580ZM200 856H380V676H200ZM580 476ZM580 676ZM380 676ZM380 476Z"/></symbol><symbol id="i-music" viewBox="0 96 960 960"><path d="M401 632Q424 632 444.0 639.0Q464 646 481 660V276Q481 261 491.5 250.5Q502 240 517 240H663Q678 240 688.5 250.5Q699 261 699 276V334Q699 350 688.5 360.5Q678 371 663 371H541V772Q541 830 500.0 871.0Q459 912 401.0 912.0Q343 912 302.0 871.0Q261 830 261.0 772.0Q261 714 302.0 673.0Q343 632 401 632Z"/></symbol><symbol id="i-system" viewBox="0 96 960 960"><path d="M130 896V860Q130 847 138.5 838.5Q147 830 160.0 830.0Q173 830 181.5 838.5Q190 847 190 860V896Q190 909 181.5 917.5Q173 926 160.0 926.0Q147 926 138.5 917.5Q130 909 130 896ZM290 896V680Q290 667 298.5 658.5Q307 650 320.0 650.0Q333 650 341.5 658.5Q350 667 350 680V896Q350 909 341.5 917.5Q333 926 320.0 926.0Q307 926 298.5 917.5Q290 909 290 896ZM450 896V760Q450 747 458.5 738.5Q467 730 480.0 730.0Q493 730 501.5 738.5Q510 747 510 760V896Q510 909 501.5 917.5Q493 926 480.0 926.0Q467 926 458.5 917.5Q450 909 450 896ZM610 896V700Q610 687 618.5 678.5Q627 670 640.0 670.0Q653 670 661.5 678.5Q670 687 670 700V896Q670 909 661.5 917.5Q653 926 640.0 926.0Q627 926 618.5 917.5Q610 909 610 896ZM770 896V540Q770 527 778.5 518.5Q787 510 800.0 510.0Q813 510 821.5 518.5Q830 527 830 540V896Q830 909 821.5 917.5Q813 926 800.0 926.0Q787 926 778.5 917.5Q770 909 770 896ZM560 564Q546 564 533.0 558.5Q520 553 509 544L409 444Q405 440 400.0 440.0Q395 440 391 444L181 654Q172 663 159.5 662.5Q147 662 138 653Q130 644 130.5 632.0Q131 620 139 611L349 401Q360 391 373.0 386.0Q386 381 400.0 381.0Q414 381 427.5 386.0Q441 391 451 401L551 501Q555 505 560.0 505.0Q565 505 569 501L779 291Q788 282 800.5 282.5Q813 283 822 292Q830 301 829.5 313.0Q829 325 821 334L611 544Q601 553 587.5 558.5Q574 564 560 564Z"/></symbol><symbol id="i-network" viewBox="0 96 960 960"><path d="M480.0 924.0Q446 924 422.5 901.0Q399 878 399.0 844.0Q399 810 422.5 786.5Q446 763 480.0 763.0Q514 763 537.5 786.5Q561 810 561.0 844.0Q561 878 537.5 901.0Q514 924 480.0 924.0ZM735 617Q750 629 750.5 647.0Q751 665 737 679Q724 692 705.5 692.0Q687 692 672 681Q633 651 583.5 633.5Q534 616 480 616Q426 616 376.5 633.5Q327 651 288 681Q273 692 254.5 691.5Q236 691 223 678Q210 665 210.0 646.5Q210 628 225 617Q278 574 342.5 550.5Q407 527 480.0 527.0Q553 527 617.5 551.0Q682 575 735 617ZM904 445Q919 458 920.0 476.5Q921 495 907 509Q894 522 875.0 521.5Q856 521 841 508Q768 446 675.5 411.0Q583 376 480.0 376.0Q377 376 284.5 411.0Q192 446 119 508Q104 521 85.0 521.5Q66 522 53 509Q39 495 40.0 476.5Q41 458 56 445Q141 370 249.0 328.5Q357 287 480.0 287.0Q603 287 711.0 328.5Q819 370 904 445Z"/></symbol><symbol id="i-widgets" viewBox="0 96 960 960"><path d="M530 420V272Q530 257 540.5 246.5Q551 236 566 236H784Q799 236 809.5 246.5Q820 257 820 272V420Q820 435 809.5 445.5Q799 456 784 456H566Q551 456 540.5 445.5Q530 435 530 420ZM140 560V272Q140 257 150.5 246.5Q161 236 176 236H394Q409 236 419.5 246.5Q430 257 430 272V560Q430 575 419.5 585.5Q409 596 394 596H176Q161 596 150.5 585.5Q140 575 140 560ZM530 880V592Q530 577 540.5 566.5Q551 556 566 556H784Q799 556 809.5 566.5Q820 577 820 592V880Q820 895 809.5 905.5Q799 916 784 916H566Q551 916 540.5 905.5Q530 895 530 880ZM140 880V732Q140 717 150.5 706.5Q161 696 176 696H394Q409 696 419.5 706.5Q430 717 430 732V880Q430 895 419.5 905.5Q409 916 394 916H176Q161 916 150.5 905.5Q140 895 140 880ZM200 536H370V296H200ZM590 856H760V616H590ZM590 396H760V296H590ZM200 856H370V756H200ZM370 536ZM590 396ZM590 616ZM370 756Z"/></symbol><symbol id="i-tools" viewBox="0 96 960 960"><path d="M721 945 519 743Q514 738 511.5 731.5Q509 725 509.0 718.0Q509 711 511.5 704.5Q514 698 519 693L595 617Q601 611 607.0 609.0Q613 607 620.5 607.0Q628 607 634.0 609.0Q640 611 646 617L847 819Q853 824 855.5 830.5Q858 837 858.0 844.0Q858 851 855.5 857.5Q853 864 847 869L772 945Q766 950 760.0 952.5Q754 955 746.5 955.0Q739 955 733.0 952.5Q727 950 721 945ZM746 887 789 844 621 676 579 719ZM187 945 112 870Q106 864 103.5 857.5Q101 851 101.0 844.0Q101 837 103.5 830.5Q106 824 112 818L321 609H405L437 577L270 410H213L102 299L201 200L312 311V368L479 535L598 417L539 358L590 308H488L466 286L594 158L615 180V282L666 231L817 381Q832 397 840.0 416.5Q848 436 848 458Q848 478 841.5 495.5Q835 513 822 528L739 445L682 501L640 459L447 652V737L238 945Q232 950 226.0 953.0Q220 956 212.5 956.0Q205 956 198.5 953.0Q192 950 187 945ZM213 886 396 703V660H354L170 844ZM213 886 170 844 192 865 213 886ZM746 887 789 844Z"/></symbol><symbol id="i-bluetooth" viewBox="0 96 960 960"><path d="M450 905V648L277 821Q269 829 256.5 829.5Q244 830 235 821Q226 812 226.0 800.0Q226 788 235 779L438 576L235 373Q227 365 226.5 352.5Q226 340 235 331Q244 322 256.0 322.0Q268 322 277 331L450 504V247Q450 231 461.0 220.5Q472 210 486 210Q493 210 499.5 213.0Q506 216 511 221L669 379Q674 384 676.5 390.5Q679 397 679.0 404.0Q679 411 676.5 417.5Q674 424 669 429L522 576L669 723Q674 728 676.5 734.5Q679 741 679.0 748.0Q679 755 676.5 761.5Q674 768 669 773L511 931Q506 936 499.5 939.0Q493 942 486 942Q472 942 461.0 931.5Q450 921 450 905ZM510 504 610 404 510 305ZM510 847 610 748 510 648Z"/></symbol><symbol id="i-volume" viewBox="0 96 960 960"><path d="M754 575Q754 493 709.5 424.5Q665 356 591 323Q580 317 574.5 306.0Q569 295 573 284Q578 272 590.0 267.5Q602 263 615 268Q705 309 759.5 391.5Q814 474 814.0 575.0Q814 676 759.5 758.5Q705 841 615 882Q602 887 590.0 882.5Q578 878 573 866Q569 855 574.5 844.0Q580 833 591 827Q665 794 709.5 725.5Q754 657 754 575ZM295 676H182Q167 676 156.5 665.5Q146 655 146 640V512Q146 497 156.5 486.5Q167 476 182 476H295L414 356Q429 342 447.5 350.0Q466 358 466 378V774Q466 794 447.5 802.0Q429 810 414 796ZM646 576Q646 613 630.5 646.5Q615 680 589 703Q580 709 571.0 704.5Q562 700 562 689V461Q562 450 571.0 445.5Q580 441 589 447Q615 470 630.5 504.5Q646 539 646 576ZM406 450 320 536H206V616H320L406 702ZM306 576Z"/></symbol><symbol id="i-settings" viewBox="0 96 960 960"><path d="M436 956Q415 956 400.0 942.5Q385 929 382 909L372 834Q356 829 339.5 819.0Q323 809 309 798L240 828Q221 836 202.0 829.5Q183 823 173 805L127 727Q117 709 121.5 689.5Q126 670 142 657L202 612Q200 603 199.5 594.0Q199 585 199 576Q199 568 199.5 559.0Q200 550 202 540L142 495Q126 482 121.5 462.0Q117 442 128 425L173 348Q183 330 202.0 323.5Q221 317 240 325L309 354Q323 343 339.5 333.5Q356 324 372 318L382 243Q385 223 400.0 209.5Q415 196 436 196H524Q545 196 560.0 209.5Q575 223 578 243L588 318Q606 325 620.5 333.5Q635 342 650 354L720 325Q739 317 758.0 323.5Q777 330 788 348L833 425Q843 443 838.5 462.5Q834 482 818 495L757 541Q759 551 759.0 559.0Q759 567 759 576Q759 584 758.5 592.5Q758 601 756 612L816 657Q832 670 837.0 689.5Q842 709 831 727L786 805Q775 822 756.0 829.0Q737 836 718 827L650 798Q635 810 619.5 819.0Q604 828 588 834L578 909Q575 929 560.0 942.5Q545 956 524 956ZM440 896H519L533 789Q564 781 589.0 766.0Q614 751 638 728L737 770L777 702L690 637Q695 621 696.5 606.0Q698 591 698 576Q698 560 696.5 545.5Q695 531 690 516L777 450L738 382L637 424Q617 403 589.0 386.5Q561 370 533 363L520 256H441L427 363Q397 370 371.0 385.0Q345 400 321 423L222 382L183 450L269 514Q264 529 262.0 544.0Q260 559 260 576Q260 592 262.0 607.0Q264 622 269 637L183 702L222 770L321 728Q344 751 370.0 766.0Q396 781 427 789ZM480 696Q530 696 565.0 661.0Q600 626 600.0 576.0Q600 526 565.0 491.0Q530 456 480 456Q430 456 395.0 491.0Q360 526 360.0 576.0Q360 626 395.0 661.0Q430 696 480 696ZM480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Z"/></symbol><symbol id="i-lyrics" viewBox="0 96 960 960"><path d="M292 646H372Q384 646 393.0 637.5Q402 629 402.0 616.0Q402 603 393.0 594.5Q384 586 372 586H292Q279 586 270.5 594.5Q262 603 262.0 616.0Q262 629 270.5 637.5Q279 646 292 646ZM752 566Q707 566 674.5 534.0Q642 502 642.0 456.0Q642 410 674.0 378.0Q706 346 752 346Q768 346 779.5 349.5Q791 353 802 361V182Q802 167 812.5 156.5Q823 146 838 146H912Q925 146 933.5 154.5Q942 163 942.0 176.0Q942 189 933.5 197.5Q925 206 912 206H862V456Q862 502 830.0 534.0Q798 566 752 566ZM292 526H492Q504 526 513.0 517.5Q522 509 522.0 496.0Q522 483 513.0 474.5Q504 466 492 466H292Q279 466 270.5 474.5Q262 483 262.0 496.0Q262 509 270.5 517.5Q279 526 292 526ZM292 406H492Q504 406 513.0 397.5Q522 389 522.0 376.0Q522 363 513.0 354.5Q504 346 492 346H292Q279 346 270.5 354.5Q262 363 262.0 376.0Q262 389 270.5 397.5Q279 406 292 406ZM599 796H243L173 866Q167 872 161.0 874.5Q155 877 148 877Q134 877 123.0 867.0Q112 857 112 840V268Q112 238 133.0 217.0Q154 196 184 196H599Q629 196 650.5 217.0Q672 238 672 268V282Q654 290 639.0 301.5Q624 313 612 328V268Q612 263 608.5 259.5Q605 256 599 256H184Q178 256 175.0 259.5Q172 263 172 268V783L218 736H599Q605 736 608.5 732.5Q612 729 612 724V584Q624 599 639.0 610.5Q654 622 672 630V724Q672 754 650.5 775.0Q629 796 599 796ZM172 736V268Q172 263 172.0 259.5Q172 256 172 256Q172 256 172.0 259.5Q172 263 172 268V328Q172 353 172.0 385.5Q172 418 172 456Q172 494 172.0 526.5Q172 559 172 584V724Q172 729 172.0 732.5Q172 736 172 736Z"/></symbol><symbol id="i-calendar" viewBox="0 96 960 960"><path d="M212 956Q182 956 161.0 935.0Q140 914 140 884V348Q140 318 161.0 297.0Q182 276 212 276H268V222Q268 209 276.5 200.0Q285 191 298.5 191.0Q312 191 320.5 200.0Q329 209 329 222V276H632V221Q632 209 641.0 200.0Q650 191 662.5 191.0Q675 191 683.5 200.0Q692 209 692 221V276H748Q778 276 799.0 297.0Q820 318 820 348V884Q820 914 799.0 935.0Q778 956 748 956ZM212 896H748Q752 896 756.0 892.0Q760 888 760 884V508H200V884Q200 888 204.0 892.0Q208 896 212 896ZM200 448H760V348Q760 344 756.0 340.0Q752 336 748 336H212Q208 336 204.0 340.0Q200 344 200 348ZM200 448V348Q200 344 200.0 340.0Q200 336 200 336Q200 336 200.0 340.0Q200 344 200 348V448ZM480 659Q465 659 455.0 648.5Q445 638 445.0 623.5Q445 609 455.0 598.5Q465 588 480 588Q495 588 505.0 598.5Q515 609 515.0 623.5Q515 638 505.0 648.5Q495 659 480 659ZM320.0 659.0Q305 659 295.0 648.5Q285 638 285.0 623.5Q285 609 295.0 598.5Q305 588 320.0 588.0Q335 588 345.0 598.5Q355 609 355.0 623.5Q355 638 345.0 648.5Q335 659 320.0 659.0ZM640 659Q625 659 615.0 648.5Q605 638 605.0 623.5Q605 609 615.0 598.5Q625 588 640 588Q655 588 665.0 598.5Q675 609 675.0 623.5Q675 638 665.0 648.5Q655 659 640 659ZM480 816Q465 816 455.0 805.5Q445 795 445 781Q445 766 455.0 755.5Q465 745 480 745Q495 745 505.0 755.5Q515 766 515 781Q515 795 505.0 805.5Q495 816 480 816ZM285 781Q285 766 295.0 755.5Q305 745 320.0 745.0Q335 745 345.0 755.5Q355 766 355 781Q355 795 345.0 805.5Q335 816 320.0 816.0Q305 816 295.0 805.5Q285 795 285 781ZM640 816Q625 816 615.0 805.5Q605 795 605 781Q605 766 615.0 755.5Q625 745 640 745Q655 745 665.0 755.5Q675 766 675 781Q675 795 665.0 805.5Q655 816 640 816Z"/></symbol><symbol id="i-shelf" viewBox="0 96 960 960"><path d="M212 956Q182 956 161.0 935.0Q140 914 140 884V436Q122 427 111.0 410.0Q100 393 100 371V268Q100 238 121.0 217.0Q142 196 172 196H788Q818 196 839.0 217.0Q860 238 860 268V371Q860 393 849.0 410.0Q838 427 820 436V884Q820 914 799.0 935.0Q778 956 748 956ZM200 444V882Q200 888 204.5 892.0Q209 896 215 896H748Q753 896 756.5 892.5Q760 889 760 884V444ZM172 384H788Q793 384 796.5 380.5Q800 377 800 371V268Q800 263 796.5 259.5Q793 256 788 256H172Q167 256 163.5 259.5Q160 263 160 268V371Q160 377 163.5 380.5Q167 384 172 384ZM397 633H564Q576 633 584.0 625.0Q592 617 592.0 604.5Q592 592 584.0 584.0Q576 576 564 576H396Q384 576 376.0 584.0Q368 592 368.0 604.5Q368 617 376.0 625.0Q384 633 397 633ZM480 670Q480 670 480.0 670.0Q480 670 480 670Q480 670 480.0 670.0Q480 670 480 670Z"/></symbol><symbol id="i-edit" viewBox="0 96 960 960"><path d="M200 856H250L660 447L609 396L200 806ZM176 916Q161 916 150.5 905.5Q140 895 140 880V811Q140 796 145.5 782.5Q151 769 161 760L668 253Q677 245 688.0 240.5Q699 236 711 236Q723 236 734.0 240.5Q745 245 754 254L803 303Q812 312 816.0 323.5Q820 335 820 346Q820 358 816.0 369.0Q812 380 803 389L296 895Q287 905 273.5 910.5Q260 916 245 916ZM760 346 710 296ZM634 422 609 396 660 447Z"/></symbol><symbol id="i-wifi" viewBox="0 96 960 960"><path d="M480.0 924.0Q446 924 422.5 901.0Q399 878 399.0 844.0Q399 810 422.5 786.5Q446 763 480.0 763.0Q514 763 537.5 786.5Q561 810 561.0 844.0Q561 878 537.5 901.0Q514 924 480.0 924.0ZM735 617Q750 629 750.5 647.0Q751 665 737 679Q724 692 705.5 692.0Q687 692 672 681Q633 651 583.5 633.5Q534 616 480 616Q426 616 376.5 633.5Q327 651 288 681Q273 692 254.5 691.5Q236 691 223 678Q210 665 210.0 646.5Q210 628 225 617Q278 574 342.5 550.5Q407 527 480.0 527.0Q553 527 617.5 551.0Q682 575 735 617ZM904 445Q919 458 920.0 476.5Q921 495 907 509Q894 522 875.0 521.5Q856 521 841 508Q768 446 675.5 411.0Q583 376 480.0 376.0Q377 376 284.5 411.0Q192 446 119 508Q104 521 85.0 521.5Q66 522 53 509Q39 495 40.0 476.5Q41 458 56 445Q141 370 249.0 328.5Q357 287 480.0 287.0Q603 287 711.0 328.5Q819 370 904 445Z"/></symbol><symbol id="i-mixer" viewBox="0 96 960 960"><path d="M450 896V736Q450 723 458.5 714.5Q467 706 480.0 706.0Q493 706 501.5 714.5Q510 723 510 736V786H800Q813 786 821.5 794.5Q830 803 830.0 816.0Q830 829 821.5 837.5Q813 846 800 846H510V896Q510 909 501.5 917.5Q493 926 480.0 926.0Q467 926 458.5 917.5Q450 909 450 896ZM160 846Q147 846 138.5 837.5Q130 829 130.0 816.0Q130 803 138.5 794.5Q147 786 160 786H320Q333 786 341.5 794.5Q350 803 350.0 816.0Q350 829 341.5 837.5Q333 846 320 846ZM290 656V606H160Q147 606 138.5 597.5Q130 589 130.0 576.0Q130 563 138.5 554.5Q147 546 160 546H290V496Q290 483 298.5 474.5Q307 466 320.0 466.0Q333 466 341.5 474.5Q350 483 350 496V656Q350 669 341.5 677.5Q333 686 320.0 686.0Q307 686 298.5 677.5Q290 669 290 656ZM480 606Q467 606 458.5 597.5Q450 589 450.0 576.0Q450 563 458.5 554.5Q467 546 480 546H800Q813 546 821.5 554.5Q830 563 830.0 576.0Q830 589 821.5 597.5Q813 606 800 606ZM610 416V256Q610 243 618.5 234.5Q627 226 640.0 226.0Q653 226 661.5 234.5Q670 243 670 256V306H800Q813 306 821.5 314.5Q830 323 830.0 336.0Q830 349 821.5 357.5Q813 366 800 366H670V416Q670 429 661.5 437.5Q653 446 640.0 446.0Q627 446 618.5 437.5Q610 429 610 416ZM160 366Q147 366 138.5 357.5Q130 349 130.0 336.0Q130 323 138.5 314.5Q147 306 160 306H480Q493 306 501.5 314.5Q510 323 510.0 336.0Q510 349 501.5 357.5Q493 366 480 366Z"/></symbol><symbol id="i-forecast" viewBox="0 96 960 960"><path d="M450 274V187Q450 174 458.5 165.5Q467 157 480.0 157.0Q493 157 501.5 165.5Q510 174 510 187V274Q510 287 501.5 295.5Q493 304 480.0 304.0Q467 304 458.5 295.5Q450 287 450 274ZM672 384Q664 376 664.0 363.5Q664 351 672 342L733 280Q742 270 754.5 270.0Q767 270 776 280Q785 288 785.0 300.5Q785 313 776 322L714 384Q705 393 693.0 393.0Q681 393 672 384ZM782 606Q769 606 760.5 597.5Q752 589 752.0 576.0Q752 563 760.5 554.5Q769 546 782 546H869Q882 546 890.5 554.5Q899 563 899.0 576.0Q899 589 890.5 597.5Q882 606 869 606ZM450 965V878Q450 865 458.5 856.5Q467 848 480.0 848.0Q493 848 501.5 856.5Q510 865 510 878V965Q510 978 501.5 986.5Q493 995 480.0 995.0Q467 995 458.5 986.5Q450 978 450 965ZM246 384 184 323Q174 314 174.0 301.0Q174 288 184 280Q192 271 205.0 271.0Q218 271 226 280L289 342Q297 351 297.0 363.5Q297 376 289 384Q280 392 268.0 392.0Q256 392 246 384ZM734 872 672 810Q664 801 664.0 788.5Q664 776 672 768Q680 760 692.5 760.0Q705 760 714 768L776 830Q785 838 785.0 850.5Q785 863 776 872Q767 882 754.5 882.0Q742 882 734 872ZM91 606Q78 606 69.5 597.5Q61 589 61.0 576.0Q61 563 69.5 554.5Q78 546 91 546H178Q191 546 199.5 554.5Q208 563 208.0 576.0Q208 589 199.5 597.5Q191 606 178 606ZM184 872Q176 864 175.5 851.5Q175 839 184 830L246 768Q254 760 266.0 760.0Q278 760 288 768Q297 778 297.0 790.0Q297 802 288 811L227 872Q217 882 204.5 882.0Q192 882 184 872ZM480.0 796.0Q388 796 324.0 732.0Q260 668 260.0 576.0Q260 484 324.0 420.0Q388 356 480.0 356.0Q572 356 636.0 420.0Q700 484 700.0 576.0Q700 668 636.0 732.0Q572 796 480.0 796.0ZM480.0 736.0Q546 736 593.0 689.0Q640 642 640.0 576.0Q640 510 593.0 463.0Q546 416 480.0 416.0Q414 416 367.0 463.0Q320 510 320.0 576.0Q320 642 367.0 689.0Q414 736 480.0 736.0ZM480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Z"/></symbol><symbol id="i-clock" viewBox="0 96 960 960"><path d="M510 564V406Q510 393 501.5 384.5Q493 376 480.0 376.0Q467 376 458.5 384.5Q450 393 450 406V573Q450 580 452.5 586.5Q455 593 461 599L598 736Q606 744 618.5 744.5Q631 745 640 736Q649 727 649.0 715.0Q649 703 640 694ZM480 956Q401 956 331.5 926.0Q262 896 211.0 845.0Q160 794 130.0 724.5Q100 655 100 576Q100 497 130.0 427.5Q160 358 211.0 307.0Q262 256 331.5 226.0Q401 196 480 196Q559 196 628.5 226.0Q698 256 749.0 307.0Q800 358 830.0 427.5Q860 497 860 576Q860 655 830.0 724.5Q800 794 749.0 845.0Q698 896 628.5 926.0Q559 956 480 956ZM480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576Q480 576 480.0 576.0Q480 576 480 576ZM480 896Q613 896 706.5 802.5Q800 709 800 576Q800 443 706.5 349.5Q613 256 480 256Q347 256 253.5 349.5Q160 443 160 576Q160 709 253.5 802.5Q347 896 480 896Z"/></symbol><symbol id="i-date" viewBox="0 96 960 960"><path d="M212 956Q182 956 161.0 935.0Q140 914 140 884V348Q140 318 161.0 297.0Q182 276 212 276H268V222Q268 209 276.5 200.0Q285 191 298.5 191.0Q312 191 320.5 200.0Q329 209 329 222V276H632V221Q632 209 641.0 200.0Q650 191 662.5 191.0Q675 191 683.5 200.0Q692 209 692 221V276H748Q778 276 799.0 297.0Q820 318 820 348V884Q820 914 799.0 935.0Q778 956 748 956ZM212 896H748Q752 896 756.0 892.0Q760 888 760 884V508H200V884Q200 888 204.0 892.0Q208 896 212 896ZM200 448H760V348Q760 344 756.0 340.0Q752 336 748 336H212Q208 336 204.0 340.0Q200 344 200 348ZM200 448V348Q200 344 200.0 340.0Q200 336 200 336Q200 336 200.0 340.0Q200 344 200 348V448ZM480 659Q465 659 455.0 648.5Q445 638 445.0 623.5Q445 609 455.0 598.5Q465 588 480 588Q495 588 505.0 598.5Q515 609 515.0 623.5Q515 638 505.0 648.5Q495 659 480 659ZM320.0 659.0Q305 659 295.0 648.5Q285 638 285.0 623.5Q285 609 295.0 598.5Q305 588 320.0 588.0Q335 588 345.0 598.5Q355 609 355.0 623.5Q355 638 345.0 648.5Q335 659 320.0 659.0ZM640 659Q625 659 615.0 648.5Q605 638 605.0 623.5Q605 609 615.0 598.5Q625 588 640 588Q655 588 665.0 598.5Q675 609 675.0 623.5Q675 638 665.0 648.5Q655 659 640 659ZM480 816Q465 816 455.0 805.5Q445 795 445 781Q445 766 455.0 755.5Q465 745 480 745Q495 745 505.0 755.5Q515 766 515 781Q515 795 505.0 805.5Q495 816 480 816ZM285 781Q285 766 295.0 755.5Q305 745 320.0 745.0Q335 745 345.0 755.5Q355 766 355 781Q355 795 345.0 805.5Q335 816 320.0 816.0Q305 816 295.0 805.5Q285 795 285 781ZM640 816Q625 816 615.0 805.5Q605 795 605 781Q605 766 615.0 755.5Q625 745 640 745Q655 745 665.0 755.5Q675 766 675 781Q675 795 665.0 805.5Q655 816 640 816Z"/></symbol><symbol id="i-weather" viewBox="0 96 960 960"><path d="M450 274V187Q450 174 458.5 165.5Q467 157 480.0 157.0Q493 157 501.5 165.5Q510 174 510 187V274Q510 287 501.5 295.5Q493 304 480.0 304.0Q467 304 458.5 295.5Q450 287 450 274ZM672 384Q664 376 664.0 363.5Q664 351 672 342L733 280Q742 270 754.5 270.0Q767 270 776 280Q785 288 785.0 300.5Q785 313 776 322L714 384Q705 393 693.0 393.0Q681 393 672 384ZM782 606Q769 606 760.5 597.5Q752 589 752.0 576.0Q752 563 760.5 554.5Q769 546 782 546H869Q882 546 890.5 554.5Q899 563 899.0 576.0Q899 589 890.5 597.5Q882 606 869 606ZM450 965V878Q450 865 458.5 856.5Q467 848 480.0 848.0Q493 848 501.5 856.5Q510 865 510 878V965Q510 978 501.5 986.5Q493 995 480.0 995.0Q467 995 458.5 986.5Q450 978 450 965ZM246 384 184 323Q174 314 174.0 301.0Q174 288 184 280Q192 271 205.0 271.0Q218 271 226 280L289 342Q297 351 297.0 363.5Q297 376 289 384Q280 392 268.0 392.0Q256 392 246 384ZM734 872 672 810Q664 801 664.0 788.5Q664 776 672 768Q680 760 692.5 760.0Q705 760 714 768L776 830Q785 838 785.0 850.5Q785 863 776 872Q767 882 754.5 882.0Q742 882 734 872ZM91 606Q78 606 69.5 597.5Q61 589 61.0 576.0Q61 563 69.5 554.5Q78 546 91 546H178Q191 546 199.5 554.5Q208 563 208.0 576.0Q208 589 199.5 597.5Q191 606 178 606ZM184 872Q176 864 175.5 851.5Q175 839 184 830L246 768Q254 760 266.0 760.0Q278 760 288 768Q297 778 297.0 790.0Q297 802 288 811L227 872Q217 882 204.5 882.0Q192 882 184 872ZM480.0 796.0Q388 796 324.0 732.0Q260 668 260.0 576.0Q260 484 324.0 420.0Q388 356 480.0 356.0Q572 356 636.0 420.0Q700 484 700.0 576.0Q700 668 636.0 732.0Q572 796 480.0 796.0ZM480.0 736.0Q546 736 593.0 689.0Q640 642 640.0 576.0Q640 510 593.0 463.0Q546 416 480.0 416.0Q414 416 367.0 463.0Q320 510 320.0 576.0Q320 642 367.0 689.0Q414 736 480.0 736.0ZM480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Q480 576 480.0 576.0Z"/></symbol><symbol id="i-cover" viewBox="0 96 960 960"><path d="M212 916Q182 916 161.0 895.0Q140 874 140 844V308Q140 278 161.0 257.0Q182 236 212 236H748Q778 236 799.0 257.0Q820 278 820 308V844Q820 874 799.0 895.0Q778 916 748 916ZM212 856H748Q752 856 756.0 852.0Q760 848 760 844V308Q760 304 756.0 300.0Q752 296 748 296H212Q208 296 204.0 300.0Q200 304 200 308V844Q200 848 204.0 852.0Q208 856 212 856ZM200 856Q200 856 200.0 852.0Q200 848 200 844V308Q200 304 200.0 300.0Q200 296 200 296Q200 296 200.0 300.0Q200 304 200 308V844Q200 848 200.0 852.0Q200 856 200 856ZM306 766H657Q668 766 673.0 756.0Q678 746 671 737L576 609Q570 602 561.5 602.0Q553 602 547 609L449 737L384 653Q378 646 369.5 646.0Q361 646 355 653L292 737Q285 746 290.0 756.0Q295 766 306 766Z"/></symbol><symbol id="i-bars" viewBox="0 96 960 960"><path d="M295 768V384Q295 371 303.5 362.5Q312 354 325.0 354.0Q338 354 346.5 362.5Q355 371 355 384V768Q355 781 346.5 789.5Q338 798 325.0 798.0Q312 798 303.5 789.5Q295 781 295 768ZM450 926V226Q450 213 458.5 204.5Q467 196 480.0 196.0Q493 196 501.5 204.5Q510 213 510 226V926Q510 939 501.5 947.5Q493 956 480.0 956.0Q467 956 458.5 947.5Q450 939 450 926ZM140 612V540Q140 527 148.5 518.5Q157 510 170.0 510.0Q183 510 191.5 518.5Q200 527 200 540V612Q200 625 191.5 633.5Q183 642 170.0 642.0Q157 642 148.5 633.5Q140 625 140 612ZM605 768V384Q605 371 613.5 362.5Q622 354 635.0 354.0Q648 354 656.5 362.5Q665 371 665 384V768Q665 781 656.5 789.5Q648 798 635.0 798.0Q622 798 613.5 789.5Q605 781 605 768ZM760 612V540Q760 527 768.5 518.5Q777 510 790.0 510.0Q803 510 811.5 518.5Q820 527 820 540V612Q820 625 811.5 633.5Q803 642 790.0 642.0Q777 642 768.5 633.5Q760 625 760 612Z"/></symbol><symbol id="i-timer" viewBox="0 96 960 960"><path d="M398 206Q385 206 376.5 197.5Q368 189 368.0 176.0Q368 163 376.5 154.5Q385 146 398 146H562Q575 146 583.5 154.5Q592 163 592.0 176.0Q592 189 583.5 197.5Q575 206 562 206ZM510 618V454Q510 441 501.5 432.5Q493 424 480.0 424.0Q467 424 458.5 432.5Q450 441 450 454V618Q450 631 458.5 639.5Q467 648 480.0 648.0Q493 648 501.5 639.5Q510 631 510 618ZM480 276Q540 276 595.5 296.5Q651 317 699 355L728 326Q736 318 748.5 317.5Q761 317 770.0 326.0Q779 335 779.0 347.0Q779 359 770 368L741 397Q779 445 799.5 500.5Q820 556 820 616Q820 686 793.0 748.0Q766 810 720.0 856.0Q674 902 612.0 929.0Q550 956 480.0 956.0Q410 956 348.0 929.0Q286 902 240.0 856.0Q194 810 167.0 748.0Q140 686 140.0 616.0Q140 546 167.0 484.0Q194 422 240.0 376.0Q286 330 348.0 303.0Q410 276 480 276ZM480.0 896.0Q596 896 678.0 814.0Q760 732 760.0 616.0Q760 500 678.0 418.0Q596 336 480.0 336.0Q364 336 282.0 418.0Q200 500 200.0 616.0Q200 732 282.0 814.0Q364 896 480.0 896.0ZM480.0 616.0Q480 616 480.0 616.0Q480 616 480.0 616.0Q480 616 480.0 616.0Q480 616 480.0 616.0Q480 616 480.0 616.0Q480 616 480.0 616.0Q480 616 480.0 616.0Q480 616 480.0 616.0Z"/></symbol><symbol id="i-cpu" viewBox="0 96 960 960"><path d="M380 640V512Q380 497 390.5 486.5Q401 476 416 476H544Q559 476 569.5 486.5Q580 497 580 512V640Q580 655 569.5 665.5Q559 676 544 676H416Q401 676 390.5 665.5Q380 655 380 640ZM440 616H520V536H440ZM370 877V836H292Q262 836 241.0 815.0Q220 794 220 764V686H179Q166 686 157.5 677.5Q149 669 149.0 656.0Q149 643 157.5 634.5Q166 626 179 626H220V526H179Q166 526 157.5 517.5Q149 509 149.0 496.0Q149 483 157.5 474.5Q166 466 179 466H220V388Q220 358 241.0 337.0Q262 316 292 316H370V275Q370 262 378.5 253.5Q387 245 400.0 245.0Q413 245 421.5 253.5Q430 262 430 275V316H530V275Q530 262 538.5 253.5Q547 245 560.0 245.0Q573 245 581.5 253.5Q590 262 590 275V316H668Q698 316 719.0 337.0Q740 358 740 388V466H781Q794 466 802.5 474.5Q811 483 811.0 496.0Q811 509 802.5 517.5Q794 526 781 526H740V626H781Q794 626 802.5 634.5Q811 643 811.0 656.0Q811 669 802.5 677.5Q794 686 781 686H740V764Q740 794 719.0 815.0Q698 836 668 836H590V877Q590 890 581.5 898.5Q573 907 560.0 907.0Q547 907 538.5 898.5Q530 890 530 877V836H430V877Q430 890 421.5 898.5Q413 907 400.0 907.0Q387 907 378.5 898.5Q370 890 370 877ZM668 776Q672 776 676.0 772.0Q680 768 680 764V388Q680 384 676.0 380.0Q672 376 668 376H292Q288 376 284.0 380.0Q280 384 280 388V764Q280 768 284.0 772.0Q288 776 292 776ZM480 576Z"/></symbol><symbol id="i-gpu" viewBox="0 96 960 960"><path d="M177 916Q147 916 126.0 895.0Q105 874 105 844V308Q105 278 126.0 257.0Q147 236 177 236H712Q743 236 764.0 257.0Q785 278 785 308V391H825Q838 391 846.5 400.0Q855 409 855.0 421.5Q855 434 846.5 442.5Q838 451 825 451H785V546H825Q838 546 846.5 554.5Q855 563 855.0 576.0Q855 589 846.5 597.5Q838 606 825 606H785V701H825Q838 701 846.5 709.5Q855 718 855.0 730.5Q855 743 846.5 752.0Q838 761 825 761H785V844Q785 874 764.0 895.0Q743 916 712 916ZM177 856H712Q717 856 721.0 852.0Q725 848 725 844V308Q725 304 721.0 300.0Q717 296 712 296H177Q172 296 168.5 300.0Q165 304 165 308V844Q165 848 168.5 852.0Q172 856 177 856ZM296 761H405Q420 761 430.5 750.5Q441 740 441 724V656Q441 641 430.5 630.5Q420 620 405 620H296Q281 620 270.5 630.5Q260 641 260 656V724Q260 740 270.5 750.5Q281 761 296 761ZM525 492H593Q608 492 618.5 481.5Q629 471 629 456V428Q629 412 618.5 401.5Q608 391 593 391H525Q509 391 498.5 401.5Q488 412 488 428V456Q488 471 498.5 481.5Q509 492 525 492ZM296 572H405Q420 572 430.5 561.5Q441 551 441 536V427Q441 412 430.5 401.5Q420 391 405 391H296Q281 391 270.5 401.5Q260 412 260 428V536Q260 551 270.5 561.5Q281 572 296 572ZM525 761H593Q608 761 618.5 750.5Q629 740 629 724V576Q629 561 618.5 550.5Q608 540 593 540H525Q509 540 498.5 550.5Q488 561 488 576V724Q488 740 498.5 750.5Q509 761 525 761ZM165 296Q165 296 165.0 300.0Q165 304 165 308V844Q165 848 165.0 852.0Q165 856 165 856Q165 856 165.0 852.0Q165 848 165 844V308Q165 304 165.0 300.0Q165 296 165 296Z"/></symbol><symbol id="i-ram" viewBox="0 96 960 960"><path d="M310 656V496Q310 483 301.5 474.5Q293 466 280.0 466.0Q267 466 258.5 474.5Q250 483 250 496V656Q250 669 258.5 677.5Q267 686 280.0 686.0Q293 686 301.5 677.5Q310 669 310 656ZM510 656V496Q510 483 501.5 474.5Q493 466 480.0 466.0Q467 466 458.5 474.5Q450 483 450 496V656Q450 669 458.5 677.5Q467 686 480.0 686.0Q493 686 501.5 677.5Q510 669 510 656ZM710 656V496Q710 483 701.5 474.5Q693 466 680.0 466.0Q667 466 658.5 474.5Q650 483 650 496V656Q650 669 658.5 677.5Q667 686 680.0 686.0Q693 686 701.5 677.5Q710 669 710 656ZM172 776H788Q792 776 796.0 772.0Q800 768 800 764V388Q800 384 796.0 380.0Q792 376 788 376H172Q168 376 164.0 380.0Q160 384 160 388V764Q160 768 164.0 772.0Q168 776 172 776ZM160 776Q160 776 160.0 772.0Q160 768 160 764V388Q160 384 160.0 380.0Q160 376 160 376Q160 376 160.0 380.0Q160 384 160 388V764Q160 768 160.0 772.0Q160 776 160 776ZM172 836Q142 836 121.0 815.0Q100 794 100 764V388Q100 358 121.0 337.0Q142 316 172 316H210V266Q210 253 218.5 244.5Q227 236 240.0 236.0Q253 236 261.5 244.5Q270 253 270 266V316H450V266Q450 253 458.5 244.5Q467 236 480.0 236.0Q493 236 501.5 244.5Q510 253 510 266V316H690V266Q690 253 698.5 244.5Q707 236 720.0 236.0Q733 236 741.5 244.5Q750 253 750 266V316H788Q818 316 839.0 337.0Q860 358 860 388V764Q860 794 839.0 815.0Q818 836 788 836H750V886Q750 899 741.5 907.5Q733 916 720.0 916.0Q707 916 698.5 907.5Q690 899 690 886V836H510V886Q510 899 501.5 907.5Q493 916 480.0 916.0Q467 916 458.5 907.5Q450 899 450 886V836H270V886Q270 899 261.5 907.5Q253 916 240.0 916.0Q227 916 218.5 907.5Q210 899 210 886V836Z"/></symbol><symbol id="i-lan" viewBox="0 96 960 960"><path d="M130 905V767Q130 741 147.5 723.5Q165 706 191 706H250V618Q250 588 271.0 567.0Q292 546 322 546H450V446H391Q365 446 347.5 428.5Q330 411 330 385V247Q330 221 347.5 203.5Q365 186 391 186H569Q595 186 612.5 203.5Q630 221 630 247V385Q630 411 612.5 428.5Q595 446 569 446H510V546H638Q668 546 689.0 567.0Q710 588 710 618V706H769Q795 706 812.5 723.5Q830 741 830 767V905Q830 931 812.5 948.5Q795 966 769 966H591Q565 966 547.5 948.5Q530 931 530 905V767Q530 741 547.5 723.5Q565 706 591 706H650V618Q650 613 646.5 609.5Q643 606 638 606H322Q317 606 313.5 609.5Q310 613 310 618V706H369Q395 706 412.5 723.5Q430 741 430 767V905Q430 931 412.5 948.5Q395 966 369 966H191Q165 966 147.5 948.5Q130 931 130 905ZM390 386H570V246H390ZM190 906H370V766H190ZM590 906H770V766H590ZM480 386ZM370 766ZM590 766Z"/></symbol><symbol id="i-disk" viewBox="0 96 960 960"><path d="M172 764H788Q793 764 796.5 761.0Q800 758 800 752V529H160V752Q160 758 163.5 761.0Q167 764 172 764ZM682.5 697.0Q703 697 717.5 682.5Q732 668 732.0 647.0Q732 626 717.5 611.5Q703 597 682.5 597.0Q662 597 647.0 611.5Q632 626 632.0 647.0Q632 668 647.0 682.5Q662 697 682.5 697.0ZM860 469H775L687 379H273L185 469H100L227 340Q237 330 250.5 324.5Q264 319 278 319H682Q696 319 709.5 324.5Q723 330 733 340ZM172 824Q142 824 121.0 803.0Q100 782 100 752V469H860V752Q860 782 839.0 803.0Q818 824 788 824Z"/></symbol><symbol id="i-battery" viewBox="0 96 960 960"><path d="M334 956Q318 956 308.0 945.5Q298 935 298 920V302Q298 286 308.0 276.0Q318 266 334 266H406V232Q406 217 416.5 206.5Q427 196 442 196H518Q533 196 543.5 206.5Q554 217 554 232V266H626Q642 266 652.0 276.0Q662 286 662 302V920Q662 935 652.0 945.5Q642 956 626 956Z"/></symbol><symbol id="i-lang" viewBox="0 96 960 960"><path d="M585 834 547 937Q543 945 535.5 950.5Q528 956 519 956Q504 956 494.5 943.5Q485 931 491 916L647 514Q651 506 658.0 501.0Q665 496 674 496H697Q705 496 712.5 501.0Q720 506 724 514L879 916Q885 931 876.5 943.5Q868 956 852 956Q842 956 835.0 950.5Q828 945 824 937L786 834ZM359 640 181 817Q173 826 161.0 826.5Q149 827 139 817Q131 809 131.0 796.5Q131 784 139 775L317 597Q283 562 251.5 514.0Q220 466 200 416H264Q281 452 306.0 488.5Q331 525 359 555Q402 512 440.0 450.5Q478 389 494 336H98Q85 336 76.5 327.5Q68 319 68.0 306.0Q68 293 76.5 284.5Q85 276 98 276H330V241Q330 229 338.5 220.0Q347 211 360.0 211.0Q373 211 381.5 220.0Q390 229 390 241V276H622Q635 276 643.5 284.5Q652 293 652.0 306.0Q652 319 643.5 327.5Q635 336 622 336H554Q535 403 492.5 476.5Q450 550 401 598L500 699L477 761ZM604 781H767L685 563Z"/></symbol><symbol id="i-window" viewBox="0 96 960 960"><path d="M172 876Q142 876 121.0 855.0Q100 834 100 804V348Q100 318 121.0 297.0Q142 276 172 276H788Q818 276 839.0 297.0Q860 318 860 348V804Q860 834 839.0 855.0Q818 876 788 876ZM172 816H788Q792 816 796.0 812.0Q800 808 800 804V416H160V804Q160 808 164.0 812.0Q168 816 172 816Z"/></symbol><symbol id="i-trend" viewBox="0 96 960 960"><path d="M121 786Q112 777 112.5 765.0Q113 753 121 745L323 540Q344 519 374.5 519.0Q405 519 426 540L526 641Q529 644 534.0 644.0Q539 644 543 641L759 427H670Q657 427 648.5 418.5Q640 410 640.0 397.5Q640 385 648.5 376.0Q657 367 670 367H824Q839 367 849.5 377.5Q860 388 860 404V557Q860 570 851.5 578.5Q843 587 830.0 587.0Q817 587 808.5 579.0Q800 571 800 558V470L585 684Q565 705 534.5 705.0Q504 705 483 684L383 584Q379 581 374.0 581.0Q369 581 365 584L163 786Q155 795 142.5 795.0Q130 795 121 786Z"/></symbol><symbol id="i-trophy" viewBox="0 96 960 960"><path d="M450 856V719Q398 711 358.5 678.0Q319 645 304 595Q235 587 187.5 536.0Q140 485 140 416V388Q140 358 161.0 337.0Q182 316 212 316H293V308Q293 278 314.0 257.0Q335 236 365 236H595Q625 236 646.0 257.0Q667 278 667 308V316H748Q778 316 799.0 337.0Q820 358 820 388V416Q820 485 772.5 536.0Q725 587 656 595Q641 645 601.5 678.0Q562 711 510 719V856H622Q635 856 643.5 864.5Q652 873 652.0 886.0Q652 899 643.5 907.5Q635 916 622 916H338Q325 916 316.5 907.5Q308 899 308.0 886.0Q308 873 316.5 864.5Q325 856 338 856ZM293 530V376H212Q207 376 203.5 379.5Q200 383 200 388V416Q200 457 226.0 489.0Q252 521 293 530ZM606 535V308Q606 303 602.5 299.5Q599 296 594 296H366Q361 296 357.5 299.5Q354 303 354 308V535Q354 588 390.5 624.5Q427 661 480.0 661.0Q533 661 569.5 624.5Q606 588 606 535ZM667 530Q708 521 734.0 489.0Q760 457 760 416V388Q760 383 756.5 379.5Q753 376 748 376H667ZM480 479Q480 479 480.0 479.0Q480 479 480 479Q480 479 480.0 479.0Q480 479 480 479Q480 479 480.0 479.0Q480 479 480.0 479.0Q480 479 480.0 479.0Q480 479 480 479Z"/></symbol><symbol id="i-note" viewBox="0 96 960 960"><path d="M401 632Q424 632 444.0 639.0Q464 646 481 660V276Q481 261 491.5 250.5Q502 240 517 240H663Q678 240 688.5 250.5Q699 261 699 276V334Q699 350 688.5 360.5Q678 371 663 371H541V772Q541 830 500.0 871.0Q459 912 401.0 912.0Q343 912 302.0 871.0Q261 830 261.0 772.0Q261 714 302.0 673.0Q343 632 401 632Z"/></symbol><symbol id="i-x" viewBox="0 0 24 24"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z"/></symbol><symbol id="i-prev" viewBox="0 0 24 24"><path d="m14 18-6-6 6-6 1.4 1.4-4.6 4.6 4.6 4.6z"/></symbol><symbol id="i-next" viewBox="0 0 24 24"><path d="M9.4 18 8 16.6l4.6-4.6L8 7.4 9.4 6l6 6z"/></symbol><symbol id="i-dl" viewBox="0 0 24 24"><path d="M12 15.6 7.4 11l1.4-1.4 2.2 2.2V4h2v7.8l2.2-2.2 1.4 1.4zM5 20v-2h14v2z"/></symbol><symbol id="i-up" viewBox="0 0 24 24"><path d="M11 20V7.8l-5.6 5.6L4 12l8-8 8 8-1.4 1.4L13 7.8V20z"/></symbol><symbol id="i-enter" viewBox="0 0 24 24"><path d="M9 19 4 14l5-5 1.4 1.4-2.6 2.6H18V6h2v9H7.8l2.6 2.6z"/></symbol><symbol id="i-sound" viewBox="0 0 24 24"><path d="M14 20.7v-2.1q2.2-.7 3.6-2.5T19 12t-1.4-4.1T14 5.4V3.3q3 .7 5 3.1t2 5.6-2 5.6-5 3.1M3 15V9h4l5-5v16l-5-5zm11 1V8q1.2.6 1.9 1.6T16.5 12t-.6 2.4T14 16"/></symbol><symbol id="i-soundoff" viewBox="0 0 24 24"><path d="M19.8 22.6 16.8 19.6q-.7.4-1.4.7t-1.4.4v-2.1l.6-.2.6-.3L12 14.8V20l-5-5H3V9h3.2L1.4 4.2l1.4-1.4 18.4 18.4zm-.2-5.8-1.5-1.5q.4-.7.6-1.5t.2-1.7q0-2.3-1.4-4.1T14 5.4V3.3q3 .7 5 3.1t2 5.6q0 1.3-.4 2.5t-1 2.3m-3.4-3.4L14 11.2V8q1.2.6 1.9 1.6t.6 2.4q0 .4-.1.7l-.2.7M12 9.2 9.4 6.6 12 4z"/></symbol><symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 21q-3.8 0-6.4-2.6T3 12t2.6-6.4T12 3q.4 0 .7 0t.7.1q-.9.6-1.5 1.7T11.3 7q0 2.3 1.6 3.9t3.9 1.6q1.3 0 2.3-.6t1.7-1.5l.1.7v.7q0 3.8-2.6 6.4T12 21"/></symbol><symbol id="i-sun" viewBox="0 0 24 24"><path d="M12 17q-2.1 0-3.5-1.5T7 12t1.5-3.5T12 7t3.5 1.5T17 12t-1.5 3.5T12 17M2 13v-2h3v2zm17 0v-2h3v2zM11 5V2h2v3zm0 17v-3h2v3zM6 7.4 4.2 5.6l1.4-1.4L7.4 6zm12.4 12.4L16.6 18l1.4-1.4 1.8 1.8zM16.6 6l1.8-1.8 1.4 1.4L18 7.4zM4.2 18.4 6 16.6 7.4 18l-1.8 1.8z"/></symbol><symbol id="i-star" viewBox="0 0 560 560"><path d="M282 30.5C304.3 260 300.6 255.3 480.5 283.8C300.6 311.4 304.3 306.8 282 529.5C261.6 306.8 265 311.4 100.5 283.8C265 255.3 261.6 260 282 30.5Z"/><path d="M407 350.5C415.3 379.5 411.4 375.4 439.5 384C411.4 392.6 415.3 388.5 407 417.5C398.7 388.5 402.6 392.6 374.5 384C402.6 375.4 398.7 379.5 407 350.5Z"/><path d="M167 110.5C174.8 139.7 171.8 136.5 198.5 145C171.8 153.3 174.8 150.1 167 178.5C159.2 150.1 162.2 153.3 135.5 145C162.2 136.5 159.2 139.7 167 110.5Z"/><path d="M245.7 382C242 383.7 231 389 223.6 392C216.2 394.9 208.6 397.2 201.3 399.6C193.9 401.9 186.6 404 179.5 405.9C172.3 407.9 165.3 409.7 158.4 411.4C151.5 413 144.7 414.5 138.1 415.7C131.5 417 125.1 418.1 118.8 419C112.6 419.8 106.5 420.6 100.6 421C94.8 421.5 89.1 421.5 83.7 421.6C78.3 421.7 73 421.7 68 421.5C63.1 421.3 58.3 420.9 53.7 420.2C49.2 419.6 44.9 418.6 40.8 417.6C36.8 416.5 32.9 415.3 29.3 413.7C25.7 412.1 22.3 410.2 19.3 408C16.2 405.9 13.4 403.4 11 400.5C8.7 397.7 6.7 394.5 5.3 391.2C3.9 387.8 3.1 384.1 2.8 380.4C2.5 376.8 2.9 373 3.6 369.3C4.2 365.6 5.3 362 6.6 358.2C7.9 354.5 9.6 350.8 11.6 347C13.5 343.2 15.7 339.4 18.3 335.5C20.8 331.6 23.6 327.7 26.7 323.7C29.9 319.6 33.3 315.6 37 311.5C40.7 307.4 44.8 303.3 49 299.1C53.3 295 57.8 290.7 62.6 286.5C67.4 282.2 72.5 278 77.8 273.8C83.1 269.5 88.7 265.2 94.4 260.9C100.2 256.6 106.2 252.3 112.4 248.1C118.7 244 125.1 239.7 131.9 235.8C138.6 232 147.8 227.9 153.2 225.2C158.6 222.6 162.2 220.7 164 219.8C162.3 220.9 158.8 223 153.9 226.4C149 229.9 141.1 235.9 134.8 240.4C128.6 245 122.3 249.2 116.3 253.7C110.3 258.1 104.6 262.6 99.1 267.1C93.6 271.5 88.4 276 83.4 280.4C78.4 284.9 73.6 289.2 69.1 293.6C64.7 298 60.6 302.5 56.8 306.8C53 311.1 49.4 315.3 46.2 319.5C43 323.6 40.1 327.7 37.6 331.6C35.1 335.6 33 339.5 31.1 343.2C29.2 346.9 27.6 350.4 26.4 353.7C25.2 357 24.6 360.2 23.9 363.1C23.3 366 22.7 368.5 22.5 371C22.3 373.4 22.3 375.6 22.7 377.6C23 379.6 23.9 381.2 24.6 383C25.3 384.8 25.8 386.5 26.9 388.3C27.9 390.1 29.1 391.9 30.8 393.7C32.5 395.5 34.5 397.3 36.9 399.1C39.3 400.8 42.2 402.6 45.4 404.2C48.6 405.7 52.2 407.1 56.2 408.3C60.2 409.5 64.5 410.5 69.1 411.3C73.7 412.1 78.7 412.7 83.9 413.1C89.1 413.4 94.6 413.5 100.3 413.4C106 413.2 112 412.8 118.1 412.2C124.3 411.6 130.7 410.9 137.2 409.8C143.7 408.8 150.5 407.5 157.3 406C164.2 404.6 171.2 403 178.3 401.2C185.5 399.4 192.7 397.3 200.1 395.1C207.4 392.9 214.8 390.3 222.4 388.1C230 385.9 241.8 383 245.7 382Z"/><path d="M313 148.9C316.8 147.5 328.2 142.9 335.7 140.4C343.3 137.8 350.9 135.7 358.3 133.7C365.8 131.7 373.2 129.9 380.4 128.2C387.6 126.6 394.7 125.1 401.7 123.9C408.6 122.6 415.5 121.7 422.1 120.8C428.7 119.9 435.1 119 441.3 118.5C447.6 117.9 453.6 117.6 459.4 117.5C465.2 117.3 470.8 117.3 476.1 117.4C481.4 117.5 486.5 117.7 491.4 118.1C496.2 118.5 500.8 119.2 505.1 120C509.5 120.8 513.6 121.7 517.5 122.8C521.4 123.9 525 125.1 528.5 126.5C531.9 128 535.1 129.7 538 131.7C541 133.7 543.7 135.9 546.1 138.5C548.6 141 551 143.9 552.7 147C554.3 150.2 555.5 153.9 556.1 157.5C556.7 161.1 556.8 165 556.5 168.9C556.1 172.8 555.3 176.7 554.1 180.6C552.9 184.6 551.2 188.5 549.1 192.5C547.1 196.4 544.7 200.4 542 204.3C539.3 208.2 536.2 212.2 532.8 216.1C529.4 220.1 525.7 224.1 521.7 228C517.6 231.9 513.2 235.8 508.5 239.6C503.7 243.4 498.7 247.2 493.2 250.6C487.6 254 479.5 257.4 474.9 259.7C470.4 262.1 467.4 264.1 465.9 264.9C467.2 263.8 470.1 261.6 473.7 258.3C477.4 254.9 483.3 249 487.8 244.7C492.4 240.4 497 236.4 501.1 232.2C505.1 228.1 508.8 223.9 512.2 219.7C515.6 215.6 518.6 211.5 521.2 207.5C523.9 203.5 526.2 199.5 528.1 195.8C530 192 531.4 188.2 532.6 184.8C533.7 181.3 534.4 178 535 175C535.6 172 536 169.2 535.9 166.7C535.9 164.2 535.5 161.9 534.9 160C534.3 158 533.1 156.6 532.3 155C531.4 153.4 530.8 152 529.8 150.5C528.8 149 527.6 147.5 526 145.9C524.5 144.4 522.6 142.9 520.4 141.3C518.2 139.7 515.6 138 512.6 136.5C509.6 135 506.2 133.5 502.5 132.2C498.7 131 494.6 129.8 490.1 128.9C485.7 128 480.9 127.2 475.8 126.7C470.7 126.1 465.3 125.7 459.7 125.5C454.1 125.4 448.1 125.4 442 125.6C435.9 125.8 429.5 126.3 423 126.9C416.4 127.5 409.6 128.3 402.7 129.3C395.8 130.3 388.7 131.3 381.4 132.7C374.2 134 366.8 135.5 359.3 137.2C351.8 138.9 344.2 140.8 336.5 142.8C328.8 144.8 316.9 147.9 313 148.9Z"/></symbol></svg>
-<a class="skip" href="#main">Skip to content</a>
-<a class="to-top" href="#top" aria-label="Back to the top"><svg class="tt-ring" viewBox="0 0 52 52" aria-hidden="true"><circle cx="26" cy="26" r="24.5"/></svg><svg aria-hidden="true" focusable="false"><use href="#i-up"/></svg></a>
-<div class="cursor" aria-hidden="true"><i class="c-ring"><b class="c-label"></b></i><i class="c-star"><svg aria-hidden="true" focusable="false"><use href="#i-star"/></svg></i></div>
-
-<!-- the intro: the logo's star in liquid chrome, waiting for the shortcut -->
-<div class="intro" id="intro">
-  <i class="intro-half top"></i><i class="intro-half bot"></i><i class="intro-seam"></i>
-  <div class="metal" id="metal" aria-hidden="true"></div>
-  <div class="intro-ui">
-    <p class="intro-term"><span>astraeus ~ windows</span>Press <kbd>Win</kbd> <kbd>Alt</kbd> <kbd>A</kbd> to open</p>
-    <button class="intro-go" type="button">Open it <svg aria-hidden="true" focusable="false"><use href="#i-enter"/></svg></button>
-  </div>
-  <button class="intro-skip" type="button">Skip intro</button>
+<a class="skip" href="#end">Skip to the links</a>
+<div class="loader" id="loader" aria-hidden="true">
+  <div class="loader-t mono"><span>Astraeus</span><span>A dynamic island for Windows</span></div>
+  <div class="loader-mid mono"><span id="loaderW">Pouring the island</span><span id="loaderN">000 %</span><i><b id="loaderLine"></b></i></div>
+  <div class="loader-b mono"><span>■ FIG. 00 · THE ISLAND, BEFORE IT OPENS</span><span class="loader-scale"><i></i>34 px</span></div>
 </div>
+<div class="cur" id="cur" aria-hidden="true"><i class="cur-dot"></i><i class="cur-ring"></i><span class="cur-word mono" id="curWord"></span></div>
+<div class="progress ink" aria-hidden="true"><i id="prog"></i></div><canvas id="liquid" aria-hidden="true"></canvas>
+<div class="grain" aria-hidden="true"></div>
 
-<!-- the long pill: the site's header, and its narrator -->
-<header class="pill rim" id="pill">
-  <a class="p-brand" href="#top" aria-label="Astraeus, back to the top"><svg aria-hidden="true" focusable="false"><use href="#i-star"/></svg><span>Astraeus</span></a>
-  <p class="p-say" aria-live="polite"><span class="p-line">Hi. I'm the island.</span></p>
-  <div class="p-acts">
-    <button class="p-ico" id="sound" type="button" aria-pressed="false" aria-label="Sound"><svg aria-hidden="true" focusable="false"><use href="#i-sound"/></svg></button>
-    <button class="p-ico" id="theme" type="button" aria-pressed="false" aria-label="Dark mode"><svg aria-hidden="true" focusable="false"><use href="#i-moon"/></svg></button>
-    <a class="p-dl" href="#download">Download</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <filter id="ink" x="-10%" y="-20%" width="120%" height="140%" color-interpolation-filters="sRGB"><feTurbulence type="fractalNoise" baseFrequency=".55" numOctaves="2" seed="4" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="4" xChannelSelector="R" yChannelSelector="G" result="c"/><feGaussianBlur in="c" stdDeviation="1.3"/><feComponentTransfer><feFuncA type="table" tableValues="0 0 .4 1 1"/></feComponentTransfer></filter>
+</defs><defs id="melts"></defs></svg>
+
+<header class="bar ink">
+  <span><b>Astraeus</b></span>
+  <div class="bar-r">
+    <button class="look-btn mono" id="lookBtn" type="button" aria-label="Change the page's look"><i></i><span id="lookName">Night</span></button>
+    <a class="dl-btn mono" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe"><span>Download</span></a>
   </div>
 </header>
 
-<nav class="chapters" aria-label="Chapters">
-  <ol>
-    <li><a href="#panel"><span>01</span>The panel</a></li>
-    <li><a href="#island"><span>02</span>The island</a></li>
-    <li><a href="#lyrics"><span>03</span>Lyrics</a></li>
-    <li><a href="#looks"><span>04</span>Looks</a></li>
-    <li><a href="#wall"><span>05</span>Everything</a></li>
-    <li><a href="#engineering"><span>06</span>Engineering</a></li>
-    <li><a href="#download"><span>07</span>Download</a></li>
-  </ol>
-</nav>
+<main class="track" id="track">
+<div class="ui ink" id="ui">
 
-<main id="main">
+  <!-- 1: the island -->
+  <section class="ov hero-ov" data-name="the island" aria-label="The island">
+    <span class="fig mono" style="left:calc(50vw + var(--hx) - var(--hw)); top:calc(var(--hh) * 2 + 4vh + 14px)">FIG. 00 · THE ISLAND, MAGNIFIED</span>
+    <span class="cross" style="left:calc(50vw + var(--hx) - var(--hw) - 2vh); top:2.6vh"></span>
+    <span class="cross" style="left:calc(50vw + var(--hx) - var(--hw) - 2vh); top:calc(var(--hh) * 2 + 12vh)"></span>
+    <div class="call r mono" style="right:calc(50vw - var(--hx) + var(--hw) - var(--hh) * 1.05); top:calc(var(--hh) + 2vh + var(--hh) * .5)">( NOW PLAYING )<i style="width:calc(var(--hh) * 1.2)"></i></div>
+    <div class="copy" style="left:var(--m); top:13vh; width:min(380px, 34vw)"><span class="mono">An island for Windows</span><p>It lives on the top edge of your screen: your music, synced lyrics, quick toggles and live stats, dripping open the moment you rest the mouse there.</p></div>
+    <h1 class="big hero-t" data-melt style="left:calc(var(--m) - .4vw); bottom:7vh">Astraeus<br>for Windows</h1>
+    <span class="cue mono"><i></i>Scroll</span>
+    <span class="foot mono">Win Alt A opens it anywhere</span>
+  </section>
 
-<section class="hero" id="top" aria-labelledby="h-title" data-say="Hi. I'm the island.">
-  <i class="grid-x gx1" aria-hidden="true"></i><i class="grid-x gx2" aria-hidden="true"></i>
-  <div class="hero-panel"><figure class="shot"><button type="button" data-title="Home" data-cap="The song, the weather and the time, quick toggles, sliders and live stats, in a custom red look." aria-label="View larger: Home"><img src="assets/shots/home.webp" width="1365" height="375" alt="The Astraeus Home panel with a media card, the weather and clock, quick toggles, sliders and live system graphs" fetchpriority="high"></button><figcaption><b>Home</b> The song, the weather and the time, quick toggles, sliders and live stats, in a custom red look.</figcaption></figure></div>
-  <h1 id="h-title" class="mega"><span class="line"><span>The island</span></span><span class="line"><span>for Windows.</span></span></h1>
-  <div class="hero-foot">
-    <p class="lede">A panel that drips open from the edge of your screen: your music, synced lyrics, quick toggles, live stats and everyday tools. Rest the mouse on the top edge, or press <kbd>Win</kbd> <kbd>Alt</kbd> <kbd>A</kbd>.</p>
-    <div class="acts">
-      <a class="btn chrome" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe"><svg aria-hidden="true" focusable="false"><use href="#i-dl"/></svg>Download for Windows</a>
-      <a class="btn ghost" href="https://github.com/Icetist/Astraeus">Source on GitHub</a>
-    </div>
-  </div>
-</section>
+  <!-- 2: the panel -->
+  <section class="ov" data-name="the panel" aria-label="The panel">
+    <div class="call r mono" style="right:calc(50vw + var(--pw) - 2px); top:calc(var(--kh) * .165)">( NOW PLAYING )<i style="width:5vw"></i></div>
+    <div class="call r mono" style="right:calc(50vw + var(--pw) - 2px); top:calc(var(--kh) * .3825)">( VOLUME · MIC · LIGHT )<i style="width:5vw"></i></div>
+    <div class="call mono" style="left:calc(50vw + var(--pw) - 2px); top:calc(var(--kh) * .1025)"><i style="width:5vw"></i>( WI-FI · BLUETOOTH )</div>
+    <div class="call mono" style="left:calc(50vw + var(--pw) - 2px); top:calc(var(--kh) * .3825)"><i style="width:5vw"></i>( CPU · MEMORY · NETWORK )</div>
+    <span class="fig mono" style="left:calc(50vw - var(--pw)); top:calc(var(--kh) * .48 + 14px)">FIG. 02 · THE PANEL, DRIPPING OPEN</span>
+    <div class="copy" style="left:var(--m); bottom:13vh"><span class="mono">The panel</span><p>It drips open from the edge: your music, synced lyrics, quick toggles, live stats and everyday tools, all a mouse rest away.</p></div>
+    <div class="big r" data-melt style="right:var(--m); bottom:8vh">9 MB<small>of memory while it waits, closed*</small></div>
+    <span class="foot mono">* Measured on an older dual-core laptop with integrated graphics</span>
+  </section>
 
-<!-- 01: the panel, pinned; the scroll walks the rail -->
-<section class="story" id="panel" aria-labelledby="h-panel">
-  <h2 id="h-panel" class="sr">The panel</h2>
-  <div class="st-pin" aria-hidden="true">
-    <div class="st-head">
-      <p class="st-count"><span class="st-num">01</span> / 09<span class="st-in"></span></p>
-      <p class="st-title"><span>Home</span></p>
-      <p class="st-text"></p>
-      <p class="st-how"></p>
-    </div>
-    <div class="st-stage">
-      <div class="st-panel"><img data-k="home" src="assets/shots/home.webp" width="1365" height="375" alt="" decoding="async"><img data-k="media" src="assets/shots/media.webp" width="1365" height="404" alt="" decoding="async"><img data-k="system" src="assets/shots/system.webp" width="1365" height="401" alt="" decoding="async"><img data-k="network" src="assets/shots/network.webp" width="1365" height="389" alt="" decoding="async"><img data-k="shelf" src="assets/shots/shelf.webp" width="1365" height="422" alt="" decoding="async"><img data-k="widgets" src="assets/shots/widgets.webp" width="1365" height="389" alt="" decoding="async"><img data-k="tools" src="assets/shots/tools.webp" width="1365" height="394" alt="" decoding="async"><img data-k="settings" src="assets/shots/settings.webp" width="1365" height="431" alt="" decoding="async"></div>
-      <div class="st-cards"><img data-k="bluetooth" src="assets/shots/bluetooth.webp" width="1365" height="410" alt="" decoding="async"><img data-k="wifi" src="assets/shots/wifi.webp" width="1365" height="404" alt="" decoding="async"><img data-k="mixer" src="assets/shots/mixer.webp" width="1365" height="396" alt="" decoding="async"><img data-k="calendar" src="assets/shots/calendar.webp" width="1365" height="406" alt="" decoding="async"><img data-k="forecast" src="assets/shots/forecast.webp" width="1365" height="388" alt="" decoding="async"></div>
-    </div>
-    <ol class="st-dots"></ol>
-  </div>
-  <ol class="st-steps">
-    <li data-k="home" data-say="This is Home."><h3>Home</h3><p>The song, the weather and the time, Wi-Fi, Bluetooth, battery and mic, three sliders and live stats, all at once.</p><p class="how">Rest the mouse on the middle of the top edge.</p><figure class="shot"><button type="button" data-title="Home" data-cap="Everything at once." aria-label="View larger: Home"><img src="assets/shots/home.webp" width="1365" height="375" alt="The Home page" loading="lazy" decoding="async"></button><figcaption><b>Home</b> Everything at once.</figcaption></figure></li>
-    <li data-k="behind" data-in="Home" data-say="Right-click a tile. There's more."><h3>Behind Home</h3><p>Your Bluetooth devices orbiting your PC, a Wi-Fi map, a mixer with a fader for every app, the calendar and the forecast.</p><p class="how">Right-click Bluetooth or Wi-Fi, click the speaker, click the weather.</p>
-      <div class="behind-shots"><figure class="shot"><button type="button" data-title="Bluetooth" data-cap="Right-click the Bluetooth tile." aria-label="View larger: Bluetooth"><img src="assets/shots/bluetooth.webp" width="1365" height="410" alt="The Bluetooth control center" loading="lazy" decoding="async"></button><figcaption><b>Bluetooth</b> Right-click the Bluetooth tile.</figcaption></figure><figure class="shot"><button type="button" data-title="Wi-Fi" data-cap="Right-click the Wi-Fi tile." aria-label="View larger: Wi-Fi"><img src="assets/shots/wifi.webp" width="1365" height="404" alt="The Wi-Fi map" loading="lazy" decoding="async"></button><figcaption><b>Wi-Fi</b> Right-click the Wi-Fi tile.</figcaption></figure><figure class="shot"><button type="button" data-title="Mixer" data-cap="Click the speaker on the volume slider." aria-label="View larger: Mixer"><img src="assets/shots/mixer.webp" width="1365" height="396" alt="The volume mixer" loading="lazy" decoding="async"></button><figcaption><b>Mixer</b> Click the speaker on the volume slider.</figcaption></figure><figure class="shot"><button type="button" data-title="Calendar" data-cap="Click the weather card." aria-label="View larger: Calendar"><img src="assets/shots/calendar.webp" width="1365" height="406" alt="The calendar" loading="lazy" decoding="async"></button><figcaption><b>Calendar</b> Click the weather card.</figcaption></figure><figure class="shot"><button type="button" data-title="Forecast" data-cap="Click the weather in the calendar." aria-label="View larger: Forecast"><img src="assets/shots/forecast.webp" width="1365" height="388" alt="The forecast" loading="lazy" decoding="async"></button><figcaption><b>Forecast</b> Click the weather in the calendar.</figcaption></figure></div></li>
-    <li data-k="media" data-say="Your music, glowing."><h3>Media</h3><p>Spotify, browsers, anything that talks to Windows' media controls. Soft light swells with the music, bass to treble.</p><p class="how">Click the cover for the fullscreen player.</p><figure class="shot"><button type="button" data-title="Media" data-cap="Light that swells with the music." aria-label="View larger: Media"><img src="assets/shots/media.webp" width="1365" height="404" alt="The Media page" loading="lazy" decoding="async"></button><figcaption><b>Media</b> Light that swells with the music.</figcaption></figure></li>
-    <li data-k="system" data-say="What's working hardest."><h3>System</h3><p>CPU, GPU and memory, and the processes using the most. The gauges only run while you look.</p><p class="how">The CPU and Memory cards on Home bring you here.</p><figure class="shot"><button type="button" data-title="System" data-cap="CPU, GPU, memory and the busiest processes." aria-label="View larger: System"><img src="assets/shots/system.webp" width="1365" height="401" alt="The System page" loading="lazy" decoding="async"></button><figcaption><b>System</b> CPU, GPU, memory and the busiest processes.</figcaption></figure></li>
-    <li data-k="network" data-say="Your connection, live."><h3>Network</h3><p>Upload and download, latency and jitter over the last minute, your IP addresses and the adapter.</p><p class="how">Networks opens the Wi-Fi map.</p><figure class="shot"><button type="button" data-title="Network" data-cap="Throughput and latency over the last minute." aria-label="View larger: Network"><img src="assets/shots/network.webp" width="1365" height="389" alt="The Network page" loading="lazy" decoding="async"></button><figcaption><b>Network</b> Throughput and latency over the last minute.</figcaption></figure></li>
-    <li data-k="shelf" data-say="Drop anything on the top edge."><h3>Shelf</h3><p>Drag files, links or text onto the top of the screen and they wait here. Search them, sort them, drag them back out.</p><p class="how">Drop onto the top edge, anytime.</p><figure class="shot"><button type="button" data-title="Shelf" data-cap="Files, links and text, waiting." aria-label="View larger: Shelf"><img src="assets/shots/shelf.webp" width="1365" height="422" alt="The Shelf page" loading="lazy" decoding="async"></button><figcaption><b>Shelf</b> Files, links and text, waiting.</figcaption></figure></li>
-    <li data-k="widgets" data-say="More than eighty widgets."><h3>Widgets</h3><p>Clocks, weather, notes, stocks, and live scores from nearly 50 leagues. Small, wide or large, wherever you like.</p><p class="how">Add widgets, top right of the page.</p><figure class="shot"><button type="button" data-title="Widgets" data-cap="Scores, fixtures, weather and clocks." aria-label="View larger: Widgets"><img src="assets/shots/widgets.webp" width="1365" height="389" alt="The Widgets page" loading="lazy" decoding="async"></button><figcaption><b>Widgets</b> Scores, fixtures, weather and clocks.</figcaption></figure></li>
-    <li data-k="tools" data-say="Timers, focus, power."><h3>Tools</h3><p>Lock, sleep, restart and shut down. A timer, a stopwatch, focus sessions, a color picker and quick tiles you pick.</p><p class="how">Right-click the tiles to choose them.</p><figure class="shot"><button type="button" data-title="Tools" data-cap="Power, timers and quick tiles." aria-label="View larger: Tools"><img src="assets/shots/tools.webp" width="1365" height="394" alt="The Tools page" loading="lazy" decoding="async"></button><figcaption><b>Tools</b> Power, timers and quick tiles.</figcaption></figure></li>
-    <li data-k="settings" data-in="Tools" data-say="Now make it yours."><h3>Settings</h3><p>Behind the Settings tile on Tools: the look and its colors, the edge it lives on and which screens, each picked from a small picture of the real thing.</p><p class="how">Click the Settings tile on Tools, or Settings in the tray menu.</p><figure class="shot"><button type="button" data-title="Settings" data-cap="Every look, from the real thing." aria-label="View larger: Settings"><img src="assets/shots/settings.webp" width="1365" height="431" alt="The Settings page" loading="lazy" decoding="async"></button><figcaption><b>Settings</b> Every look, from the real thing.</figcaption></figure></li>
-  </ol>
-</section>
+  <!-- 3: lyrics -->
+  <section class="ov" data-name="the lyrics" aria-label="Lyrics">
+    <span class="fig mono" style="left:calc(50vw - 42vh * var(--s)); top:calc(50vh + 25vh * var(--s))">FIG. 03 · A LINE, SUNG AS IT'S SUNG</span>
+    <div class="call mono" style="left:calc(50vw + 36vh * var(--s)); top:50vh"><i style="width:6vh"></i>( NOW )</div>
+    <div class="copy" style="right:var(--m); top:13vh"><span class="mono">Lyrics</span><p>Synced lyrics from three sources, each word lit as it's sung, the rest drifting out of focus. Right-to-left lyrics read right to left.</p></div>
+    <div class="big" data-melt style="left:var(--m); bottom:8vh">3<small>sources for every song's words</small></div>
+  </section>
 
-<!-- 02: the island; a dial of everything the long pill can show -->
-<section class="island" id="island" aria-labelledby="h-island" data-say="Small, while you work.">
-  <div class="isl-head">
-    <h2 id="h-island" class="big"><span class="line"><span>Over your apps,</span></span><span class="line"><span>just a pill.</span></span></h2>
-    <p>Over a maximized window, Astraeus doesn't drop the whole panel on your work. A pill shows what's playing, and a click opens the panel. On the desktop the long pill shows whatever you give it, and sings along.</p>
-  </div>
-  <div class="isl-real">
-    <figure class="shot"><button type="button" data-title="The island pill" data-cap="What&#x27;s playing, over your apps." aria-label="View larger: The island pill"><img src="assets/shots/pill.webp" width="373" height="68" alt="The small island pill showing the song playing" loading="lazy" decoding="async"></button><figcaption><b>The island pill</b> What&#x27;s playing, over your apps.</figcaption></figure>
-    <figure class="shot"><button type="button" data-title="The long pill, singing along" data-cap="While a line is sung, the lyrics take the middle&#x27;s place." aria-label="View larger: The long pill, singing along"><img src="assets/shots/long-pill.webp" width="1365" height="72" alt="The long pill with a lyric line in the middle" loading="lazy" decoding="async"></button><figcaption><b>The long pill, singing along</b> While a line is sung, the lyrics take the middle&#x27;s place.</figcaption></figure>
-  </div>
-  <div class="dial-pin">
-    <p class="dial-cap">Twenty things the long pill can show. Scroll to turn.</p>
-    <div class="dial" aria-hidden="true"><svg class="dial-svg"></svg><div class="dial-now rim"><span class="dn-ico"></span><b class="dn-name"></b><small class="dn-val"></small></div></div>
-    <ul class="dial-list"></ul>
-  </div>
-  <div class="isl-edit">
-    <div><h3>Right-click either pill.</h3><p>A tile for every item with what it would show right now, separate sets for the desktop and over your apps, stuck to the edge or floating, in the theme, the accent, glass or clear. Undo, Redo and Reset, always.</p></div>
-    <figure class="shot"><button type="button" data-title="Arranging the long pill" data-cap="The editor: a tile for every item." aria-label="View larger: Arranging the long pill"><img src="assets/shots/long-pill-edit.webp" width="1365" height="767" alt="The long pill editor with a grid of item tiles" loading="lazy" decoding="async"></button><figcaption><b>Arranging the long pill</b> The editor: a tile for every item.</figcaption></figure>
-  </div>
-</section>
+  <!-- 4: vinyl -->
+  <section class="ov" data-name="the record" aria-label="Vinyl">
+    <span class="fig mono" style="left:calc(50vw - 35vh * var(--s)); top:calc(50vh + 33vh * var(--s))">FIG. 04 · THE RECORD, TURNING</span>
+    <div class="call mono" style="left:calc(50vw + 40vh * var(--s)); top:calc(50vh - 28vh * var(--s))"><i style="width:6vh"></i>( THE ARM )</div>
+    <div class="copy" style="left:var(--m); top:13vh"><span class="mono">Fullscreen</span><p>Click the cover and the song fills the screen. Put the record on: the cover turns into a sleeve, the record slides out and the arm drops in.</p></div>
+    <div class="big r" data-melt style="right:var(--m); bottom:8vh">33⅓<small>turns a minute, or slower</small></div>
+  </section>
 
-<!-- 03: lyrics, the fullscreen player growing to fill the screen -->
-<section class="lyrics" id="lyrics" aria-labelledby="h-lyr" data-say="Sing along.">
-  <h2 id="h-lyr" class="sr">Fullscreen lyrics</h2>
-  <div class="ly-pin">
-    <div class="ly-frame"><figure class="shot"><button type="button" data-title="Fullscreen lyrics" data-cap="The cover on one side, the lyrics on the other." aria-label="View larger: Fullscreen lyrics"><img src="assets/shots/lyrics.webp" width="1365" height="767" alt="The fullscreen player with the album cover and synced lyrics" decoding="async"></button><figcaption><b>Fullscreen lyrics</b> The cover on one side, the lyrics on the other.</figcaption></figure></div>
-    <div class="ly-stage">
-      <p class="ly-np"><b>Fullscreen</b><span>Click the cover on the Media page</span></p>
-      <div class="ly-lines">
-      <ol class="sing" aria-label="What the fullscreen player does">
-        <li>Click the cover.</li>
-        <li>The song fills the screen.</li>
-        <li>Words light up as they're sung,</li>
-        <li>the rest drift out of focus.</li>
-        <li>Press S, it spans two screens.</li>
-      </ol>
+  <!-- 5: music -->
+  <section class="ov" data-name="the music" aria-label="The visualizer">
+    <span class="fig mono" style="left:calc(50vw - 46vh * var(--s)); top:calc(50vh - 22vh * var(--s))">FIG. 05 · THE WAVEFORM, LIVE</span>
+    <span class="cross" style="left:calc(50vw - 48vh * var(--s)); top:calc(50vh - 25vh * var(--s))"></span><span class="cross" style="left:calc(50vw + 48vh * var(--s)); top:calc(50vh - 25vh * var(--s))"></span>
+    <span class="cross" style="left:calc(50vw - 48vh * var(--s)); top:calc(50vh + 25vh * var(--s))"></span><span class="cross" style="left:calc(50vw + 48vh * var(--s)); top:calc(50vh + 25vh * var(--s))"></span>
+    <div class="copy" style="left:var(--m); top:13vh"><span class="mono">The music</span><p>Bars that move with whatever is playing, in the album art's colors, and a glow round the screen's edge that swells on the beat.</p></div>
+    <div class="big r" data-melt style="right:var(--m); top:13vh">48<small>bars, dancing</small></div>
+  </section>
+
+  <!-- 6: every screen -->
+  <section class="ov" data-name="every screen" aria-label="Every screen">
+    <span class="fig mono" style="left:calc(50vw - 59vh * var(--s)); top:calc(50vh + 20vh * var(--s))">FIG. 06 · THREE SCREENS, THREE PILLS</span>
+    <div class="copy" style="right:var(--m); top:11vh"><span class="mono">Every screen</span><p>One island that follows your mouse, or a pill on every monitor. Each keeps its own size, its own blur and its own fullscreen app.</p></div>
+    <div class="big r" data-melt style="right:var(--m); bottom:8vh; font-size:min(13vw, 22vh)">×3<small>or as many as you've got</small></div>
+  </section>
+
+  <!-- 7: the real thing -->
+  <section class="ov stage-real" data-name="the real thing" aria-label="Screenshots">
+    <div class="room" id="room">
+      <div class="room-words" id="roomWords">
+        <span class="mono">Fullscreen</span>
+        <p>Click the cover and the song fills the screen. Your music, the size of the room.</p>
+        <ul class="mono"><li>The record slides out, the arm drops in</li><li>An edge glow in the cover's colors</li><li>The song's name pressed round the label</li><li>Lyrics lit as they're sung</li></ul>
       </div>
-      <div class="ly-bar" aria-hidden="true"><span class="ly-t0">0:00</span><i><b></b></i><span>3:41</span></div>
+      <div class="monitor" id="monitor">
+        <div class="mon-screen" id="monScreen">
+          <figure class="shot"><img data-src="assets/shots/room-vinyl.webp" width="1366" height="767" alt="Fullscreen vinyl: the album's sleeve, its record slid out and the arm on it, the room glowing in the cover's colors" decoding="async"></figure>
+          <figure class="shot"><img data-src="assets/shots/room-label.webp" width="1366" height="767" alt="Fullscreen vinyl with another album: its cover as the sleeve, the song's name pressed round the record's label" decoding="async"></figure>
+          <figure class="shot"><img data-src="assets/shots/room-lyrics.webp" width="1366" height="767" alt="Fullscreen lyrics: the cover on the left, its lyrics on the right, the sung line sharp and the rest out of focus" decoding="async"></figure>
+        </div>
+        <i class="mon-neck"></i><i class="mon-foot"></i>
+      </div>
+      <span class="room-cap mono" id="roomCap">FIG. 07.1 · FULLSCREEN, VINYL</span>
     </div>
-  </div>
-</section>
-
-<!-- 04: looks, a glass carousel -->
-<section class="looks" id="looks" aria-labelledby="h-looks" data-say="Pick a look.">
-  <div class="lk-pin">
-    <div class="lk-head">
-      <h2 id="h-looks" class="big"><span class="line"><span>One panel.</span></span><span class="line"><span>Every look.</span></span></h2>
-      <p>The palette comes from your wallpaper, the album art, or any accent you pick. Clear drops the frost. Your apps can wear a different look from your desktop.</p>
+    <span class="fig mono strip-fig" style="left:var(--m); top:12vh">FIG. 07 · THE PANEL, PAGE BY PAGE — DRAG OR SCROLL</span>
+    <div class="strip" id="strip">
+      <figure><img data-src="assets/shots/home.webp" width="899" height="340" alt="The Home page: the song, the weather and the time, toggles, sliders and live stats" decoding="async" loading="lazy"><figcaption class="mono"><span>Home</span><span>01</span></figcaption></figure>
+      <figure><img data-src="assets/shots/media.webp" width="899" height="340" alt="The Media page: the album art, the song, a rippling seek line and the controls" decoding="async" loading="lazy"><figcaption class="mono"><span>Media</span><span>02</span></figcaption></figure>
+      <figure><img data-src="assets/shots/system.webp" width="899" height="340" alt="The System page: CPU, GPU and memory gauges with the busiest processes" decoding="async" loading="lazy"><figcaption class="mono"><span>System</span><span>03</span></figcaption></figure>
+      <figure><img data-src="assets/shots/widgets.webp" width="899" height="340" alt="Widgets: live scores, fixtures, weather and clocks" decoding="async" loading="lazy"><figcaption class="mono"><span>Widgets</span><span>04</span></figcaption></figure>
+      <figure><img data-src="assets/shots/mixer.webp" width="899" height="340" alt="The volume mixer: a fader for every app" decoding="async" loading="lazy"><figcaption class="mono"><span>Mixer</span><span>05</span></figcaption></figure>
+      <figure><img data-src="assets/shots/bluetooth.webp" width="899" height="340" alt="Bluetooth: paired devices orbiting the PC" decoding="async" loading="lazy"><figcaption class="mono"><span>Bluetooth</span><span>06</span></figcaption></figure>
+      <figure><img data-src="assets/shots/calendar.webp" width="899" height="340" alt="The calendar: today's date, the month and the weather" decoding="async" loading="lazy"><figcaption class="mono"><span>Calendar</span><span>07</span></figcaption></figure>
+      <figure><img data-src="assets/shots/tools.webp" width="899" height="340" alt="Tools: power buttons, timers and quick tiles" decoding="async" loading="lazy"><figcaption class="mono"><span>Tools</span><span>08</span></figcaption></figure>
+      <figure><img data-src="assets/shots/starfall.webp" width="899" height="340" alt="The panel in the Starfall look: a night sky with a violet glow" decoding="async" loading="lazy"><figcaption class="mono"><span>Starfall look</span><span>09</span></figcaption></figure>
+      <figure><img data-src="assets/shots/look_glass.webp" width="899" height="340" alt="The panel in the Glass look, frosted over the wallpaper" decoding="async" loading="lazy"><figcaption class="mono"><span>Glass look</span><span>10</span></figcaption></figure>
+      <figure class="wide"><img data-src="assets/shots/long-pill.webp" width="1365" height="72" alt="The long pill on the desktop, singing along" decoding="async" loading="lazy"><figcaption class="mono"><span>The long pill, singing along</span><span>11</span></figcaption></figure>
     </div>
-    <div class="lk-track">
-      <figure class="lk-card" data-say="Custom."><figure class="shot"><button type="button" data-title="Custom" data-cap="A color wheel for any accent and any background." aria-label="View larger: Custom"><img src="assets/shots/home.webp" width="1365" height="375" alt="Home in a custom red look" loading="lazy" decoding="async"></button><figcaption><b>Custom</b> A color wheel for any accent and any background.</figcaption></figure><figcaption>Custom</figcaption></figure>
-      <figure class="lk-card" data-say="Dark."><figure class="shot"><button type="button" data-title="Dark" data-cap="The default." aria-label="View larger: Dark"><img src="assets/shots/look_dark.webp" width="1364" height="412" alt="Home in the dark look" loading="lazy" decoding="async"></button><figcaption><b>Dark</b> The default.</figcaption></figure><figcaption>Dark</figcaption></figure>
-      <figure class="lk-card" data-say="Glass."><figure class="shot"><button type="button" data-title="Glass" data-cap="A live frosted blur of what&#x27;s behind." aria-label="View larger: Glass"><img src="assets/shots/look_glass.webp" width="1365" height="385" alt="Home in the glass look" loading="lazy" decoding="async"></button><figcaption><b>Glass</b> A live frosted blur of what&#x27;s behind.</figcaption></figure><figcaption>Glass</figcaption></figure>
-      <figure class="lk-card" data-say="Starfall."><figure class="shot"><button type="button" data-title="Starfall" data-cap="A night sky with a slow violet glow." aria-label="View larger: Starfall"><img src="assets/shots/starfall.webp" width="1365" height="392" alt="Home in the Starfall look" loading="lazy" decoding="async"></button><figcaption><b>Starfall</b> A night sky with a slow violet glow.</figcaption></figure><figcaption>Starfall</figcaption></figure>
-      <figure class="lk-card" data-say="Light."><figure class="shot"><button type="button" data-title="Light" data-cap="Dark ink on pale surfaces." aria-label="View larger: Light"><img src="assets/shots/look_light.webp" width="1066" height="372" alt="Home in the light look" loading="lazy" decoding="async"></button><figcaption><b>Light</b> Dark ink on pale surfaces.</figcaption></figure><figcaption>Light</figcaption></figure>
-    </div>
-  </div>
-</section>
+  </section>
 
-<!-- 05: everything else, a wall in perspective -->
-<section class="wall" id="wall" aria-labelledby="h-wall" data-say="And all of this.">
-  <h2 id="h-wall" class="big center"><span class="line"><span>And everything</span></span><span class="line"><span>else.</span></span></h2>
-  <div class="wall-3d">
-    <div class="wall-grid">
-      <figure class="shot"><button type="button" data-title="Bluetooth" data-cap="Your devices orbit your PC." aria-label="View larger: Bluetooth"><img src="assets/shots/bluetooth.webp" width="1365" height="410" alt="The Bluetooth control center" loading="lazy" decoding="async"></button><figcaption><b>Bluetooth</b> Your devices orbit your PC.</figcaption></figure>
-      <figure class="shot"><button type="button" data-title="Wi-Fi" data-cap="Nearby networks, closer the stronger." aria-label="View larger: Wi-Fi"><img src="assets/shots/wifi.webp" width="1365" height="404" alt="The Wi-Fi map" loading="lazy" decoding="async"></button><figcaption><b>Wi-Fi</b> Nearby networks, closer the stronger.</figcaption></figure>
-      <figure class="shot"><button type="button" data-title="Mixer" data-cap="A fader for every app." aria-label="View larger: Mixer"><img src="assets/shots/mixer.webp" width="1365" height="396" alt="The volume mixer" loading="lazy" decoding="async"></button><figcaption><b>Mixer</b> A fader for every app.</figcaption></figure>
-      <figure class="shot"><button type="button" data-title="Calendar" data-cap="The month, holidays lit." aria-label="View larger: Calendar"><img src="assets/shots/calendar.webp" width="1365" height="406" alt="The calendar" loading="lazy" decoding="async"></button><figcaption><b>Calendar</b> The month, holidays lit.</figcaption></figure>
-      <figure class="shot"><button type="button" data-title="Forecast" data-cap="The next hours and days." aria-label="View larger: Forecast"><img src="assets/shots/forecast.webp" width="1365" height="388" alt="The forecast" loading="lazy" decoding="async"></button><figcaption><b>Forecast</b> The next hours and days.</figcaption></figure>
-      <figure class="shot"><button type="button" data-title="Shelf" data-cap="Drop it on the top edge." aria-label="View larger: Shelf"><img src="assets/shots/shelf.webp" width="1365" height="422" alt="The Shelf page" loading="lazy" decoding="async"></button><figcaption><b>Shelf</b> Drop it on the top edge.</figcaption></figure>
-      <figure class="shot"><button type="button" data-title="System" data-cap="What&#x27;s working hardest." aria-label="View larger: System"><img src="assets/shots/system.webp" width="1365" height="401" alt="The System page" loading="lazy" decoding="async"></button><figcaption><b>System</b> What&#x27;s working hardest.</figcaption></figure>
-      <figure class="shot"><button type="button" data-title="Network" data-cap="Your connection, live." aria-label="View larger: Network"><img src="assets/shots/network.webp" width="1365" height="389" alt="The Network page" loading="lazy" decoding="async"></button><figcaption><b>Network</b> Your connection, live.</figcaption></figure>
-      <figure class="shot"><button type="button" data-title="Widgets" data-cap="Scores, stocks, clocks." aria-label="View larger: Widgets"><img src="assets/shots/widgets.webp" width="1365" height="389" alt="The Widgets page" loading="lazy" decoding="async"></button><figcaption><b>Widgets</b> Scores, stocks, clocks.</figcaption></figure>
-      <figure class="shot"><button type="button" data-title="Tools" data-cap="Timers and power." aria-label="View larger: Tools"><img src="assets/shots/tools.webp" width="1365" height="394" alt="The Tools page" loading="lazy" decoding="async"></button><figcaption><b>Tools</b> Timers and power.</figcaption></figure>
-      <figure class="shot"><button type="button" data-title="Settings" data-cap="Every look, picked." aria-label="View larger: Settings"><img src="assets/shots/settings.webp" width="1365" height="431" alt="The Settings page" loading="lazy" decoding="async"></button><figcaption><b>Settings</b> Every look, picked.</figcaption></figure>
-      <figure class="shot"><button type="button" data-title="Media" data-cap="Light that swells." aria-label="View larger: Media"><img src="assets/shots/media.webp" width="1365" height="404" alt="The Media page" loading="lazy" decoding="async"></button><figcaption><b>Media</b> Light that swells.</figcaption></figure>
-    </div>
-  </div>
-</section>
+  <!-- 8: engineering -->
+  <section class="ov" data-name="the engine" aria-label="Engineering">
+    <span class="fig mono" style="left:var(--m); top:calc(50vh - 14vh)">FIG. 08 · CPU, CLOSED — ONE BREATH WHEN YOU LOOK</span>
+    <div class="copy" style="right:var(--m); top:13vh"><span class="mono">Engineering</span><p>One native C++ file, drawn with Direct2D and DirectComposition. No Electron, no web view, no runtime. It draws only while something moves, and hands the GPU back a few seconds after it closes.</p></div>
+    <div class="big" data-melt style="left:var(--m); bottom:8vh">0.08%<small>of one CPU core while closed*, about 2 MB of memory a few seconds after</small></div>
+    <span class="foot mono">* Measured on an older dual-core laptop with integrated graphics</span>
+  </section>
 
-<!-- 06: engineering, numbers that settle -->
-<section class="eng" id="engineering" aria-labelledby="h-eng" data-say="Nine megabytes. Closed.">
-  <i class="grid-x gx1" aria-hidden="true"></i><i class="grid-x gx2" aria-hidden="true"></i><i class="ring" aria-hidden="true"></i>
-  <h2 id="h-eng" class="big"><span class="line"><span>Costs nothing</span></span><span class="line"><span>while it's closed.</span></span></h2>
-  <div class="figs">
-    <div><p class="fig"><span class="num" data-to="9" data-dec="0">9</span><span class="unit">MB</span></p><p>memory while closed</p></div>
-    <div><p class="fig"><span class="pre">~</span><span class="num" data-to="2" data-dec="0">2</span><span class="unit">MB</span></p><p>a few seconds after closing</p></div>
-    <div><p class="fig"><span class="num" data-to="0.08" data-dec="2">0.08</span><span class="unit">%</span></p><p>of one CPU core, closed</p></div>
-  </div>
-  <div class="eng-foot">
-    <p>One native executable in C++20, drawing with Direct2D and DirectComposition. No Electron, no web view, no runtime. Frames are drawn only while something moves, and a few seconds after the panel closes the GPU is handed back to Windows. Runs on Windows 10 and 11.</p>
-    <p class="cond">Measured on an Intel Core i5-4210U with integrated graphics, 8 GB RAM, Windows 11, 1366×768. Private working set from Windows performance counters, as Task Manager shows it, after the app settles; closed sampled over 20 seconds. Open on Home it settles around 23 MB and 1.7% of one core; the first open of a session is about 44 MB.</p>
-  </div>
-</section>
-
-<!-- 07: download -->
-<section class="get" id="download" aria-labelledby="h-get" data-say="Take me home.">
-  <div class="get-card rim">
-    <div class="get-metal" id="metal2" aria-hidden="true"></div>
-    <h2 id="h-get" class="mega small"><span class="line"><span>Get Astraeus.</span></span></h2>
-    <p>Free and open source. One file for Windows 10 and 11, and new releases install themselves.</p>
-    <a class="btn chrome big" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe"><svg aria-hidden="true" focusable="false"><use href="#i-dl"/></svg>Download Astraeus.exe</a>
-    <ol class="steps">
-      <li>It isn't code-signed yet, so SmartScreen may say "unknown publisher". Choose <b>More info</b>, then <b>Run anyway</b>.</li>
-      <li>Say yes to starting with Windows and it copies itself to <code>%LOCALAPPDATA%\Programs\Astraeus</code>. No admin rights.</li>
-      <li>Every release is built from the repository, with its SHA-256 published beside it as <code>Astraeus.exe.sha256</code>.</li>
-    </ol>
-  </div>
-  <footer class="foot">
-    <p>Astraeus is free software under the GNU GPL-3.0. Set in Outfit and Nunito (SIL Open Font License); icons are Material Symbols (Apache-2.0); the chrome is Paper Shaders (Apache-2.0).</p>
-    <nav aria-label="Project"><a href="https://github.com/Icetist/Astraeus">Source</a><a href="https://github.com/Icetist/Astraeus/releases">Releases</a><a href="https://github.com/Icetist/Astraeus/issues">Report a problem</a><a href="https://github.com/Icetist/Astraeus/blob/main/LICENSE">License</a></nav>
-  </footer>
-</section>
-
+  <!-- 9: get it -->
+  <section class="ov" data-name="get it" aria-label="Download">
+    <span class="fig mono" style="left:calc(50vw + 30vh); top:11vh">FIG. 09 · THE STAR, ASTRAEUS' OWN</span>
+    <h2 class="big" data-melt style="left:var(--m); top:20vh; font-size:min(17vw, 30vh)">Get it.</h2>
+    <div class="copy" style="left:var(--m); bottom:9vh; width:min(430px, 80vw)"><p>Free and open source. One file for Windows 10 and 11, and new releases install themselves.</p><a class="get" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe">Download Astraeus.exe</a></div>
+    <div class="copy" style="right:var(--m); bottom:9vh; text-align:right"><span class="mono">GPL-3.0 · No account · No admin rights</span></div>
+  </section>
+</div>
 </main>
 
-<dialog class="viewer" id="viewer" aria-label="Screenshot">
-  <button class="vbtn close" type="button" aria-label="Close"><svg aria-hidden="true" focusable="false"><use href="#i-x"/></svg></button>
-  <div class="vstage"><img alt=""></div>
-  <div class="bar">
-    <button class="vbtn prev" type="button" aria-label="Previous screenshot"><svg aria-hidden="true" focusable="false"><use href="#i-prev"/></svg></button>
-    <p class="cap" aria-live="polite"></p>
-    <span class="count"></span>
-    <button class="vbtn next" type="button" aria-label="Next screenshot"><svg aria-hidden="true" focusable="false"><use href="#i-next"/></svg></button>
+<footer class="end" id="end">
+  <p class="end-word" aria-hidden="true">Astraeus</p>
+  <div class="cols">
+    <div><h3 class="mono">The project</h3><ul>
+      <li><a href="https://github.com/Icetist/Astraeus">Source on GitHub <span>↗</span></a></li>
+      <li><a href="https://github.com/Icetist/Astraeus/releases">Releases <span>↗</span></a></li>
+      <li><a href="https://github.com/Icetist/Astraeus/issues">Report a problem <span>↗</span></a></li>
+      <li><a href="https://github.com/Icetist/Astraeus/blob/main/LICENSE">License, GPL-3.0 <span>↗</span></a></li>
+    </ul></div>
+    <div><h3 class="mono">Support its development</h3><ul id="support">
+      <li><a href="https://www.buymeacoffee.com/icetist">Buy me a coffee <span>↗</span></a></li>
+      <li><a href="https://github.com/Icetist/Astraeus">Star it on GitHub <span>↗</span></a></li>
+      <li><a href="https://github.com/Icetist/Astraeus/issues/new/choose">Ideas and requests <span>↗</span></a></li>
+    </ul></div>
+    <div><h3 class="mono">Find me</h3><ul id="contact">
+      <li><a href="https://github.com/Icetist">GitHub <span>↗</span></a></li>
+      <li><a href="https://discordapp.com/users/711824195885072405">Discord <span>↗</span></a></li>
+      <li><a href="https://www.instagram.com/saahiltalha/">Instagram <span>↗</span></a></li>
+      <li><a href="https://www.linkedin.com/in/saahiltalha/">LinkedIn <span>↗</span></a></li>
+      <li><a href="https://www.reddit.com/user/IcetistOfficialz">Reddit <span>↗</span></a></li>
+    </ul></div>
+    <div><h3 class="mono">Made with</h3><ul>
+      <li><span>Outfit and Nunito <span class="mono">OFL</span></span></li>
+      <li><span>GSAP and Lenis <span class="mono">Scroll</span></span></li>
+      <li><span>Direct2D, DirectComposition <span class="mono">The app</span></span></li>
+    </ul></div>
   </div>
-</dialog>
+  <div class="end-foot">
+    <span class="mono">© 2026 Icetist · Astraeus is free software</span>
+    <div class="pills"><button class="pill" id="share" type="button">Share this page</button><a class="pill" href="#top" id="toTop">Back to the start ↑</a></div>
+  </div>
+</footer>
+<span class="read mono ink" aria-hidden="true"><span id="where">01 / 09 — the island</span> · <span id="read">00:00:00 · X +0000 Y +0000</span></span>
+
+<script src="assets/vendor/gsap.min.js"></script>
+<script src="assets/vendor/ScrollTrigger.min.js"></script>
+<script src="assets/vendor/lenis.min.js"></script>
+<script>
+(() => { // its own scope: nothing here collides with a page global
+"use strict";
+const $ = (s, el = document) => el.querySelector(s), $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+if ("scrollRestoration" in history) history.scrollRestoration = "manual"; // every visit starts at the island, never where the last one left off
+scrollTo(0, 0);
+const root = document.documentElement;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+/* ---------- the looks: what the shader and the page wear ---------- */
+const LOOKS = { night: { bg: [0, 0, 4.5], fg: [40, 8, 94], name: "Night" }, paper: { bg: [40, 8, 95], fg: [0, 0, 6], name: "Paper" } };
+const ORDER = ["night", "paper"];
+const rgb = ([h, s, l]) => { s /= 100; l /= 100; const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l); return [0, 8, 4].map((n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))); };
+let look = LOOKS[root.dataset.look] ? root.dataset.look : "night";
+$("#lookName").textContent = LOOKS[look].name;
+
+/* ---------- the liquid: one shape for the whole page, its distance field mixed by the scroll ---------- */
+const FRAG = `
+precision highp float;
+uniform vec2 u_res, u_m, u_rc;
+uniform float u_t, u_a, u_e, u_inv, u_k, u_s, u_rr, u_iw, u_hw, u_hx, u_ld, u_lf;
+uniform vec3 u_bg, u_fg, u_bg2, u_fg2;
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+  return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y); }
+float fbm(vec2 p){ return vnoise(p)*0.7 + vnoise(p*2.03+7.1)*0.3; }
+float smin(float a, float b, float k){ float h = clamp(0.5 + 0.5*(b-a)/k, 0.0, 1.0); return mix(b, a, h) - k*h*(1.0-h); }
+float box(vec2 p, vec2 b, float r){ vec2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
+float seg(vec2 p, vec2 a, vec2 b, float r){ vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba)/dot(ba, ba), 0.0, 1.0); return length(pa - ba*h) - r; }
+float edge(vec2 p){ return 0.53 - p.y; } // what the island hangs from, just past the top: its own grainy rim stays off screen
+float island(vec2 p){ return smin(box(p - vec2(0.0, 0.47), vec2(u_iw, 0.03), 0.03), edge(p) + 0.004, 0.022); } // as wide as the header leaves room for
+float loading(vec2 p){ return smin(box(p - vec2(0.0, 0.47), vec2(mix(0.02, u_iw, u_ld), 0.03), 0.03), edge(p) + 0.004, 0.022); } // the loader: the island growing along the top
+float hero(vec2 p){ // the island, magnified: hung from the top, its song cut out of it, a drip running off it
+  float hw = u_hw, hh = u_hw * 0.32;
+  vec2 c = vec2(u_hx, 0.5 - hh - 0.02);
+  float d = smin(box(p - c, vec2(hw, hh), hh), edge(p) + 0.004, 0.08);
+  float len = 0.05 + 0.09*(0.5 + 0.5*sin(u_t*0.55));
+  vec2 dt = vec2(c.x + hw*0.38, c.y - hh);
+  d = smin(d, seg(p, dt + vec2(0.0, 0.01), dt - vec2(0.0, len), 0.02*hw/0.34), 0.05);
+  float fall = fract(u_t*0.22);
+  d = min(d, length(p - (dt - vec2(0.0, len + 0.04 + 0.5*fall*fall))) - 0.016*hw/0.34*(1.0 - fall)); // and now and then a drop falls
+  float s = hw / 0.34; // the cut-outs scale with it
+  float holes = box(p - (c + vec2(-hw + hh*1.05, 0.0)), vec2(0.064, 0.064)*s, 0.018*s); // the cover
+  holes = min(holes, seg(p, c + vec2(-hw + 0.2*s, 0.026*s), c + vec2(0.04*s, 0.026*s), 0.012*s)); // the song
+  holes = min(holes, seg(p, c + vec2(-hw + 0.2*s, -0.026*s), c + vec2(-0.07*s, -0.026*s), 0.008*s)); // the artist
+  for (int i = 0; i < 4; i++) { // the four bars, dancing
+    float fi = float(i), x = c.x + hw - 0.2*s + fi*0.034*s, q = sin(u_t*(3.0 + fi*0.7) + fi*1.9);
+    float h = (0.012 + 0.036*(0.35 + 0.65*q*q))*s;
+    holes = min(holes, seg(p, vec2(x, c.y - h), vec2(x, c.y + h), 0.0085*s));
+  }
+  return max(d, -holes); }
+float card(vec2 p, float x0, float y0, float x1, float y1){ return box(p - vec2(x0 + x1, y0 + y1)*0.5, vec2(x1 - x0, y1 - y0)*0.5, 0.016); }
+float cards(vec2 p){
+  float d = card(p, -0.47, 0.215, -0.07, 0.455);
+  d = min(d, card(p, -0.045, 0.215, 0.185, 0.455));
+  d = min(d, min(card(p, 0.21, 0.34, 0.38, 0.455), card(p, 0.405, 0.34, 0.575, 0.455)));
+  d = min(d, min(card(p, 0.21, 0.215, 0.38, 0.33), card(p, 0.405, 0.215, 0.575, 0.33)));
+  d = min(d, card(p, -0.47, 0.045, -0.07, 0.19));
+  d = min(d, min(card(p, -0.045, 0.045, 0.185, 0.19), min(card(p, 0.21, 0.045, 0.38, 0.19), card(p, 0.405, 0.045, 0.575, 0.19))));
+  vec2 r = vec2(p.x + 0.545, mod(p.y - 0.43 + 0.035, 0.07) - 0.035);
+  return min(d, (p.y > 0.13 && p.y < 0.47) ? length(r) - 0.013 : 1e3); }
+float panel(vec2 p){ // hung from the top edge, scaled about it to fit the screen
+  vec2 q = (p - vec2(0.0, 0.5)) / u_k + vec2(0.0, 0.5);
+  float d = smin(box(q - vec2(0.0, 0.26), vec2(0.6, 0.24), 0.05), edge(q) + 0.004, 0.04);
+  return max(d, -cards(q)) * u_k; }
+float lyrics(vec2 p){ // five lines; the sung one thick and growing word by word
+  float d = 1e3; float x0 = -0.42;
+  d = min(d, seg(p, vec2(x0, 0.17), vec2(x0 + 0.46, 0.17), 0.016));
+  d = min(d, seg(p, vec2(x0, 0.085), vec2(x0 + 0.62, 0.085), 0.016));
+  float w = 0.08 + 0.66*fract(u_t/3.6);
+  d = min(d, seg(p, vec2(x0, 0.0), vec2(x0 + w, 0.0), 0.03));
+  d = min(d, seg(p, vec2(x0, -0.085), vec2(x0 + 0.52, -0.085), 0.016));
+  d = min(d, seg(p, vec2(x0, -0.17), vec2(x0 + 0.38, -0.17), 0.016));
+  return d; }
+float record(vec2 p){
+  vec2 c = p - vec2(-0.06, 0.0); float r = length(c);
+  float d = r - 0.31;
+  float g = abs(mod(r - 0.13, 0.03) - 0.015) - 0.0028;
+  if (r > 0.135 && r < 0.295) d = max(d, -g); // the grooves
+  float a = atan(c.y, c.x) + u_t*1.8;
+  if (r > 0.11 && r < 0.3) d = max(d, -(abs(sin(a))*r - 0.0035)); // a glint that turns with it
+  d = max(d, -(r - 0.014)); // the spindle hole
+  float arm = min(seg(p, vec2(0.37, 0.29), vec2(0.2, -0.02), 0.011), length(p - vec2(0.37, 0.29)) - 0.034);
+  arm = min(arm, box(p - vec2(0.195, -0.035), vec2(0.022, 0.012), 0.006));
+  return min(d, arm); }
+float bar(vec2 p, float fi){
+  if (fi < 0.0 || fi > 23.0) return 1e3;
+  float x = (fi - 11.5) * 0.038, s = sin(u_t*1.6 + fi*0.55);
+  float lv = 0.25 + 0.75*s*s*(0.55 + 0.45*sin(u_t*3.1 + fi*0.21));
+  float h = 0.02 + 0.15*lv*sin(3.14159*(fi+0.5)/24.0);
+  return length(vec2(p.x - x, max(abs(p.y) - h, 0.0))) - 0.012; }
+float wave(vec2 p){ float fi = floor(p.x / 0.038 + 12.0); return min(bar(p, fi), min(bar(p, fi - 1.0), bar(p, fi + 1.0))); }
+float monitor(vec2 q, float k){
+  float d = abs(box(q, vec2(0.22, 0.135), 0.022)) - 0.007;
+  float pill = box(q - vec2(0.0, 0.135 - 0.02), vec2(0.07 * (0.75 + 0.25*k), 0.02), 0.02);
+  d = min(d, smin(pill, abs(q.y - 0.135) + abs(q.x) * 0.0 - 0.002 + max(abs(q.x) - 0.22, 0.0), 0.012));
+  d = min(d, box(q - vec2(0.0, -0.172), vec2(0.009, 0.03), 0.004));
+  d = min(d, box(q - vec2(0.0, -0.205), vec2(0.06, 0.008), 0.008));
+  return d; }
+float screens(vec2 p){ // three monitors, a little smaller than the rest so the words keep their corners
+  vec2 q = p / 0.8; float d = 1e3;
+  for (int i = -1; i <= 1; i++) { float fi = float(i); d = min(d, monitor(q - vec2(fi*0.52, 0.02), 0.5 + 0.5*sin(u_t*2.2 + fi*1.3))); }
+  return d * 0.8; }
+float drop(vec2 p){ // the gallery's own: a drop that follows the pointer, a smaller one circling it
+  vec2 m = (u_m - 0.5*u_res) / u_res.y; if (u_m.y < -10.0) m = vec2(0.55, -0.32);
+  float d = length(p - m) - 0.055;
+  d = smin(d, length(p - m - 0.11*vec2(cos(u_t*1.3), sin(u_t*1.3))) - 0.026, 0.07);
+  return d; }
+float pulse(vec2 p){ // the engine: flat, but for one breath travelling along it
+  float w = 0.5*u_res.x/u_res.y;
+  float xc = mod(u_t*0.32, 2.4*w) - 1.2*w, x = p.x - xc;
+  float y = -0.02 + 0.13*exp(-x*x/0.0016)*sin(x*70.0 + 1.2);
+  return abs(p.y - y)*0.55 - 0.0035; }
+// the star sits to the right: the words get the left
+float star(vec2 p, float s){ s = max(s, 1e-3); vec2 q = abs(p - vec2(min(0.42, u_res.x/u_res.y*0.22), 0.0)) / s; float f = pow(pow(q.x, 0.5) + pow(q.y, 0.5), 2.0); return (f - 0.3) * s * 0.3; }
+float scaled(float i, vec2 p){ // the centred figures shrink together on a narrow screen
+  vec2 q = p / u_s; float d;
+  if (i < 2.5) d = lyrics(q); else if (i < 3.5) d = record(q); else if (i < 4.5) d = wave(q); else if (i < 5.5) d = screens(q); else if (i < 6.5) d = drop(p) / u_s; else d = pulse(p) / u_s;
+  return d * u_s; }
+float stage(float i, vec2 p){ if (i < 0.5) return hero(p); if (i < 1.5) return panel(p); if (i < 7.5) return scaled(i, p); return star(p, u_s); }
+void main(){
+  vec2 p = (gl_FragCoord.xy - 0.5*u_res) / u_res.y;
+  float e = u_e, d;
+  if (u_a > 6.5 && u_a < 7.5) { // the engine floods the screen, and the star surfaces from it
+    if (e < 0.5) { float k = smoothstep(0.0, 0.5, e); d = mix(clamp(stage(7.0, p), -0.4, 0.4), -2.0, k*k); }
+    else d = star(p, smoothstep(0.5, 1.0, e) * u_s);
+  } else if (u_a > 7.5) d = star(p, u_s);
+  else d = mix(clamp(stage(u_a, p), -0.4, 0.4), clamp(stage(u_a + 1.0, p), -0.4, 0.4), e);
+  if (u_lf < 1.0) { float k = u_lf*u_lf*(3.0 - 2.0*u_lf); d = mix(clamp(loading(p), -0.4, 0.4), clamp(d, -0.4, 0.4), k); e = max(e, 0.5*sin(3.14159*k)); } // the loader's island pours into the hero's
+  float wob = 0.0015 + 0.06*sin(3.14159*e); // still while it holds, liquid only on its way
+  d += (fbm(p*3.2 + vec2(0.0, mod(u_t, 300.0)*0.35)) - 0.5) * wob; // time wrapped: the noise's hash stays in its precise range
+  vec2 m = (u_m - 0.5*u_res) / u_res.y;
+  d -= 0.028 * exp(-dot(p - m, p - m) / 0.006); // it reaches for the pointer
+  float band = 2.6 / u_res.y; // the edge dissolves into grain over a couple of pixels, re-rolled a dozen times a second so it boils
+  vec3 p3 = fract(vec3(floor(gl_FragCoord.xy / 1.25), mod(floor(u_t*12.0), 61.0)).xyz * vec3(0.1031, 0.103, 0.0973)); // no sin: big numbers in it turned to static on some gpus
+  p3 += dot(p3, p3.yzx + 33.33);
+  float grain = fract((p3.x + p3.y) * p3.z);
+  float cover = 1.0 - smoothstep(-band, band, d);
+  float a = cover <= 0.0 ? 0.0 : cover >= 1.0 ? 1.0 : mix(cover, step(grain, cover), 0.5); // half grain, half soft: speckled, not static
+  // a new look pours in from the button: its own colors inside a ripple-edged circle
+  float rd = length(gl_FragCoord.xy - u_rc) / u_res.y - u_rr + (vnoise(p*9.0 + mod(u_t, 97.0))*0.03);
+  float nw = 1.0 - smoothstep(-0.004, 0.004, rd);
+  vec3 bg = mix(u_bg, u_bg2, nw), fg = mix(u_fg, u_fg2, nw);
+  vec3 shape = mix(fg, bg, u_inv), ground = mix(bg, fg, u_inv);
+  gl_FragColor = vec4(mix(ground, shape, a), 1.0);
+}`;
+const VERT = "attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }";
+const cv = $("#liquid");
+const gl = cv.getContext("webgl", { antialias: false, alpha: false, powerPreference: "high-performance" });
+let U = () => null;
+if (gl) {
+  const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG)); gl.linkProgram(prog); gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const at = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(at); gl.vertexAttribPointer(at, 2, gl.FLOAT, false, 0, 0);
+  const cache = {}; U = (n) => (n in cache ? cache[n] : (cache[n] = gl.getUniformLocation(prog, n)));
+}
+function wear(name, into = "") { const L = LOOKS[name]; gl?.uniform3fv(U(`u_bg${into}`), rgb(L.bg)); gl?.uniform3fv(U(`u_fg${into}`), rgb(L.fg)); }
+wear(look); wear(look, "2");
+
+const DPR = Math.min(1.25, devicePixelRatio || 1); // past this the edge looks no sharper, and the gpu pays for every pixel
+let W = 0, H = 0;
+function size() {
+  W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  gl?.viewport(0, 0, cv.width, cv.height); gl?.uniform2f(U("u_res"), cv.width, cv.height);
+  const aspect = W / H;
+  const fit = (W / 2 - 18) / (0.6 * H); // the panel edge to edge, with a margin
+  const k = clamp(W < 1000 ? fit : Math.min(fit, (0.5 * aspect - 250 / H) / 0.6), 0.2, 1); // wide screens leave room for its callouts each side
+  const s = clamp(aspect / 1.9, 0.3, 1); // the centred figures, as wide as the screen allows
+  const iw = clamp((W / 2 - (W < 760 ? 92 : 210)) / H, 0.05, 0.13); // the island's half width: never under the header's words
+  const phone = W < 760;
+  const hw = phone ? clamp(0.5 * aspect - 0.06, 0.12, 0.34) : Math.min(0.44, aspect * 0.2); // the magnified island: the hero's right half
+  const hx = phone ? 0 : 0.5 * aspect - hw - 0.07;
+  gl?.uniform1f(U("u_hw"), hw); gl?.uniform1f(U("u_hx"), hx);
+  root.style.setProperty("--hw", `${hw * H}px`); root.style.setProperty("--hx", `${hx * H}px`); root.style.setProperty("--hh", `${hw * 0.32 * H}px`);
+  gl?.uniform1f(U("u_k"), k); gl?.uniform1f(U("u_s"), s); gl?.uniform1f(U("u_iw"), iw);
+  root.style.setProperty("--iw", `${iw * H}px`);
+  root.style.setProperty("--pw", `${0.6 * k * H}px`); root.style.setProperty("--kh", `${k * H}px`); root.style.setProperty("--s", s);
+  dirty = true;
+}
+let dirty = true;
+size(); addEventListener("resize", size);
+
+let mx = -1e4, my = -1e4, smx = mx, smy = my;
+addEventListener("pointermove", (e) => { if (smx < -1e3) { smx = e.clientX; smy = e.clientY; } mx = e.clientX; my = e.clientY; dirty = true; }, { passive: true });
+
+/* ---------- the scroll: nine stages, each holding in its middle and pouring at its ends ---------- */
+const NAMES = $$(".ov").map((o) => o.dataset.name);
+const LEN = [1, 1.2, 1, 1, 1, 1, 4, 1, 1.1]; // the gallery holds longest: there's a strip to scroll through
+const STAGES = LEN.length, TOTAL = LEN.reduce((a, b) => a + b, 0);
+const VH_PER = 115; // viewport heights of scroll per stage
+$("#track").style.height = `${TOTAL * VH_PER + 100}vh`;
+let lenis = null;
+if (window.gsap) gsap.registerPlugin(ScrollTrigger);
+if (!still && window.Lenis && window.gsap) {
+  lenis = new Lenis({ duration: 1.2, easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)) });
+  lenis.on("scroll", ScrollTrigger.update);
+  gsap.ticker.add((t) => lenis.raf(t * 1000)); gsap.ticker.lagSmoothing(0);
+}
+let prog = 0; // 0 .. TOTAL across the track
+const trackProgress = () => { const r = $("#track").getBoundingClientRect(); return clamp(-r.top / (r.height - H), 0, 1); };
+function stageAt(p) { // which stage, how far into its pour, and how far through the stage
+  let at = p * TOTAL;
+  for (let i = 0; i < STAGES; i++) { if (at <= LEN[i] || i === STAGES - 1) return { i, f: clamp(at / LEN[i], 0, 1) }; at -= LEN[i]; }
+  return { i: STAGES - 1, f: 1 };
+}
+const ease = (x) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
+
+/* ---------- the big words melt in and out: an svg filter each, live only while it moves ---------- */
+const melts = $$("[data-melt]");
+const MELT_OUT = 220;
+// a soft white dot: where the pointer is, the second pass's noise is let through; everywhere else stays still
+const DOT = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3CradialGradient id='g'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.55' stop-color='%23fff' stop-opacity='.8'/%3E%3Cstop offset='1' stop-color='%23fff' stop-opacity='0'/%3E%3C/radialGradient%3E%3Ccircle cx='50' cy='50' r='50' fill='url(%23g)'/%3E%3C/svg%3E";
+const HOVER_R = 130; // px: how much of a word melts under the pointer
+$("#melts").innerHTML = melts.map((_, i) => `<filter id="m${i}" x="-20%" y="-40%" width="140%" height="180%" color-interpolation-filters="sRGB">
+  <feTurbulence type="fractalNoise" baseFrequency=".012 .05" numOctaves="2" seed="${i * 7 + 3}" result="n"/>
+  <feDisplacementMap class="whole" in="SourceGraphic" in2="n" scale="${MELT_OUT}" xChannelSelector="R" yChannelSelector="G" result="a"/>
+  <feTurbulence type="fractalNoise" baseFrequency=".55" numOctaves="2" seed="${i + 9}" result="n3"/>
+  <feDisplacementMap in="a" in2="n3" scale="4" xChannelSelector="R" yChannelSelector="G" result="c"/>
+  <feGaussianBlur in="c" stdDeviation=".8" result="d"/>
+  <feComponentTransfer in="d" result="e"><feFuncA type="table" tableValues="0 0 .4 1 1"/></feComponentTransfer>
+  <feTurbulence class="boil" type="fractalNoise" baseFrequency=".8" numOctaves="1" seed="1" result="sn"/>
+  <feImage href="${DOT}" x="-9999" y="-9999" width="${HOVER_R * 2}" height="${HOVER_R * 2}" preserveAspectRatio="none" result="g"/>
+  <feComposite class="amt" in="sn" in2="g" operator="arithmetic" k1="0" k2="0" k3="0" k4="0" result="sg"/>
+  <feComponentTransfer in="sg" result="holes"><feFuncA type="discrete" tableValues="0 0 0 0 1 1"/></feComponentTransfer>
+  <feComposite in="e" in2="holes" operator="out"/></filter>`).join(""); // ink edges, roughened and bled round; under the pointer, grain eats into them like static, and nothing moves
+const meltNow = melts.map(() => ({ v: MELT_OUT, h: 0 }));
+melts.forEach((el, i) => (el.style.filter = `url(#m${i})`));
+function filterOff() {} // the rough edge stays on: the words are still, so the browser keeps the filtered result
+function melt(i, to, dur) { // the whole word, smeared to nothing or settled clear
+  const el = melts[i], f = $(`#m${i} .whole`), o = meltNow[i];
+  el.style.filter = `url(#m${i})`;
+  if (still || !window.gsap) { o.v = to; f.setAttribute("scale", String(to)); filterOff(i); return; }
+  gsap.to(o, { v: to, duration: dur, ease: to ? "power2.in" : "expo.out", overwrite: "auto", onUpdate: () => f.setAttribute("scale", o.v.toFixed(1)), onComplete: () => filterOff(i) });
+}
+melts.forEach((el, i) => { // under the pointer the word's edges break into boiling grain, like the liquid's; the letters never move
+  const amt = $(`#m${i} .amt`), boil = $(`#m${i} .boil`), dot = $(`#m${i} feImage`);
+  const o = meltNow[i];
+  let seed = 1, boiling = 0;
+  const STATIC = 1.7; // how much grain at the pointer's middle
+  const tick = () => { seed = (seed % 97) + 1; boil.setAttribute("seed", String(seed)); if (o.h > 0.02) boiling = setTimeout(tick, 80); else boiling = 0; }; // re-rolled a dozen times a second, as the liquid's edge is
+  el.addEventListener("pointermove", (e) => {
+    if (still || !window.gsap || meltOf[shown] !== i) return;
+    const r = el.getBoundingClientRect();
+    dot.setAttribute("x", (e.clientX - r.left - HOVER_R).toFixed(0)); dot.setAttribute("y", (e.clientY - r.top - HOVER_R).toFixed(0));
+    gsap.timeline().to(o, { h: STATIC, duration: 0.15, ease: "power2.out", overwrite: "auto", onUpdate: () => amt.setAttribute("k1", o.h.toFixed(3)) })
+      .to(o, { h: 0, duration: 0.9, delay: 0.25, ease: "power2.out", onUpdate: () => amt.setAttribute("k1", o.h.toFixed(3)) });
+    if (!boiling) tick();
+  });
+});
+const ovs = $$(".ov");
+// every stage gets its number large and faint behind it, and a spec sheet: only what the app really does
+const SPECS = [
+  { at: "right:var(--m); top:54vh", rows: [["Size", "260 × 34 px"], ["Opens", "a mouse rest · Win Alt A"], ["Over a game", "out of the way"]] },
+  { at: "left:var(--m); top:calc(var(--kh) * .48 + 46px)", rows: [["Looks", "dark · light · glass · more"], ["Colors", "wallpaper, album or yours"], ["Edges", "top · left · right"]] },
+  { at: "right:var(--m); top:40vh", rows: [["Sources", "3"], ["Timing", "by line, or by word"], ["Direction", "left · right to left"], ["Nudge", "[ and ]"]] },
+  { at: "left:var(--m); top:42vh", rows: [["Speed", "33⅓, or slower"], ["Needle", "sound on or off"], ["Label", "the song's name"], ["Scrub", "turn it by hand"]] },
+  { at: "left:var(--m); top:42vh", rows: [["Bars", "48"], ["Looks", "glow · waveform · edge"], ["Colors", "from the cover"]] },
+  { at: "left:var(--m); top:13vh", rows: [["Modes", "follow · every screen"], ["Screens", "added without a restart"], ["Fullscreen", "per screen"]] },
+  null,
+  { at: "left:var(--m); top:13vh", rows: [["Language", "C++20"], ["Drawing", "Direct2D"], ["Composition", "DirectComposition"], ["Runtime", "none"]] },
+  { at: "right:var(--m); top:30vh", rows: [["License", "GPL-3.0"], ["Install", "none, one file"], ["Updates", "by themselves"], ["Checksum", "SHA-256 with each release"]] },
+];
+ovs.forEach((o, i) => {
+  o.insertAdjacentHTML("afterbegin", `<span class="numeral" aria-hidden="true">${String(i + 1).padStart(2, "0")}</span>`);
+  const s = SPECS[i];
+  if (s) o.insertAdjacentHTML("beforeend", `<dl class="spec mono" style="${s.at}">${s.rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`);
+});
+const meltOf = ovs.map((o) => melts.indexOf($("[data-melt]", o)));
+let shown = -1;
+function show(n) {
+  if (n === shown) return;
+  if (shown >= 0 && meltOf[shown] >= 0) melt(meltOf[shown], MELT_OUT, 0.45);
+  shown = n;
+  ovs.forEach((o, i) => { o.classList.toggle("on", i === n); o.toggleAttribute("inert", i !== n); });
+  if (meltOf[n] >= 0) melt(meltOf[n], 0, 1.5);
+  $("#where").textContent = `${String(n + 1).padStart(2, "0")} / ${String(STAGES).padStart(2, "0")} — ${NAMES[n]}`;
+  document.body.classList.toggle("inv", n === STAGES - 1);
+  if (window.gsap && !still) gsap.fromTo($$(".call i", ovs[n]), { scaleX: 0 }, { scaleX: 1, duration: 1, delay: .3, stagger: .08, ease: "expo.out" });
+}
+show(0);
+
+/* ---------- the strip of screenshots: scroll moves it, a drag flings it ---------- */
+const strip = $("#strip");
+let drag = 0, dragV = 0, held = false, lastX = 0, stripX = 0, stripLast = 0;
+strip.addEventListener("pointerdown", (e) => { held = true; lastX = e.clientX; dragV = 0; strip.classList.add("drag"); strip.setPointerCapture(e.pointerId); });
+strip.addEventListener("pointermove", (e) => { if (!held) return; const dx = e.clientX - lastX; lastX = e.clientX; drag += dx; dragV = dx; dirty = true; });
+const letGo = () => { held = false; strip.classList.remove("drag"); };
+strip.addEventListener("pointerup", letGo); strip.addEventListener("pointercancel", letGo);
+const figs = $$("figure", strip), shots = $$(".shot"), roomEl = $("#room"), stripFig = $(".strip-fig"), roomCap = $("#roomCap");
+const ROOM_CAPS = ["FIG. 07.1 · Fullscreen, vinyl — the record slides out, the arm drops in", "FIG. 07.2 · Every song brings its own sleeve, label and colors", "FIG. 07.3 · Fullscreen lyrics, each line lit as it's sung"];
+const ROOM_PART = 0.56; // the first stretch of the stage is the room, the rest the carousel
+const monitor = $("#monitor"), roomWords = $("#roomWords");
+let monW = 0, monFull = 1, monShift = 0;
+function sizeRoom() { // the monitor sits right of its words; fully zoomed, its screen covers the window edge to edge
+  const phone = W < 760;
+  monW = phone ? W * 0.9 : Math.min(W * 0.55, H * 0.6 * (1366 / 767));
+  monFull = Math.max(W / monW, H / (monW * 767 / 1366)) * 1.002;
+  monShift = phone ? 0 : W * 0.17;
+  root.style.setProperty("--mon-w", `${monW}px`);
+}
+sizeRoom(); addEventListener("resize", sizeRoom);
+function drip(level, t) { // the next shot hangs from the top edge and drips down, as the panel drips from the island
+  if (level <= 0) return "polygon(0 0, 100% 0, 100% 0, 0 0)";
+  if (level >= 1) return "";
+  const pts = ["0% -1%", "100% -1%"], N = 28;
+  for (let n = N; n >= 0; n--) {
+    const x = (n / N) * 100;
+    let y = level * 118 - 14; // the front, sinking past the bottom by the end
+    y += 9 * Math.sin(level * Math.PI) * (Math.exp(-((x - 22) ** 2) / 60) + 0.8 * Math.exp(-((x - 61) ** 2) / 40) + 0.6 * Math.exp(-((x - 84) ** 2) / 30)); // three drips run ahead
+    y += 1.2 * Math.sin(x * 0.21 + t * 2.2) * Math.sin(level * Math.PI); // and the front wobbles as it goes
+    pts.push(`${x.toFixed(1)}% ${clamp(y, -1, 101).toFixed(2)}%`);
+  }
+  return `polygon(${pts.join(",")})`;
+}
+function placeRoom(f, t = 0) {
+  const u = clamp(f / ROOM_PART, 0, 1);
+  const z = ease(clamp((u - 0.06) / 0.2, 0, 1)); // the zoom into the screen
+  const sc = 1 + (monFull - 1) * z;
+  monitor.style.transform = `translate3d(${(monShift * (1 - z)).toFixed(1)}px,${W < 760 ? (H * 0.1 * (1 - z)).toFixed(1) : 0}px,0) scale(${sc.toFixed(4)})`;
+  roomWords.style.opacity = String(clamp(1 - z * 2.2, 0, 1)); roomWords.style.transform = `translate3d(${(-60 * z).toFixed(1)}px,0,0)`;
+  const v = clamp((u - 0.26) / 0.74, 0, 1) * shots.length, j = Math.min(shots.length - 1, Math.floor(v)), frac = v - j;
+  shots.forEach((s, k) => {
+    const level = k === 0 ? 1 : k <= j ? 1 : k === j + 1 ? ease(clamp((frac - 0.55) / 0.45, 0, 1)) : 0;
+    s.style.clipPath = drip(level, t);
+    s.style.visibility = level > 0 ? "visible" : "hidden";
+    const life = clamp(v - k + 0.5, 0, 1.5) / 1.5; // held, it drifts a little closer
+    $("img", s).style.transform = `scale(${(1.08 - 0.08 * ease(life)).toFixed(4)})`;
+  });
+  roomCap.textContent = ROOM_CAPS[j];
+  roomCap.style.opacity = String(clamp((z - 0.8) / 0.2, 0, 1));
+  roomEl.style.setProperty("--scrim", String(clamp((z - 0.8) / 0.2, 0, 1)));
+  const out = clamp((f - ROOM_PART) / 0.06, 0, 1); // the room steps back and the carousel takes its place
+  roomEl.style.opacity = String(1 - out); roomEl.style.transform = `scale(${(1 - 0.08 * out).toFixed(4)})`;
+  roomEl.style.visibility = out >= 1 ? "hidden" : "visible";
+  const into = clamp((f - ROOM_PART - 0.03) / 0.06, 0, 1);
+  strip.style.opacity = String(into); stripFig.style.opacity = String(into);
+  strip.style.visibility = into > 0 ? "visible" : "hidden";
+  return clamp((f - ROOM_PART - 0.05) / (1 - ROOM_PART - 0.05), 0, 1);
+}
+function placeStrip(f) {
+  if (!held) { drag += dragV; dragV *= 0.92; } // the fling carries on and slows
+  const travel = Math.max(0, strip.scrollWidth - W);
+  drag = clamp(drag, -travel, travel);
+  const x = clamp(-ease(f) * travel + drag, -travel, 0);
+  const v = x - stripLast; stripLast = x;
+  if (Math.abs(x - stripX) > 0.1) { stripX = x; strip.style.transform = `translate3d(${x.toFixed(1)}px,0,0)`; }
+  const split = clamp(v * 0.35, -9, 9); // the faster it slides, the more its colors part
+  figs.forEach((fig) => { // on a curve: the one in the middle faces you, the rest bend away and dim; offsets, not rects, so no layout is forced
+    const off = clamp((x + fig.offsetLeft + fig.offsetWidth / 2 - W / 2) / (W * 0.62), -1.6, 1.6), a = Math.abs(off);
+    fig.style.transform = `rotateY(${(-off * 32).toFixed(2)}deg) translateZ(${(-a * 170).toFixed(1)}px) scale(${(1 - a * 0.08).toFixed(3)})`;
+    fig.style.opacity = String(clamp(1 - a * 0.55, 0.2, 1).toFixed(3));
+    fig.style.filter = Math.abs(split) > 0.4 ? `drop-shadow(${split}px 0 0 rgba(255,40,110,.5)) drop-shadow(${-split}px 0 0 rgba(40,190,255,.5))` : a > 0.35 ? `blur(${((a - 0.35) * 2.2).toFixed(2)}px)` : "";
+  });
+  return Math.abs(dragV) > 0.05 || Math.abs(v) > 0.05;
+}
+
+/* ---------- a new look, poured from the button ---------- */
+let reveal = null;
+$("#lookBtn").addEventListener("click", (e) => {
+  if (reveal) return;
+  const next = ORDER[(ORDER.indexOf(look) + 1) % ORDER.length];
+  try { localStorage.setItem("astraeus-look", next); } catch (_) {}
+  $("#lookName").textContent = LOOKS[next].name;
+  wear(next, "2");
+  const r = e.currentTarget.getBoundingClientRect();
+  gl?.uniform2f(U("u_rc"), (r.left + r.width / 2) * DPR, (H - r.top - r.height / 2) * DPR);
+  const o = { r: 0 }, far = Math.hypot(W, H) / H + 0.1;
+  const finish = () => { look = next; wear(next); gl?.uniform1f(U("u_rr"), 0); reveal = null; dirty = true; };
+  setTimeout(() => (root.dataset.look = next), still ? 0 : 420); // the words change color as the pour passes them
+  if (still || !window.gsap || !gl) { finish(); return; }
+  reveal = gsap.to(o, { r: far, duration: 1.1, ease: "power2.inOut", onUpdate: () => { gl.uniform1f(U("u_rr"), o.r); dirty = true; }, onComplete: finish });
+});
+
+/* ---------- small things: the readout, sharing, back to the top ---------- */
+const read = $("#read");
+const signed = (v) => (v < 0 ? "-" : "+") + String(Math.abs(Math.round(v))).padStart(4, "0");
+$("#share").addEventListener("click", async () => {
+  const data = { title: document.title, url: location.href.split("#")[0] };
+  try { if (navigator.share) await navigator.share(data); else { await navigator.clipboard.writeText(data.url); $("#share").textContent = "Link copied"; } } catch (_) {}
+});
+$("#toTop").addEventListener("click", (e) => { e.preventDefault(); if (lenis) lenis.scrollTo(0, { duration: 2.4 }); else scrollTo(0, 0); });
+
+/* ---------- one loop: draws only what changed, and rests when nothing has ---------- */
+let lastP = -1, lastDraw = 0, idleFrames = 0;
+const LIVE = new Set([2, 3, 4, 5, 6, 7]); // these figures move by themselves: they need every frame
+function frame(ms) {
+  requestAnimationFrame(frame);
+  if (document.hidden) return;
+  const t = still ? 2 : ms / 1000;
+  const p = trackProgress();
+  if (p !== lastP) { lastP = p; dirty = true; }
+  const { i, f } = stageAt(p);
+  const e = i >= STAGES - 1 ? 0 : ease(clamp((f - 0.72) / 0.28, 0, 1)); // each stage holds, then pours into the next over its last stretch
+  const live = LIVE.has(i) || (e > 0 && e < 1) || reveal || Math.abs(smx - mx) + Math.abs(smy - my) > 0.5;
+  smx += (mx - smx) * 0.14; smy += (my - smy) * 0.14;
+  if (i === 6) { const sf = placeRoom(f, t); if (placeStrip(sf)) dirty = true; }
+  $("#prog").style.transform = `scaleY(${p.toFixed(4)})`;
+  if (!live && !dirty) { if (ms - lastDraw < 80) return; } // at rest: a dozen frames a second, enough for the edge to boil and no more
+  dirty = false; lastDraw = ms;
+  if (gl) {
+    gl.uniform1f(U("u_t"), t); gl.uniform1f(U("u_a"), i); gl.uniform1f(U("u_e"), e);
+    gl.uniform1f(U("u_inv"), (i === STAGES - 2 && e >= 0.5) || i >= STAGES - 1 ? 1 : 0);
+    gl.uniform2f(U("u_m"), smx * DPR, (H - smy) * DPR);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  show(Math.min(STAGES - 1, e >= 0.5 ? i + 1 : i));
+  read.textContent = `${new Date().toTimeString().slice(0, 8)} · X ${signed(mx < -1e3 ? 0 : mx - W / 2)} Y ${signed(my < -1e3 ? 0 : H / 2 - my)}`;
+}
+requestAnimationFrame(frame);
+
+/* ---------- the loader: the island grows along the top as the page gets ready, then the page opens under it ---------- */
+(function load() {
+  const loader = $("#loader"), n = $("#loaderN"), word = $("#loaderW"), line = $("#loaderLine");
+  const MIN_MS = 1500; // long enough to read as an entrance, short enough not to wait on
+  const t0 = performance.now();
+  lenis?.stop();
+  gl?.uniform1f(U("u_ld"), 0); gl?.uniform1f(U("u_lf"), 0);
+  const got = { v: 0 }, set = () => { n.textContent = `${String(Math.round(got.v)).padStart(3, "0")} %`; line.style.transform = `scaleX(${(got.v / 100).toFixed(3)})`; gl?.uniform1f(U("u_ld"), got.v / 100); dirty = true; };
+  const step = (to, label) => { word.textContent = label; if (window.gsap && !still) gsap.to(got, { v: to, duration: 0.6, ease: "power2.out", onUpdate: set }); else { got.v = to; set(); } };
+  step(40, "Pouring the island");
+  const fonts = document.fonts ? document.fonts.ready : Promise.resolve(); // only what the loader and the hero need; every picture waits
+  const timeout = new Promise((r) => setTimeout(r, 3000)); // never stuck behind a slow font
+  fonts.then(() => step(80, "Setting the type"));
+  Promise.race([fonts, timeout]).then(() => {
+    const wait = Math.max(0, MIN_MS - (performance.now() - t0));
+    setTimeout(() => {
+      step(100, "Ready");
+      const done = () => { loader.remove(); lenis?.start(); scrollTo(0, 0); dirty = true; };
+      const open = () => { root.classList.add("ready"); shown = -1; show(0); loadPictures(); }; // the title melts in as the loader's words leave; the screenshots start loading only now
+      if (!window.gsap || still) { gl?.uniform1f(U("u_lf"), 1); open(); done(); return; }
+      const pour = { v: 0 };
+      gsap.to(pour, { v: 1, duration: 1.6, delay: 0.55, ease: "power2.inOut", onUpdate: () => { gl?.uniform1f(U("u_lf"), pour.v); dirty = true; } }); // the loader's island swells into the magnified one
+      gsap.to(loader.children, { opacity: 0, y: -12, filter: "blur(6px)", duration: 0.6, delay: 0.5, stagger: 0.06, ease: "power2.in" });
+      setTimeout(open, 1100);
+      setTimeout(done, 2300);
+    }, wait);
+  });
+  function loadPictures() { $$("img[data-src]").forEach((im) => { im.src = im.dataset.src; im.removeAttribute("data-src"); }); }
+})();
+
+/* ---------- the cursor ---------- */
+if (matchMedia("(pointer: fine)").matches && !still && window.gsap) {
+  root.classList.add("has-cur");
+  const cur = $("#cur"), dot = $(".cur-dot", cur), ring = $(".cur-ring", cur), wordEl = $("#curWord");
+  const dx = gsap.quickTo(dot, "x", { duration: 0.05 }), dy = gsap.quickTo(dot, "y", { duration: 0.05 });
+  const rx = gsap.quickTo([ring, wordEl], "x", { duration: 0.4, ease: "expo.out" }), ry = gsap.quickTo([ring, wordEl], "y", { duration: 0.4, ease: "expo.out" });
+  let seenCur = false;
+  addEventListener("pointermove", (e) => {
+    if (!seenCur) { seenCur = true; gsap.set([dot, ring, wordEl], { x: e.clientX, y: e.clientY }); gsap.to(cur, { opacity: 1, duration: 0.3 }); }
+    dx(e.clientX); dy(e.clientY); rx(e.clientX); ry(e.clientY);
+  }, { passive: true });
+  document.addEventListener("pointerover", (e) => {
+    const t = e.target, what = t.closest(".strip") ? "Drag" : t.closest("a, button") ? "Open" : "";
+    cur.classList.toggle("big", !!what); if (what) wordEl.textContent = what;
+  });
+  document.documentElement.addEventListener("pointerleave", () => gsap.to(cur, { opacity: 0, duration: 0.2 }));
+  document.documentElement.addEventListener("pointerenter", () => gsap.to(cur, { opacity: 1, duration: 0.2 }));
+}
+})();
+</script>
 </body>
 </html>
