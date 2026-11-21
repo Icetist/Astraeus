@@ -37,6 +37,31 @@ public:
     void Raise() { if (hwnd) SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); } // over what just went fullscreen
     void Refresh() { if (wantUp || Editing()) Poke(); } // the theme moved: it paints only when told
     void OnDisplayChange(HMONITOR on = nullptr);
+    void Measure(HMONITOR on); // the screen's size in dips
+    HMONITOR Screen() const { return screen; }
+    struct SharedDev {
+        uint32_t gen = 0;
+        ComPtr<ID3D11Device> d3d;
+        ComPtr<IDXGIFactory2> factory;
+        ComPtr<ID2D1Device> d2d;
+        ComPtr<IDCompositionDesktopDevice> dcomp;
+        ComPtr<ID2D1Bitmap1> cover;
+        ComPtr<ID2D1Bitmap> coverBlur;
+        uint64_t coverId = ~0ull;
+        void Reset() {
+            cover.Reset();
+            coverBlur.Reset();
+            coverId = ~0ull;
+            dcomp.Reset();
+            d2d.Reset();
+            factory.Reset();
+            if (d3d) gfx::Settle(d3d.Get());
+            d3d.Reset();
+        }
+        bool Ok() const { return d3d && factory && d2d && dcomp; }
+    };
+    std::shared_ptr<SharedDev> Shared() const { return dev; }
+    void SetShared(std::shared_ptr<SharedDev> s) { dev = std::move(s); }
     void SetOverApp(bool v) { // it wears its own body over an app
         if (v == onApp) return;
         onApp = v;
@@ -100,7 +125,6 @@ private:
     const Spec::Shape& Sh() const { return spec.shape[Ctx()]; }
     int FillNow() const { return Ctx() ? spec.fillApps : spec.fill; }
 
-    void Measure(HMONITOR on); // the screen's size in dips
     void DropAppItems();
     void Span(int edge, float& lo, float& hi) const; // the stretch of that edge it may sit on
     Pose Goal(int ctx) const; // where the spec puts that one
@@ -205,7 +229,8 @@ private:
     int midAtPick = Model::kMidAuto, holderAtPick = -1; // the saved choice, and the item that held the middle then
     int wallFor = 0; // 0 none, 1 glass only, 2 sharp too
 
-    ComPtr<ID3D11Device> d3d;
+    std::shared_ptr<SharedDev> dev;
+    uint32_t devGen = 0;
     ComPtr<ID2D1DeviceContext> ctx;
     ComPtr<IDXGISwapChain2> swap;
     ComPtr<ID2D1Bitmap1> buf, wall;
@@ -213,16 +238,12 @@ private:
     D2D1_SIZE_F wallSize{}; // in pixels
     Color wallColor{0.1f, 0.1f, 0.12f, 1}; // no picture: windows' plain color
     DWORD wallPos = 0;
-    ComPtr<IDCompositionDesktopDevice> dcomp;
     ComPtr<IDCompositionTarget> target;
     ComPtr<IDCompositionVisual2> visual;
     HANDLE frameWait = nullptr;
     UINT bufW = 0, bufH = 0;
     std::unique_ptr<Canvas> canvas;
     ComPtr<ID2D1Geometry> body;
-    ComPtr<ID2D1Bitmap1> cover;
-    ComPtr<ID2D1Bitmap> coverBlur;
-    uint64_t coverId = ~0ull;
     float bars[4] = {}; // the small visualizer's levels, eased
     float bodyLen = -1, bodyThick = -1, bodyFlat = -1;
 };

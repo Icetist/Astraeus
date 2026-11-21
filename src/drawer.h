@@ -58,9 +58,13 @@ public:
     bool DeskNeeds() const; // the desktop pill has a frame to draw
     HANDLE DeskWait() const;
     void DeskFrame();
+    static bool DeskFront(HWND w);
 
 private:
     std::unique_ptr<DeskPill> desk; // the long pill: its own window, on its own edge
+    std::vector<std::unique_ptr<DeskPill>> extraDesks; // pills on other monitors when every-screen is on
+    int deskEveryNow = -1;
+    void SyncDeskPills();
     bool pillView = false; // nothing of an app's lies under it
     bool longHeld = false; // it's standing in for the small pill over an app: called by a hover, or held by the stay rules
     void SyncDesk(); // it comes or goes with the desktop, the panel and fullscreen apps

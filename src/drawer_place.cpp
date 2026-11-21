@@ -27,9 +27,12 @@ bool IsClass(HWND w, std::initializer_list<const wchar_t*> names) {
     return false;
 }
 
-bool DeskFront(HWND w) { return IsClass(w, {L"Progman", L"WorkerW"}); } // show desktop, or a click on the wallpaper
-bool ShellFront(HWND w) { return DeskFront(w) || IsClass(w, {L"Shell_TrayWnd", L"Shell_SecondaryTrayWnd"}); } // nothing that maximizes or snaps
+}
 
+bool Drawer::DeskFront(HWND w) { return IsClass(w, {L"Progman", L"WorkerW"}); } // show desktop, or a click on the wallpaper
+
+namespace {
+bool ShellFront(HWND w) { return Drawer::DeskFront(w) || IsClass(w, {L"Shell_TrayWnd", L"Shell_SecondaryTrayWnd"}); } // nothing that maximizes or snaps
 }
 
 void Drawer::Place() {
@@ -152,9 +155,16 @@ void Drawer::OnDeskTimer() {
     HWND front = GetForegroundWindow();
     HookFront(front);
     bool view = DeskFront(front) || !AppBelow(); // the desktop has the focus, or nothing of an app's lies under the island
-    pillView = model.LongPill() && desk && (DeskFront(front) || !AppIn(desk->Spot(mon))); // the long pill has its own patch of screen to look under
+    HMONITOR deskMon = model.deskEveryScreen ? MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY) : mon;
+    pillView = model.LongPill() && desk && (DeskFront(front) || !AppIn(desk->Spot(deskMon))); // the long pill has its own patch of screen to look under
     bool overNow = model.LongPill() && desk ? !pillView : !view; // one answer for the theme and the long pill's body: with the long pill on, its own patch of screen
     if (desk) desk->SetOverApp(overNow);
+    for (auto& d : extraDesks) {
+        if (!d) continue;
+        HMONITOR em = d->Screen();
+        bool ev = DeskFront(front) || !AppIn(d->Spot(em));
+        d->SetOverApp(!ev);
+    }
     if (!opened) { // open, it keeps the theme it opened with: windows switching under it never repaint it mid-use; it catches up as it closes
         model.overApp = model.appsTheme != 0 && overNow;
         SyncThemeNow(); // before it comes or goes: it shows up in the right colors
@@ -184,6 +194,7 @@ void Drawer::ApplyPlace() {
     FreeDev(); // swapchain is sized for the old edge
     Place();
     BuildStrips();
+    SyncDeskPills();
     needsFrame = false;
     SyncHide(); // the new screen may or may not have a game on it
     Log(L"placed from settings");

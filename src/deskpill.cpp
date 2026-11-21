@@ -97,7 +97,7 @@ bool WallInfo(const RECT& mon, std::wstring& path, DWORD& pos, Color& solid) { /
 
 }
 
-DeskPill::DeskPill(Model& m) : model(m) {}
+DeskPill::DeskPill(Model& m) : model(m), dev(std::make_shared<SharedDev>()) {}
 
 DeskPill::~DeskPill() {
     FreeDev();
@@ -381,16 +381,28 @@ bool DeskPill::SizeBuffers(UINT w, UINT h) {
 }
 
 bool DeskPill::EnsureDev() {
+    if (!dev) dev = std::make_shared<SharedDev>();
+    if (ctx && devGen != dev->gen) {
+        FreeDev();
+    }
     if (ctx) return true;
-    UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_SINGLETHREADED;
-    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, nullptr, 0, D3D11_SDK_VERSION, &d3d, nullptr, nullptr)) &&
-        FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags, nullptr, 0, D3D11_SDK_VERSION, &d3d, nullptr, nullptr)))
-        return false;
-    ComPtr<IDXGIDevice> dxgi;
-    ComPtr<ID2D1Device> device;
-    ComPtr<IDXGIAdapter> adapter;
-    ComPtr<IDXGIFactory2> factory;
-    ComPtr<IDXGISwapChain1> sc;
+    if (!dev->Ok()) {
+        dev->Reset();
+        UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_SINGLETHREADED;
+        if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, nullptr, 0, D3D11_SDK_VERSION, &dev->d3d, nullptr, nullptr)) &&
+            FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags, nullptr, 0, D3D11_SDK_VERSION, &dev->d3d, nullptr, nullptr)))
+            return false;
+        ComPtr<IDXGIDevice> dxgi;
+        ComPtr<IDXGIAdapter> adapter;
+        if (FAILED(dev->d3d.As(&dxgi)) || FAILED(gfx::D2D()->CreateDevice(dxgi.Get(), &dev->d2d)) ||
+            FAILED(dxgi->GetAdapter(&adapter)) || FAILED(adapter->GetParent(IID_PPV_ARGS(&dev->factory))) ||
+            FAILED(DCompositionCreateDevice2(nullptr, IID_PPV_ARGS(&dev->dcomp)))) {
+            dev->Reset();
+            return false;
+        }
+        dev->gen++;
+    }
+    devGen = dev->gen;
     RECT wr{};
     GetClientRect(hwnd, &wr);
     DXGI_SWAP_CHAIN_DESC1 d = {};
@@ -403,8 +415,10 @@ bool DeskPill::EnsureDev() {
     d.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
     d.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
     d.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
-    if (FAILED(d3d.As(&dxgi)) || FAILED(gfx::D2D()->CreateDevice(dxgi.Get(), &device)) || FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &ctx)) ||
-        FAILED(dxgi->GetAdapter(&adapter)) || FAILED(adapter->GetParent(IID_PPV_ARGS(&factory))) || FAILED(factory->CreateSwapChainForComposition(d3d.Get(), &d, nullptr, &sc)) || FAILED(sc.As(&swap))) {
+    ComPtr<IDXGISwapChain1> sc;
+    if (FAILED(dev->d2d->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &ctx)) ||
+        FAILED(dev->factory->CreateSwapChainForComposition(dev->d3d.Get(), &d, nullptr, &sc)) ||
+        FAILED(sc.As(&swap))) {
         FreeDev();
         return false;
     }
@@ -416,8 +430,8 @@ bool DeskPill::EnsureDev() {
         return false;
     }
     ctx->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-    if (FAILED(DCompositionCreateDevice2(nullptr, IID_PPV_ARGS(&dcomp))) || FAILED(dcomp->CreateTargetForHwnd(hwnd, TRUE, &target)) || FAILED(dcomp->CreateVisual(&visual)) ||
-        FAILED(visual->SetContent(swap.Get())) || FAILED(target->SetRoot(visual.Get())) || FAILED(dcomp->Commit())) {
+    if (FAILED(dev->dcomp->CreateTargetForHwnd(hwnd, TRUE, &target)) || FAILED(dev->dcomp->CreateVisual(&visual)) ||
+        FAILED(visual->SetContent(swap.Get())) || FAILED(target->SetRoot(visual.Get())) || FAILED(dev->dcomp->Commit())) {
         FreeDev();
         return false;
     }
@@ -432,23 +446,17 @@ void DeskPill::FreeDev() {
     ui.Forget();
     canvas.reset();
     body.Reset();
-    cover.Reset();
-    coverBlur.Reset();
-    coverId = ~0ull;
     wall.Reset();
     wallBlur.Reset();
     wallFor = 0;
     buf.Reset();
     if (visual) visual->SetContent(nullptr);
-    if (dcomp) dcomp->Commit();
+    if (dev && dev->dcomp) dev->dcomp->Commit();
     visual.Reset();
     target.Reset();
-    dcomp.Reset();
     swap.Reset();
     if (frameWait) CloseHandle(frameWait), frameWait = nullptr;
     ctx.Reset();
-    if (d3d) gfx::Settle(d3d.Get());
-    d3d.Reset();
     bufW = bufH = 0;
 }
 
@@ -507,15 +515,16 @@ float DeskPill::ItemW(int kind, const std::wstring& text, int icon, bool idle, f
 bool DeskPill::Has(int kind) const { return std::find(spec.items.begin(), spec.items.end(), kind) != spec.items.end(); }
 
 void DeskPill::SyncCover() {
+    if (!dev) return;
     uint64_t id = Has(Model::kDCover) && model.hasTrack ? model.track.coverId : 0;
-    if (id == coverId) return;
-    coverId = id;
-    cover.Reset();
-    coverBlur.Reset();
+    if (id == dev->coverId) return;
+    dev->coverId = id;
+    dev->cover.Reset();
+    dev->coverBlur.Reset();
     const auto& bytes = model.track.cover;
-    if (!id || !bytes || bytes->empty()) return;
+    if (!id || !bytes || bytes->empty() || !ctx) return;
     ComPtr<IWICBitmapSource> src = gfx::Decode(bytes->data(), bytes->size(), kCoverPx);
-    if (src && SUCCEEDED(ctx->CreateBitmapFromWicBitmap(src.Get(), nullptr, &cover))) coverBlur = gfx::BakeBlur(ctx.Get(), cover.Get(), 6.0f);
+    if (src && SUCCEEDED(ctx->CreateBitmapFromWicBitmap(src.Get(), nullptr, &dev->cover))) dev->coverBlur = gfx::BakeBlur(ctx.Get(), dev->cover.Get(), 6.0f);
 }
 
 bool DeskPill::StepBars(float dt, double now) {
@@ -765,7 +774,7 @@ void DeskPill::DrawPill(const Theme& t, const Pose& p, float alpha) {
         if (!it.idle && it.kind == Model::kDCover) { // the song's art, rounded like an app icon
             float art = p.thick - kArtInset;
             D2D1_RECT_F r = Rect(x, y - art / 2, art, art);
-            if (cover) c.Art(cover.Get(), coverBlur.Get(), r, art * 0.24f, a);
+            if (dev && dev->cover) c.Art(dev->cover.Get(), dev->coverBlur.Get(), r, art * 0.24f, a);
             else c.Fill(r, art * 0.24f, ink.Alpha(0.14f * a)), c.Icon(glyph::Music, {x + art / 2, y}, art * 0.6f, lit.Alpha(a), true);
             return;
         }
@@ -947,6 +956,10 @@ void DeskPill::Frame(const Theme& shell) {
     input.pressed = input.released = input.rclick = false;
     input.wheel = 0;
     if (hr == D2DERR_RECREATE_TARGET) {
+        if (dev && devGen == dev->gen) {
+            dev->Reset();
+            dev->gen++;
+        }
         FreeDev();
         dirty = true;
         return;
@@ -954,6 +967,10 @@ void DeskPill::Frame(const Theme& shell) {
     bool calm = !moving && !busy && drag == Drag::None; // only the little bars are moving: a fraction of the frames
     hr = swap->Present(calm && barsMoving ? kBarsSync : 1, 0);
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
+        if (dev && devGen == dev->gen) {
+            dev->Reset();
+            dev->gen++;
+        }
         FreeDev();
         dirty = true;
         return;

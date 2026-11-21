@@ -619,6 +619,17 @@ void Screens(PageCtx& p, const D2D1_RECT_F& r, bool live) { // your monitors as 
     }
     D2D1_RECT_F pill = {in.right - 44, in.bottom - 18, in.right, in.bottom}; // every screen: the panel follows the mouse
     if (list.size() > 1) {
+        float evOn = ui.Smooth(Ui::Id("set.desk.every.sm"), m.deskEveryScreen ? 1.0f : 0, 18);
+        D2D1_RECT_F every = {in.right - 44 - 6 - 120, in.bottom - 18, in.right - 44 - 6, in.bottom};
+        Ui::Hit eh = live ? ui.Button(Ui::Id("set.desk.every"), every) : Ui::Hit{};
+        if (live) {
+            ui.Mark(Ui::Role::Toggle, m.deskEveryScreen != 0);
+            ui.Name(L"Pill on every screen");
+        }
+        c.Fill(every, 9, t.track.Alpha(0.8f).Mix(t.accent, evOn));
+        c.Text(L"Pill on every screen", every, Weight::Medium, 10.5f, t.textDim.Mix(t.onAccent, evOn).Mix(t.text, eh.hover ? 0.4f * (1 - evOn) : 0), Align::Center);
+        if (eh.clicked) m.SetPref(m.deskEveryScreen, L"DeskEveryScreen", m.deskEveryScreen ? 0 : 1);
+
         Ui::Hit ph = live ? ui.Button(Ui::Id("set.screens.all"), pill) : Ui::Hit{};
         c.Fill(pill, 9, t.track.Alpha(0.8f).Mix(t.accent, all));
         c.Text(L"All", pill, Weight::Medium, 10.5f, t.textDim.Mix(t.onAccent, all).Mix(t.text, ph.hover ? 0.4f * (1 - all) : 0), Align::Center);

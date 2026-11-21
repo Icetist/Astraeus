@@ -471,6 +471,7 @@ public:
     void SetPillMeters(bool gpu, bool meters); // what a showing pill wants kept fresh
     int pillLeft = kWWeather, pillRight = kWCpu; // its two status widgets
     int deskPill = 0; // the long pill on the desktop, in its own window
+    int deskEveryScreen = 0; // a long pill on every monitor at once
     bool LongPill() const { return deskPill != 0 && pillDesk != 0; } // the desktop pill's long form: with no pill on the desktop, no long one either
     bool AnyLong() const { return LongPill() || deskApps != 0; } // the long pill shows somewhere: on the desktop, over apps, or both
     enum { kEditFromLong, kEditFromDesk, kEditFromApps }; // who opened the long pill's editor: itself or settings, or the regular pill on the desktop or over an app

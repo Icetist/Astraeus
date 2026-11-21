@@ -186,6 +186,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
         sys::SaveNum(L"DeskPill", pillWas);
     }
     deskPill = pillWas != 0;
+    deskEveryScreen = flag(L"DeskEveryScreen", 0);
     deskFillApps = (std::clamp)(sys::ReadNum(L"DeskFillApps", sys::ReadNum(L"DeskFill", 0)), 0, 3);
     deskEdge = (std::clamp)(sys::ReadNum(L"DeskEdge", 0), 0, 2);
     deskPos = (std::clamp)(sys::ReadNum(L"DeskPos", 500), 0, 1000);
