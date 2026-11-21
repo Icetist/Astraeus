@@ -60,7 +60,7 @@ void Drawer::Place() {
     if (reachUsed > 0) work.bottom = (std::min)(work.bottom, mi.rcMonitor.bottom - (LONG)reachUsed); // halobar's dock floats without reserving room: kept clear of it too
     sideH = (std::min)(kSideMaxH, (work.bottom - work.top) / scale - 2 * cfg.fillet - kSideMargin); // sidebar fits between the taskbars
     FitSize(); // the layout's size, for this screen
-    if (barOn || Pinned()) Reserve(Pinned()); // pinned: its room on this screen; unpinned: given back
+    if (barOn || WantReserve()) Reserve(WantReserve()); // pinned or island: its room on this screen; unpinned: given back
     fastSync = 1; // a new screen, maybe a new refresh rate: judge it afresh
     framesSeen = framesLate = 0;
     Resize(wantH > 0 ? wantH : kStrip, false); // the depth asked for, not the right edge's padded window
@@ -180,6 +180,7 @@ void Drawer::ApplyPlace() {
     screenNow = model.screen;
     layNow = model.layout;
     pinNow = model.pinned != 0;
+    pillReserveNow = model.pillReserve != 0;
     floatNow = model.floating != 0;
     if (!screensNow) mon = sys::FindScreen(screenNow); // one screen: the picked one, primary if none
     island = islandLook = false; // a resting pill goes with the old edge; the next second brings it back on the new one
@@ -311,10 +312,12 @@ void Drawer::SyncHide() {
     if (hide) {
         Retract();
         ShowWindow(hwnd, SW_HIDE);
+        if (barOn) Reserve(false);
         needsFrame = false;
         FreeDev(); // a game is fullscreen, give the gpu back now
     } else {
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        if (WantReserve()) Reserve(true);
         if (ringing) SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 }
@@ -366,6 +369,7 @@ void Drawer::Retract() { // the open panel and every hover state gone at once, n
         spring = anim::Spring{}; // reset instantly, no close anim
         Resize(kStrip, false);
         ui.Forget();
+        if (barOn && !WantReserve()) Reserve(false);
     }
 }
 

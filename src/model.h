@@ -536,6 +536,7 @@ public:
     enum Layout { kLayHorizontal, kLayVertical, kLayouts }; // the panel's shape: the wide island, or a narrow column
     int layout = kLayHorizontal;
     int pinned = 0; // the panel stays open, windows make room for it
+    int pillReserve = 0; // reserve room for the island, windows end below it
     int floating = 0; // the panel is a card clear of the edge, not dripping from it
     static const wchar_t* LayoutName(int l);
 

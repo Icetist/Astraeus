@@ -85,9 +85,10 @@ private:
     static constexpr int kBoardFocusKey = 0x52A4; // ctrl+alt+shift+d: the keyboard into its dashboard
     void BoardKey();
     int layNow = Model::kLayHorizontal; // the layout the window is built for
-    bool pinNow = false, floatNow = false; // and the two options
+    bool pinNow = false, floatNow = false, pillReserveNow = false; // and the options
     bool Tall() const { return Side() || layNow == Model::kLayVertical; } // pages in their narrow column, the rail across the top
     bool Pinned() const { return pinNow; } // the panel stays open, the screen makes room for it
+    bool WantReserve() const;
     bool Floating() const { return floatNow; } // the panel is a card that glides in clear of the edge
     void FitSize(); // the panel's size for the layout and screen
     static constexpr float kFloatGap = 14; // the floating card's gap from the edge
@@ -365,7 +366,7 @@ private:
     float winW = 0; // current window length along the edge in dips
     int edgeNow = 0, screensNow = 0; // placement the window is built for
     std::wstring screenNow; // the picked screen the window is built for
-    bool PlaceStale() const { return model.Edge() != edgeNow || model.screens != screensNow || model.screen != screenNow || model.layout != layNow || (model.pinned != 0) != pinNow || (model.floating != 0) != floatNow; }
+    bool PlaceStale() const { return model.Edge() != edgeNow || model.screens != screensNow || model.screen != screenNow || model.layout != layNow || (model.pinned != 0) != pinNow || (model.floating != 0) != floatNow || (model.pillReserve != 0) != pillReserveNow; }
     HMONITOR mon = nullptr; // screen we live on, null = primary
     std::vector<HWND> strips; // hover strips on other screens, all-screens mode only
     D2D1_MATRIX_3X2_F shapeXform = D2D1::Matrix3x2F::Identity(); // this frame's shape placement, the glass mask reuses it
