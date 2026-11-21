@@ -594,7 +594,8 @@ void Screens(PageCtx& p, const D2D1_RECT_F& r, bool live) { // your monitors as 
         box.right = (std::max)(box.right, s.rc.right);
         box.bottom = (std::max)(box.bottom, s.rc.bottom);
     }
-    D2D1_RECT_F map = {in.left + 4, in.top + 2, in.right - 4, in.bottom - 26};
+    float mapBot = in.bottom - (list.size() > 1 ? 46 : 26);
+    D2D1_RECT_F map = {in.left + 4, in.top + 2, in.right - 4, mapBot};
     float bw = (float)(box.right - box.left), bh = (float)(box.bottom - box.top);
     float k = (std::min)(Width(map) / bw, Height(map) / bh);
     float ox = (map.left + map.right - bw * k) / 2, oy = (map.top + map.bottom - bh * k) / 2;
@@ -617,9 +618,10 @@ void Screens(PageCtx& p, const D2D1_RECT_F& r, bool live) { // your monitors as 
                Align::Center);
         if (h.clicked && (m.screens || i != chosen)) m.PickScreen(s.name);
     }
-    constexpr float kChipH = 18, kAllW = 44, kEveryW = 120, kChipGap = 6, kLabelGap = 8;
-    D2D1_RECT_F pill = {in.right - kAllW, in.bottom - kChipH, in.right, in.bottom}; // every screen: the panel follows the mouse
-    D2D1_RECT_F every = {pill.left - kChipGap - kEveryW, in.bottom - kChipH, pill.left - kChipGap, in.bottom}; // a long pill on each screen at once, beside it
+    constexpr float kChipH = 18, kAllW = 44, kLabelGap = 8;
+    float row1Y = in.bottom - (list.size() > 1 ? 2 * kChipH + 4 : kChipH);
+    D2D1_RECT_F pill = {in.right - kAllW, row1Y, in.right, row1Y + kChipH}; // every screen: the panel follows the mouse
+    D2D1_RECT_F every = {in.left, in.bottom - kChipH, in.right, in.bottom}; // a long pill on each screen at once, across the bottom
     if (list.size() > 1) {
         float evOn = ui.Smooth(Ui::Id("set.desk.every.sm"), m.deskEveryScreen ? 1.0f : 0, 18);
         Ui::Hit eh = live ? ui.Button(Ui::Id("set.desk.every"), every) : Ui::Hit{};
@@ -641,8 +643,8 @@ void Screens(PageCtx& p, const D2D1_RECT_F& r, bool live) { // your monitors as 
     }
     int shown = chosen >= 0 && list[chosen].number ? list[chosen].number : chosen + 1;
     std::wstring label = list.size() <= 1 ? L"One screen" : m.screens ? L"Every screen · stays put while open" : L"Screen " + std::to_wstring(shown); // open, it never jumps to the screen the mouse moves to
-    float labelR = (list.size() > 1 ? every.left : pill.left) - kLabelGap; // clear of the buttons beside it
-    c.Text(label, Rect(in.left, in.bottom - 16, (std::max)(0.0f, labelR - in.left), 14), Weight::Medium, 11, t.textDim);
+    float labelR = (list.size() > 1 ? pill.left : in.right) - kLabelGap; // clear of the All button
+    c.Text(label, Rect(in.left, row1Y + 2, (std::max)(0.0f, labelR - in.left), 14), Weight::Medium, 11, t.textDim);
 }
 
 void Notices(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a little screen with a notification dropping in as a pill
