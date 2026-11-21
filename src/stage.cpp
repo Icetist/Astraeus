@@ -17,7 +17,8 @@ constexpr float kStageArtSigma = 6; // the album art background at 1024 px: soft
 constexpr float kStageArtGlass = 0.6f; // glass keeps some of the desktop showing through it
 constexpr float kStageArtWash = 0.32f, kStageArtWashLight = 0.30f; // over the art: enough for white or dark type to read
 constexpr double kLyrWaitSec = 12; // how long the lyrics layout waits for a new song's lines before giving way
-constexpr float kWordsHush = 0.6f; // the waveform under the lyrics keeps this much less of its light
+constexpr float kWordsHush = 0.65f; // the waveform under the lyrics keeps this much less of its light
+constexpr float kWordsReach = 0.25f; // overlapping the words by this share of its height is enough to quiet it fully
 constexpr float kLeaveSec = 0.26f; // easing back toward the bezel as it fades
 constexpr double kIdleSec = 2.5; // controls and cursor fade after the mouse rests this long
 constexpr float kThump = 0.018f; // the cover on the kick: a share of its size
@@ -438,11 +439,24 @@ void Stage::Backdrop(double now) { // the media page's glow, scaled to the room:
             DrawSwell(c, swell, kBlobs, {0, H * 0.25f, W, H}, look, now); // soft light swelling up from the floor
             if (art) DrawSwell(c, swell, kBlobs, {0, H * 0.25f, W, H}, look, now); // twice over the art: one pass of soft light disappears into a bright cover
         }
-        if ((looks & Model::kLookBars) && shaped) { // bars across the whole room, behind the cover and the words
-            float ly = (std::max)(lyrMix * lyrMix * (3 - 2 * lyrMix), classicNow); // lyrics showing, the player's or vinyl's classic: the bars slide down out of the words' way and dim
-            D2D1_RECT_F band = {W * 0.03f, H * (0.28f + 0.56f * ly), W * 0.97f, H * (0.72f + 0.24f * ly)};
+        float ly = (std::max)(lyrMix * lyrMix * (3 - 2 * lyrMix), classicNow); // lyrics showing, the player's or vinyl's classic: the bars slide down out of the words' way and dim
+        D2D1_RECT_F band = {W * 0.03f, H * (0.28f + 0.56f * ly), W * 0.97f, H * (0.72f + 0.24f * ly)};
+        { // then as it was arranged: moved, and sized each way apart about its middle
+            static const StagePrefs::Shape kPlain{};
+            float vl = vinylLyr * vinylLyr * (3 - 2 * vinylLyr), pl = lyrMix * lyrMix * (3 - 2 * lyrMix);
+            const StagePrefs::Shape ws = role != kWhole ? kPlain
+                                       : model.stageVinyl ? StagePrefs::Mix(shapeNow[StagePrefs::kVinyl], shapeNow[StagePrefs::kVinylLyr], vl)
+                                                          : StagePrefs::Mix(shapeNow[0], shapeNow[1], pl);
+            float cx = (band.left + band.right) / 2 + ws.waveX * W, cy = (band.top + band.bottom) / 2 + ws.waveY * H;
+            float hw = Width(band) * ws.waveW / 2, hh = Height(band) * ws.waveH / 2;
+            band = {cx - hw, cy - hh, cx + hw, cy + hh};
+        }
+        partWave = band;
+        if ((looks & Model::kLookBars) && shaped) { // bars across the room, behind the cover and the words
             D2D1_RECT_F lr = LyricRect();
-            Hush hush = {lr.left, lr.right, kWordsHush * ly}; // and quieter still right under the words
+            float over = (std::min)(band.bottom, lr.bottom) - (std::max)(band.top, lr.top); // how much of it sits behind the words, up and down
+            float behind = anim::Clamp01(over / (std::max)(1.0f, Height(band) * kWordsReach));
+            Hush hush = {lr.left, lr.right, kWordsHush * ly * behind}; // quieter wherever it runs behind the words, wherever it's been put
             DrawWave(c, wave, band, look, (art ? 0.85f : 0.5f) * (1 - 0.45f * ly), nullptr, Shown() == kWhole ? hush : Hush{});
         }
         if (art) c.Target()->PopLayer();

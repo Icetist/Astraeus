@@ -295,9 +295,13 @@ void Drawer::SyncDeskPills() {
 void Drawer::SyncDesk() {
     if (!desk || desk->Editing()) return;
     if (opened) longHeld = false; // the panel took over: a new call brings it back
-    HMONITOR deskMon = model.deskEveryScreen ? MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY) : mon;
+    HMONITOR prim = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+    bool every = model.deskEveryScreen != 0;
+    HMONITOR deskMon = every ? prim : mon;
+    bool mainFull = every ? fullApp || FullOn(prim) : fullApp; // every screen: the main pill stays on the primary, so only that screen's game counts, not the panel's
+    bool mainHide = every ? (cfg.hideFull && !model.pillFull && mainFull) || (BoardOn(prim) && !stage) : hidden;
     bool appsLong = model.deskApps && longHeld && !(deskView && !model.LongPill()); // held over an app: back on a desktop that wears the regular pill, it lets go
-    desk->Want(deskOn && (pillView || appsLong) && !hidden && !stage && !opened && !peeking && !alarmBanner && !dragging && (!fullApp || model.pillFull), deskMon);
+    desk->Want(deskOn && (pillView || appsLong) && !mainHide && !stage && !opened && !peeking && !alarmBanner && !dragging && (!mainFull || model.pillFull), deskMon);
     if (model.deskEveryScreen) {
         HWND front = GetForegroundWindow();
         bool editing = desk->Editing();
@@ -314,7 +318,7 @@ void Drawer::SyncDesk() {
             bool appsLongE = model.deskApps && longHeld && !(deskViewE && !model.LongPill());
             bool full = FullOn(em);
             bool hide = (cfg.hideFull && !model.pillFull && full) || (BoardOn(em) && !stage) || editing;
-            p->Want(deskOn && (pillViewE || appsLongE) && !hide && !hidden && !stage && !opened && !peeking && !alarmBanner && !dragging && (!full || model.pillFull), em);
+            p->Want(deskOn && (pillViewE || appsLongE) && !hide && !stage && !opened && !peeking && !alarmBanner && !dragging && (!full || model.pillFull), em);
         }
     } else if (!extraDesks.empty()) {
         extraDesks.clear();

@@ -152,18 +152,26 @@ bool StepWave(Waveform& w, Model& m, float dt, bool playing) {
     float raw[sys::Spectrum::kBands] = {};
     if (playing) m.Bands(raw);
     constexpr float kFirst = 2, kSpan = 52; // ~40 Hz to ~10 kHz, as the glow uses
+    constexpr float kPeakFall = 0.12f, kFloorRise = 0.06f; // per second: the loudest forgets, the quietest creeps up, both slowly
+    constexpr float kRange = 0.22f; // the narrowest span a bar stretches over: steady noise stays low, it isn't blown up to full height
+    constexpr float kCut = 0.12f; // the bottom of that span reads as rest
     bool alive = false;
     for (int i = 0; i < Waveform::kBars; ++i) {
         float at = kFirst + kSpan * std::pow(i / (float)(Waveform::kBars - 1), 1.25f); // a little more room for the low end, where the beat is
         int b = (int)at;
         float f = at - b, want = raw[b] * (1 - f) + raw[(std::min)(b + 1, sys::Spectrum::kBands - 1)] * f;
         float& g = w.gain[i];
-        g = (std::max)(want, g - dt * 0.15f); // its own recent loudest: every bar uses its whole height
-        want = anim::Clamp01((want / (std::max)(g, 0.16f) * m.VizGain() - 0.15f) / 0.85f);
+        float& lo = w.floor[i];
+        if (!w.primed) lo = want;
+        g = (std::max)(want, g - dt * kPeakFall);
+        lo = (std::min)(want, lo + dt * kFloorRise);
+        float span = (std::max)(g - lo, kRange); // the bands are decibels: a bar's level sits on its own baseline, so it's read between its quietest and loudest, not against zero
+        want = anim::Clamp01(((want - lo) / span * m.VizGain() - kCut) / (1 - kCut));
         float& v = w.level[i];
         v += (want - v) * (std::min)(1.0f, dt * (want > v ? 22.0f : 6.0f)); // up fast, down soon after
         alive = alive || v > 0.005f;
     }
+    w.primed = playing;
     return alive;
 }
 

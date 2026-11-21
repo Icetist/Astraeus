@@ -836,7 +836,9 @@ void DrawWork(Canvas& c, const Theme& t, const std::string& key, const Meta& m, 
         int have = state::Water(), goal = state::WaterGoal();
         StatOpts o;
         o.bar = goal > 0 ? (double)have / goal : 0;
-        Stat(c, t, r, m.glyph, m.name, std::to_wstring(have) + L" of " + std::to_wstring(goal), L"Glasses today", o);
+        wchar_t litres[40];
+        swprintf_s(litres, L"Glasses today, %.3g L", have * state::WaterMl() / 1000.0); // what the glasses come to
+        Stat(c, t, r, m.glyph, m.name, std::to_wstring(have) + L" of " + std::to_wstring(goal), litres, o);
     } else if (key == "list.notes") {
         Head(c, t, r, m.glyph, m.name, t.accentHi);
         std::wstring note = feeds::Setting("notes");

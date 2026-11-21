@@ -5,6 +5,7 @@
 #include "deskpill.h"
 #include "drawer.h"
 #include "entry.h"
+#include "faces_state.h"
 #include "glyphs.h"
 #include "pages.h"
 #include "chrome.h"
@@ -936,8 +937,8 @@ void Drawer::DrawPeek(float h) {
 }
 
 void Drawer::DrawAlarmRing(float h) {
-    const Alarm* ring = model.alarms.Ringing();
-    if (!ring) return;
+    const Alarm* ring = drinkAsk ? nullptr : model.alarms.Ringing();
+    if (!ring && !drinkAsk) return;
     const Theme& t = shellNow;
     float a = Side() ? anim::Clamp01((h - 190) / 60) : anim::Clamp01((h - 26) / 30);
     if (a <= 0) {
@@ -955,8 +956,11 @@ void Drawer::DrawAlarmRing(float h) {
             canvas->Text(text, r, Weight::Medium, 11.5f, t.text.Alpha(a), Align::Center);
         }
     };
-    std::wstring timeStr = AlarmStore::FormatTime(ring->hour, ring->minute);
-    std::wstring sub = ring->label.empty() ? L"Alarm" : ring->label;
+    std::wstring timeStr = ring ? AlarmStore::FormatTime(ring->hour, ring->minute) : L"Time for some water";
+    std::wstring sub = !ring ? std::to_wstring(faces::state::Water()) + L" of " + std::to_wstring(faces::state::WaterGoal()) + L" glasses today" : ring->label.empty() ? L"Alarm" : ring->label;
+    int icon = ring ? glyph::Bell : glyph::Coffee; // the water widget's own mark
+    const wchar_t* later = ring ? L"Snooze (+5m)" : L"Snooze (+10m)";
+    const wchar_t* done = ring ? L"Dismiss" : L"Drink";
     hand = alarmHot != 0;
 
     if (Side()) {
@@ -973,14 +977,14 @@ void Drawer::DrawAlarmRing(float h) {
         }
         float top = area.top + (Height(area) - contentH) / 2;
         canvas->Dot({left + 16, top + 18}, 16, t.accent.Alpha(0.20f * a));
-        canvas->Icon(glyph::Bell, {left + 16, top + 18}, 19, t.accentHi.Alpha(a), true);
+        canvas->Icon(icon, {left + 16, top + 18}, 19, t.accentHi.Alpha(a), true);
         canvas->Text(timeStr, {left + 40, top + 1, right, top + 21}, Weight::Medium, 15, t.text.Alpha(a));
         canvas->Text(sub, {left + 40, top + 20, right, top + 37}, Weight::Light, 12, t.textDim.Alpha(a));
         float btnY = top + 46, btnH = 28, snoozeW = (w - 8) * 0.56f, dismissW = w - 8 - snoozeW;
         alarmSnoozeR = Rect(left, btnY, snoozeW, btnH);
         alarmDismissR = Rect(left + snoozeW + 8, btnY, dismissW, btnH);
-        drawBtn(alarmSnoozeR, L"Snooze (+5m)", false, alarmHot == 1);
-        drawBtn(alarmDismissR, L"Dismiss", true, alarmHot == 2);
+        drawBtn(alarmSnoozeR, later, false, alarmHot == 1);
+        drawBtn(alarmDismissR, done, true, alarmHot == 2);
         return;
     }
 
@@ -990,14 +994,14 @@ void Drawer::DrawAlarmRing(float h) {
     alarmDismissR = Rect(right - dismissW, btnY, dismissW, btnH);
     alarmSnoozeR = Rect(alarmDismissR.left - 8 - snoozeW, btnY, snoozeW, btnH);
     canvas->Dot({left + 15, cy}, 16, t.accent.Alpha(0.20f * a));
-    canvas->Icon(glyph::Bell, {left + 15, cy}, 19, t.accentHi.Alpha(a), true);
+    canvas->Icon(icon, {left + 15, cy}, 19, t.accentHi.Alpha(a), true);
     float tx = left + 38, tw = alarmSnoozeR.left - 10 - tx;
     if (tw > 40) {
         canvas->Text(timeStr, Rect(tx, cy - 17, tw, 19), Weight::Medium, 14.5f, t.text.Alpha(a));
         canvas->Text(sub, Rect(tx, cy + 1, tw, 16), Weight::Light, 11.5f, t.textDim.Alpha(a));
     }
-    drawBtn(alarmSnoozeR, L"Snooze (+5m)", false, alarmHot == 1);
-    drawBtn(alarmDismissR, L"Dismiss", true, alarmHot == 2);
+    drawBtn(alarmSnoozeR, later, false, alarmHot == 1);
+    drawBtn(alarmDismissR, done, true, alarmHot == 2);
 }
 
 bool Drawer::StepIslandBars(float dt, double now) {

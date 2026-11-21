@@ -4,6 +4,7 @@
 #include "entry.h"
 
 #include "faces.h"
+#include "faces_state.h"
 #include "glyphs.h"
 #include "chrome.h"
 #include "starfall.h"
@@ -74,7 +75,6 @@ Drawer::Drawer(const Config& c, Model& m) : cfg(c), model(m) {
     layNow = model.layout;
     pinNow = model.pinned != 0;
     floatNow = model.floating != 0;
-    deskEveryNow = model.deskEveryScreen;
     shellFrom = shellTo = shellNow = mediaFrom = mediaTo = mediaNow = Make(shellSeed);
 }
 
@@ -312,7 +312,7 @@ void Drawer::Open() {
     KillTimer(hwnd, kCloseTimer);
     KillTimer(hwnd, kPeekTimer);
     peeking = false; // peek upgrades to full open
-    alarmBanner = false;
+    alarmBanner = drinkAsk = false;
     alarmHot = 0;
     for (sys::Toast t; model.notifyWatch.Pop(t);) {} // the rest of a notification queue would only show stale once it closes
     if (!opened) {
@@ -404,7 +404,7 @@ void Drawer::Close() {
     KillTimer(hwnd, kCloseTimer);
     KillTimer(hwnd, kPeekTimer);
     peeking = false;
-    alarmBanner = false;
+    alarmBanner = drinkAsk = false;
     alarmHot = 0;
     alarmSnoozeR = alarmDismissR = {};
     opened = false;
@@ -475,7 +475,10 @@ void Drawer::Answer() {
 }
 
 void Drawer::OnSecond() {
-    if (alarmBanner && !model.alarms.Ringing()) EndAlarmBanner();
+    if (alarmBanner && drinkAsk) {
+        if (model.alarms.Ringing()) RingAlarm(); // an alarm outranks it, in the same banner
+        else if (GetTickCount64() - drinkAt > kDrinkShowMs) EndAlarmBanner();
+    } else if (alarmBanner && !model.alarms.Ringing()) EndAlarmBanner();
     else if (!opened && !alarmBanner && model.alarms.Ringing()) RingAlarm();
     if (model.facesDue) {
         model.facesDue = false; // set again only if the page draws again
@@ -497,6 +500,7 @@ void Drawer::OnSecond() {
     if (deskOn && (model.appsTheme != 0) != lookAppsOn) lookAppsOn = model.appsTheme != 0, OnDeskTimer(); // the over-apps theme: on now, not at the next window event
     if (deskOn && (model.appsTheme || model.AnyLong()) && !Unseen() && ++deskRecheck >= kDeskRecheckSecs) deskRecheck = 0, OnDeskTimer();
     SyncThemeNow();
+    SyncEvery();
     SyncDesk();
     if (desk && !Unseen()) desk->Second(); // locked or dark: no screen reads and no refreshes for nobody
     for (auto& d : extraDesks) if (d && !Unseen()) d->Second();
@@ -569,6 +573,19 @@ void Drawer::RingAlarm() {
         return;
     }
     if (!EnsureDev()) return;
+    drinkAsk = false;
+    BannerDown();
+}
+
+bool Drawer::AskDrink() {
+    if (alarmBanner || opened || peeking || dragging || stage || UnderFullscreen() || Unseen() || model.alarms.Ringing() || !EnsureDev()) return false; // busy, away, or something else has the screen
+    drinkAsk = true;
+    drinkAt = GetTickCount64();
+    BannerDown();
+    return true;
+}
+
+void Drawer::BannerDown() {
     island = islandLook = grow = peeking = false;
     alarmBanner = alarmLook = true;
     alarmHot = 0;
@@ -588,7 +605,7 @@ void Drawer::RingAlarm() {
 }
 
 void Drawer::EndAlarmBanner() {
-    alarmBanner = false;
+    alarmBanner = drinkAsk = false;
     alarmHot = 0;
     alarmSnoozeR = alarmDismissR = {};
     Close();
@@ -874,7 +891,10 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONDOWN: {
         if (alarmBanner && !opened) { // ringing alarm banner buttons always work, even with keyOnly active
             D2D1_POINT_2F p = ToDip(lp);
-            if (Inside(alarmSnoozeR, p) && model.SnoozeAlarm()) EndAlarmBanner();
+            if (drinkAsk) {
+                if (Inside(alarmSnoozeR, p)) faces::state::WaterLater(kDrinkSnoozeSec), EndAlarmBanner();
+                else if (Inside(alarmDismissR, p)) faces::state::WaterAdd(1), EndAlarmBanner();
+            } else if (Inside(alarmSnoozeR, p) && model.SnoozeAlarm()) EndAlarmBanner();
             else if (Inside(alarmDismissR, p) && model.DismissAlarm()) EndAlarmBanner();
             return 0;
         }
@@ -1460,10 +1480,7 @@ void Drawer::Frame() {
         Place();
         BuildStrips();
     }
-    if (deskEveryNow != model.deskEveryScreen) {
-        deskEveryNow = model.deskEveryScreen;
-        SyncDeskPills();
-    }
+    SyncEvery(); // switched in settings: the pills come or go now, not at the next second
     SyncHud();
     model.SyncThemeSet(); // the desktop's theme or the over-apps one; settings previews whichever it's editing
     SyncLook(); // before the device: switching to or from glass rebuilds it

@@ -158,13 +158,7 @@ void Drawer::OnDeskTimer() {
     HMONITOR deskMon = model.deskEveryScreen ? MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY) : mon;
     pillView = model.LongPill() && desk && (DeskFront(front) || !AppIn(desk->Spot(deskMon))); // the long pill has its own patch of screen to look under
     bool overNow = model.LongPill() && desk ? !pillView : !view; // one answer for the theme and the long pill's body: with the long pill on, its own patch of screen
-    if (desk) desk->SetOverApp(overNow);
-    for (auto& d : extraDesks) {
-        if (!d) continue;
-        HMONITOR em = d->Screen();
-        bool ev = DeskFront(front) || !AppIn(d->Spot(em));
-        d->SetOverApp(!ev);
-    }
+    if (desk) desk->SetOverApp(overNow); // the other screens' pills get theirs in SyncDesk, below
     if (!opened) { // open, it keeps the theme it opened with: windows switching under it never repaint it mid-use; it catches up as it closes
         model.overApp = model.appsTheme != 0 && overNow;
         SyncThemeNow(); // before it comes or goes: it shows up in the right colors
@@ -356,7 +350,7 @@ void Drawer::Retract() { // the open panel and every hover state gone at once, n
         KillTimer(hwnd, kHoverTimer);
         KillTimer(hwnd, kCloseTimer);
         KillTimer(hwnd, kPeekTimer);
-        armed = peeking = alarmBanner = alarmLook = dragging = island = islandLook = grow = false;
+        armed = peeking = alarmBanner = drinkAsk = alarmLook = dragging = island = islandLook = grow = false;
         alarmHot = 0;
         alarmSnoozeR = alarmDismissR = {};
         if (GetCapture() == hwnd) ReleaseCapture(); // mid-drag when the game took over

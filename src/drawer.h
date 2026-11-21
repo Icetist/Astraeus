@@ -35,6 +35,7 @@ public:
     void KeyOpen(); // from the shortcut: open on the screen with the mouse and take the keyboard, or close
     void Peek(const std::wstring& title, const std::wstring& detail, int icon = 0); // brief notification drop, 0 = timer icon
     void RingAlarm(); // interactive alarm island drop (or panel refresh if open)
+    bool AskDrink(); // the water reminder in the alarm's banner: drink or snooze; false when nothing's free to show it
     void SetFull(bool on); // fullscreen app present, stay out of the way
     void SyncHide();
     void OnSecond();
@@ -63,8 +64,13 @@ public:
 private:
     std::unique_ptr<DeskPill> desk; // the long pill: its own window, on its own edge
     std::vector<std::unique_ptr<DeskPill>> extraDesks; // pills on other monitors when every-screen is on
-    int deskEveryNow = -1;
+    int deskEveryNow = -1; // the every-screen option the pills were made for; -1 none yet, so the first second after a start makes them
     void SyncDeskPills();
+    void SyncEvery() { // the option changed, or the long pill only now exists: the other screens' pills follow
+        if (!desk || deskEveryNow == model.deskEveryScreen) return;
+        deskEveryNow = model.deskEveryScreen;
+        SyncDeskPills();
+    }
     bool pillView = false; // nothing of an app's lies under it
     bool longHeld = false; // it's standing in for the small pill over an app: called by a hover, or held by the stay rules
     void SyncDesk(); // it comes or goes with the desktop, the panel and fullscreen apps
@@ -337,6 +343,8 @@ private:
     static constexpr float kPeekH = 66; // peek banner height in dips
     static constexpr float kPeekSide = 300; // peek reach on a side edge, room for its text
     static constexpr float kAlarmH = 66, kAlarmSide = 300, kAlarmW = 440, kAlarmSideSpan = 148; // ringing alarm banner geometry in dips
+    static constexpr ULONGLONG kDrinkShowMs = 120000; // a water reminder nobody answers goes up after two minutes
+    static constexpr int kDrinkSnoozeSec = 10 * 60;
     float AlarmSpan() const { return Side() ? (std::min)(Span(), kAlarmSideSpan) : (std::min)(Span(), kAlarmW); }
     static constexpr float kIslandH = 34, kIslandW = 260; // island pill size in dips, width includes the shoulders
     static constexpr float kIslandSide = 240; // on a side edge the song runs along the pill like a book spine
@@ -346,6 +354,9 @@ private:
     anim::Spring spring;
     bool opened = false, dragging = false, peeking = false, alarmBanner = false;
     int alarmHot = 0; // 0 none, 1 snooze button, 2 dismiss button
+    bool drinkAsk = false; // that banner is the water reminder's: snooze, and drink in dismiss's place
+    ULONGLONG drinkAt = 0; // when it came down: unanswered, it goes up by itself
+    void BannerDown(); // the alarm's banner drops, for whichever is asking
     D2D1_RECT_F alarmSnoozeR{}, alarmDismissR{};
     bool island = false; // island pill is up (or dropping)
     bool islandLook = false, alarmLook = false; // draw the narrow island / alarm pill shape, until it has fully retracted

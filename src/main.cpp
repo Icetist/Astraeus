@@ -15,6 +15,7 @@
 #include "backup.h"
 #include "config.h"
 #include "drawer.h"
+#include "faces_state.h"
 #include "gfx.h"
 #include "model.h"
 #include "glyphs.h"
@@ -29,6 +30,7 @@ namespace {
 
 constexpr UINT kTrayId = 1;
 constexpr int kAlarmRingTicks = 120, kAlarmBellEvery = 3; // a ringing alarm's bell: every 3 s for two minutes, then it waits quietly
+constexpr int kDrinkRetrySec = 60; // a water reminder with nowhere to show: tried again this much later
 constexpr int kHotId = 1; // the open-the-panel shortcut
 constexpr UINT_PTR kSecTimer = 1;
 constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"; // per-user autostart
@@ -437,6 +439,7 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 app->updater.Check(app->host, WM_APP_UPDATE);
             if (app->restartPending && !app->drawer->Busy() && !app->drawer->UnderFullscreen()) Restart(app->exePath); // never yank the panel away mid-use, nor a game or a video out of fullscreen: a starting copy can take the focus
             app->drawer->OnSecond();
+            if (faces::state::WaterDue() && !app->drawer->AskDrink()) faces::state::WaterLater(kDrinkRetrySec); // the panel's open or a game has the screen: soon, not a whole wait later
             SyncMix();
             if (int ev = app->model->focusEvent) { // a focus block or a break just ended
                 app->model->focusEvent = 0;

@@ -16,7 +16,7 @@ constexpr wchar_t kMark = L'#'; // a saved list that starts with how many number
 using Fields = StagePrefs::Shape;
 constexpr float Fields::*kFields[] = {&Fields::coverS, &Fields::coverX, &Fields::coverY, &Fields::textS, &Fields::textX, &Fields::textY, &Fields::lyrX, &Fields::lyrY, &Fields::lyrW, &Fields::lyrH, // new ones go last: a shorter saved list still means what it did
                                       &Fields::coverRound, &Fields::coverGlow, &Fields::clockOn, &Fields::clockS, &Fields::clockX, &Fields::clockY, &Fields::clockA, &Fields::appOn, &Fields::albumOn, &Fields::extrasOn, &Fields::timesOn, &Fields::dim, &Fields::lyrAlign, &Fields::lyrDim, &Fields::lyrHaze, &Fields::lyrAnchor,
-                                      &Fields::ctlS, &Fields::ctlX, &Fields::ctlY};
+                                      &Fields::ctlS, &Fields::ctlX, &Fields::ctlY, &Fields::waveX, &Fields::waveY, &Fields::waveW, &Fields::waveH};
 
 void LoadShape(StagePrefs& p) { // what's missing keeps its default, and what was hand-edited off the screen comes back on
     std::wstring text = sys::ReadText(kShapeVal);
@@ -59,7 +59,9 @@ void LoadShape(StagePrefs& p) { // what's missing keeps its default, and what wa
         s.lyrHaze = (std::clamp)(s.lyrHaze, 0.0f, StagePrefs::kHazeHi);
         s.lyrAnchor = (std::clamp)(s.lyrAnchor, StagePrefs::kAnchorLo, StagePrefs::kAnchorHi);
         s.ctlS = (std::clamp)(s.ctlS, StagePrefs::kCtlLo, StagePrefs::kCtlHi);
-        for (float* off : {&s.coverX, &s.coverY, &s.textX, &s.textY, &s.lyrX, &s.lyrY, &s.clockX, &s.clockY, &s.ctlX, &s.ctlY}) *off = (std::clamp)(*off, -1.0f, 1.0f);
+        s.waveW = (std::clamp)(s.waveW, StagePrefs::kWaveWLo, StagePrefs::kWaveWHi);
+        s.waveH = (std::clamp)(s.waveH, StagePrefs::kWaveHLo, StagePrefs::kWaveHHi);
+        for (float* off : {&s.coverX, &s.coverY, &s.textX, &s.textY, &s.lyrX, &s.lyrY, &s.clockX, &s.clockY, &s.ctlX, &s.ctlY, &s.waveX, &s.waveY}) *off = (std::clamp)(*off, -1.0f, 1.0f);
     }
 }
 }

@@ -4,6 +4,7 @@
 #include <d2d1effects.h>
 #include <algorithm>
 #include <cmath>
+#include <cwctype>
 
 namespace {
 
@@ -13,17 +14,28 @@ constexpr float kHazeSigma = 0.11f; // blur of out-of-focus lines, as a share of
 constexpr float kHazeRes = 0.5f; // baked at half resolution: it's a blur, nobody can tell, a quarter of the memory
 constexpr int kBakesPerFrame = 3; // spreads a new song's baking over a few frames
 
+bool ReadsRtl(const std::wstring& s) { // the first letter with a direction decides: one arabic word doesn't turn an english line round
+    for (wchar_t c : s) {
+        if ((c >= 0x0590 && c <= 0x08FF) || (c >= 0xFB1D && c <= 0xFDFF) || (c >= 0xFE70 && c <= 0xFEFC)) return true; // hebrew through arabic extended, and their presentation forms
+        if (iswalpha(c)) return false;
+    }
+    return false;
+}
+
 }
 
 bool LyricView::Lay(Piece& pc, const std::wstring& text, IDWriteTextFormat* f, float lineH) {
     pc = {};
     if (text.empty()) return true;
     if (FAILED(gfx::DWrite()->CreateTextLayout(text.c_str(), (UINT32)text.size(), f, width, 4096, &pc.lay))) return false;
+    pc.rtl = ReadsRtl(text);
+    if (pc.rtl) pc.lay->SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT);
     DWRITE_TRIMMING none = {DWRITE_TRIMMING_GRANULARITY_NONE, 0, 0};
     pc.lay->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP); // long lines wrap, the shared format is single-line
     pc.lay->SetTrimming(&none, nullptr);
     pc.lay->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-    pc.lay->SetTextAlignment(style.align == 1 ? DWRITE_TEXT_ALIGNMENT_CENTER : style.align == 2 ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_LEADING);
+    bool right = (style.align == 2) != pc.rtl; // leading is the right edge in a right to left line: the column's alignment holds for every line
+    pc.lay->SetTextAlignment(style.align == 1 ? DWRITE_TEXT_ALIGNMENT_CENTER : right ? DWRITE_TEXT_ALIGNMENT_TRAILING : DWRITE_TEXT_ALIGNMENT_LEADING);
     pc.lay->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, lineH, lineH * 0.79f);
     pc.len = (UINT32)text.size();
     UINT32 count = 0;
@@ -31,6 +43,7 @@ bool LyricView::Lay(Piece& pc, const std::wstring& text, IDWriteTextFormat* f, f
     std::vector<DWRITE_LINE_METRICS> lm(count);
     if (count && FAILED(pc.lay->GetLineMetrics(lm.data(), count, &count))) return false;
     UINT32 at = 0;
+    pc.lo = width;
     for (const auto& m : lm) { // where each wrapped piece sits, so the sweep can run across them in turn
         Span s = {at, m.length - m.trailingWhitespaceLength, 0, 0, pc.h, m.height};
         DWRITE_HIT_TEST_METRICS hm[8];
@@ -43,12 +56,14 @@ bool LyricView::Lay(Piece& pc, const std::wstring& text, IDWriteTextFormat* f, f
             }
             s.left = lo;
             s.width = hi - lo;
+            pc.lo = (std::min)(pc.lo, lo);
         }
         pc.w = (std::max)(pc.w, s.left + s.width);
         pc.spans.push_back(s);
         at += m.length;
         pc.h += m.height;
     }
+    pc.lo = (std::min)(pc.lo, pc.w); // nothing inked: an empty stretch
     return true;
 }
 
@@ -77,6 +92,7 @@ void LyricView::Sync(ID2D1DeviceContext* ctx, const std::shared_ptr<const sys::L
         row.src = &l;
         if (!Lay(row.lead, l.text, f, size * 1.12f)) continue;
         row.w = row.lead.w;
+        row.lo = row.lead.lo;
         row.h = row.lead.h;
         if (row.h > 0) rows.push_back(std::move(row));
     }
@@ -96,7 +112,7 @@ void LyricView::Bake(ID2D1DeviceContext* ctx, Row& row) { // the line in white, 
     float dx = 96, dy = 96;
     ctx->GetDpi(&dx, &dy);
     float dpi = dx * kHazeRes;
-    D2D1_SIZE_U px = {(UINT32)std::ceil((row.w + 2 * pad) * dpi / 96), (UINT32)std::ceil((row.h + 2 * pad) * dpi / 96)};
+    D2D1_SIZE_U px = {(UINT32)std::ceil((row.w - row.lo + 2 * pad) * dpi / 96), (UINT32)std::ceil((row.h + 2 * pad) * dpi / 96)}; // only where the ink is: a centered or right-hand line doesn't blur the empty column beside it
     if (!px.width || !px.height) return;
     D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi, dpi);
     ComPtr<ID2D1Bitmap1> src, out;
@@ -112,7 +128,7 @@ void LyricView::Bake(ID2D1DeviceContext* ctx, Row& row) { // the line in white, 
     ctx->SetTarget(src.Get());
     ctx->BeginDraw();
     ctx->Clear(D2D1::ColorF(0, 0, 0, 0));
-    Ink(ctx, row, {pad, pad}, ink.Get());
+    Ink(ctx, row, {pad - row.lo, pad}, ink.Get());
     bool ok = SUCCEEDED(ctx->EndDraw());
     blur->SetInput(0, src.Get());
     blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, size * kHazeSigma);
@@ -167,7 +183,7 @@ void LyricView::Haze(ID2D1DeviceContext* ctx, const Row& row, D2D1_POINT_2F at, 
     ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale, {at.x + width * style.align / 2, at.y + row.h / 2}) * *D2D1::Matrix3x2F::ReinterpretBaseType(&base));
     D2D1_ANTIALIAS_MODE was = ctx->GetAntialiasMode();
     ctx->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED); // opacity masks need it
-    D2D1_RECT_F dst = {at.x - pad, at.y - pad, at.x + row.w + pad, at.y + row.h + pad};
+    D2D1_RECT_F dst = {at.x + row.lo - pad, at.y - pad, at.x + row.w + pad, at.y + row.h + pad};
     ctx->FillOpacityMask(row.haze.Get(), ink.Get(), &dst, nullptr);
     ctx->SetAntialiasMode(was);
     ctx->SetTransform(base);
@@ -192,15 +208,17 @@ void LyricView::Sweeping(ID2D1DeviceContext* ctx, Piece& pc, D2D1_POINT_2F at, f
         float f = s.len ? anim::Clamp01((chars - s.first) / s.len) : 1;
         IUnknown* brush = f >= 1 ? sung.Get() : unsung.Get();
         if (f > 0 && f < 1) { // the soft edge of the sweep runs through this piece
-            float x = at.x + s.left - feather + f * (s.width + 2 * feather);
+            float run = f * (s.width + 2 * feather);
+            float x = pc.rtl ? at.x + s.left + s.width + feather - run : at.x + s.left - feather + run; // a right to left line is sung from its right edge
             if (e >= edges.size()) {
                 ComPtr<ID2D1LinearGradientBrush> g;
                 if (FAILED(ctx->CreateLinearGradientBrush({{0, 0}, {1, 0}}, D2D1::BrushProperties(1), stops.Get(), &g))) continue;
                 edges.push_back(g);
             }
             ID2D1LinearGradientBrush* g = edges[e++].Get();
-            g->SetStartPoint({x - feather, 0});
-            g->SetEndPoint({x + feather, 0});
+            float back = pc.rtl ? -feather : feather; // the gradient runs sung to unsung, whichever way that is
+            g->SetStartPoint({x - back, 0});
+            g->SetEndPoint({x + back, 0});
             g->SetOpacity(a);
             brush = g;
         }
@@ -304,7 +322,7 @@ double LyricView::Draw(ID2D1DeviceContext* ctx, Canvas& c, Ui& ui, const D2D1_RE
         bottom = bottom * bottom * (3 - 2 * bottom);
         float fade = top * bottom; // gone before it reaches the edge, no hard cut under the clock
         float al = alpha * fade;
-        D2D1_RECT_F hit = {r.left - 16, y0 - rowGap * 0.4f, r.left + row.w + 16, y0 + row.h + rowGap * 0.4f};
+        D2D1_RECT_F hit = {r.left + row.lo - 16, y0 - rowGap * 0.4f, r.left + row.w + 16, y0 + row.h + rowGap * 0.4f};
         Ui::Hit h = al > 0.2f ? ui.Button(Ui::Id("ly.row", i), hit) : Ui::Hit{};
         moving |= anim::Approach(row.hover, h.hover ? 1.0f : 0, 14, dt, 0.01f);
         if (h.clicked) seek = row.src->start; // tap a line to jump there

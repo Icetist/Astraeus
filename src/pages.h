@@ -42,7 +42,8 @@ struct Swell { // soft blobs of light that rise from the bottom and swell with t
 bool StepSwell(Swell& s, Model& m, float dt, bool playing, int blobs); // true while anything still glows
 struct Waveform { // bars across the player, mirrored about its middle: bass on the left, treble on the right
     static constexpr int kBars = 48;
-    float level[kBars] = {}, gain[kBars] = {};
+    float level[kBars] = {}, gain[kBars] = {}, floor[kBars] = {}; // eased heights; each bar's recent loudest and quietest, so it spans between them
+    bool primed = false; // the quietest starts at what's first heard, not at silence
 };
 bool StepWave(Waveform& w, Model& m, float dt, bool playing); // true while any bar still stands
 struct Hush { // a stretch across the bars kept quieter, so words over it read clearly

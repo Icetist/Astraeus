@@ -39,14 +39,15 @@ private:
     struct Piece { // a block of wrapped text
         ComPtr<IDWriteTextLayout> lay;
         std::vector<Span> spans;
-        float w = 0, h = 0, y = 0; // y: where it sits in the row
+        float w = 0, h = 0, y = 0, lo = 0; // y: where it sits in the row; lo and w: its ink's left and right edges
         UINT32 len = 0;
+        bool rtl = false; // read right to left: arabic, hebrew; the sweep runs that way too
     };
     struct Row {
         const sys::LyricLine* src = nullptr;
         Piece lead;
         ComPtr<ID2D1Bitmap1> haze; // the line blurred, white, baked once
-        float h = 0, w = 0;
+        float h = 0, w = 0, lo = 0; // lo .. w: where its ink is across the column, all its blur needs to hold
         anim::Spring y;
         float lit = 0, hover = 0; // 1 while it's the sung line, fades as it passes
         float blur = 1; // out of focus by distance from the sung line, eased

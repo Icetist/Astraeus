@@ -29,7 +29,10 @@ const std::vector<double>& WatchLaps();
 int Today(); // yyyymmdd
 int Water();
 int WaterGoal();
-void WaterAdd(int by);
+void WaterAdd(int by); // a glass more drunk also restarts the wait for the next reminder
+int WaterMl(); // a glass, in ml
+bool WaterDue(); // once a reminder: they're on, the goal isn't met and the next glass is due
+void WaterLater(int seconds); // ask again after this long: snoozed, or nowhere to ask just now
 
 struct Habit {
     std::wstring name;

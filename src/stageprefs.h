@@ -25,7 +25,9 @@ struct StagePrefs {
         float dim = 0; // the room, darker
         float lyrAlign = 0, lyrDim = 0.34f, lyrHaze = 1, lyrAnchor = 0.30f; // 0 left, 1 center, 2 right; the lines out of turn; where the sung line rests
         float ctlS = 1, ctlX = 0, ctlY = 0; // the vinyl room's buttons, a part of their own there
+        float waveX = 0, waveY = 0, waveW = 1, waveH = 1; // the waveform look's band: where it sits, and how wide and tall, each way apart
     };
+    static constexpr float kWaveWLo = 0.25f, kWaveWHi = 1.03f, kWaveHLo = 0.3f, kWaveHHi = 1.8f;
     static constexpr float kCtlLo = 0.6f, kCtlHi = 1.6f;
     static constexpr int kShapes = 4, kVinyl = 2, kVinylLyr = 3;
     Shape shape[kShapes]; // 0 a song without lyrics, 1 with them, 2 the vinyl room without, 3 with: each arranged apart, so one never moves another

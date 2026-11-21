@@ -74,7 +74,8 @@ const Setup kSetups[] = {
     {"clock.world", nullptr, {{"zones", L"Cities", false, L"London,New York,Tokyo"}}, L"Up to three of the world's big cities"},
     {"clock.worldone", nullptr, {{"zone.one", L"City", false, L"Tokyo"}}, L"One of the world's big cities"},
     {"time.timer", nullptr, {{"timer.min", L"Minutes", false, L"5"}}, nullptr},
-    {"list.water", nullptr, {{"water.goal", L"Glasses a day", false, L"8"}}, nullptr},
+    {"list.water", nullptr, {{"water.goal", L"Glasses a day", false, L"8"}, {"water.ml", L"Glass size, ml", false, L"250"}, {"water.hours", L"Remind me over, hours", false, L"Off"}},
+     L"Reminders start with your PC and stop once the goal is met"},
 };
 
 const Setup* SetupFor(const char* key) {
@@ -819,7 +820,8 @@ Act Click(int kind, bool right, const Host& h) {
         return Act::kNone;
     }
     if (key == "list.water") {
-        state::WaterAdd(right ? -1 : 1);
+        if (right) return Act::kPanel; // its goal, glass size and reminders; one less is in there too
+        state::WaterAdd(1);
         return Act::kNone;
     }
     if (key == "sys.lang") {

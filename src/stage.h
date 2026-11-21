@@ -52,7 +52,7 @@ private:
     void SyncTheme(const Theme& media, float dt);
     void Backdrop(double now);
     void Clock(float y, float k);
-    enum EditPart { kPartClock, kPartCtl, kPartLyrics, kPartText, kPartCover, kEditParts }; // the topmost first; ctl: the vinyl room's buttons
+    enum EditPart { kPartClock, kPartCtl, kPartLyrics, kPartText, kPartCover, kPartWave, kEditParts }; // the topmost first; ctl: the vinyl room's buttons; the waveform behind them all
     void Player(float show, float lyr);
     void VinylPlayer(float show); // the vinyl room: the cover as a sleeve, its record sliding out to play: stage_vinyl.cpp
     void VinylStep(); // the record's motion for this frame
@@ -120,7 +120,7 @@ private:
     D2D1_POINT_2F editMid{}, barAt{-1, -1}, barGrab{};
     D2D1_SIZE_F editSize{};
     bool barHeld = false;
-    D2D1_RECT_F partCover{}, partText{}, partLyrics{}, partClock{}, partCtl{}; // where they landed this frame
+    D2D1_RECT_F partCover{}, partText{}, partLyrics{}, partClock{}, partCtl{}, partWave{}; // where they landed this frame
     void StartEdit();
     void EndEdit();
     void EditNudge(int dx, int dy, bool big); // the arrows: the picked part, a little

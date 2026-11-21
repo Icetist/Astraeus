@@ -194,10 +194,68 @@ int WaterGoal() {
     return g > 0 ? g : kDefaultGoal;
 }
 
+namespace {
+constexpr int kDefaultMl = 250, kLeastMl = 50, kMostMl = 2000;
+constexpr double kMostHours = 24;
+constexpr int kLeastGap = 15 * 60; // behind on the day, it still never asks more often than this
+int waterNext = -1, waterNextDay = 0; // seconds into that day the next reminder's due; -1 not yet set
+
+int SecOfDay() {
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    return st.wHour * 3600 + st.wMinute * 60 + st.wSecond;
+}
+
+int WaterBegin() { // when today's reminders started: the first moment the app ran today, kept across restarts
+    std::wstring s = feeds::Setting("water.begin");
+    size_t comma = s.find(L',');
+    if (comma != std::wstring::npos && _wtoi(s.c_str()) == Today()) return _wtoi(s.c_str() + comma + 1);
+    int now = SecOfDay();
+    feeds::SetSetting("water.begin", std::to_wstring(Today()) + L"," + std::to_wstring(now));
+    return now;
+}
+
+int WaterGap(int now) { // the time that's left spread over the glasses that are; -1 no reminders
+    double hours = (std::min)(_wtof(feeds::Setting("water.hours").c_str()), kMostHours);
+    int left = WaterGoal() - Water();
+    if (hours <= 0 || left <= 0) return -1;
+    int end = WaterBegin() + (int)(hours * 3600);
+    return (std::max)(kLeastGap, (end - now) / left);
+}
+}
+
 void WaterAdd(int by) {
     int next = (std::clamp)(Water() + by, 0, 99);
     feeds::SetSetting("water.count", std::to_wstring(next));
     feeds::SetSetting("water.day", std::to_wstring(Today()));
+    if (by > 0) waterNext = -1; // just drunk: the next one is a whole wait away
+}
+
+int WaterMl() {
+    int ml = _wtoi(feeds::Setting("water.ml").c_str());
+    return ml > 0 ? (std::clamp)(ml, kLeastMl, kMostMl) : kDefaultMl;
+}
+
+bool WaterDue() {
+    int now = SecOfDay(), today = Today();
+    if (waterNextDay != today) waterNextDay = today, waterNext = -1;
+    int gap = WaterGap(now);
+    if (gap < 0) {
+        waterNext = -1;
+        return false;
+    }
+    if (waterNext < 0) {
+        waterNext = now + gap;
+        return false;
+    }
+    if (now < waterNext) return false;
+    waterNext = now + gap; // left unanswered, it asks again a wait later
+    return true;
+}
+
+void WaterLater(int seconds) {
+    waterNextDay = Today();
+    waterNext = SecOfDay() + seconds;
 }
 
 std::vector<Habit> Habits() {
