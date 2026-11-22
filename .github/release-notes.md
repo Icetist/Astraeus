@@ -1,10 +1,9 @@
-## Astraeus 2.8.5
+## Astraeus 2.8.6
 
-### Fixed
-- **Lyrics for YouTube Music.** The YouTube Music desktop app and YouTube Music installed as a web app in Chrome or Edge are now recognized as music players, so their songs get synced lyrics. Other installed web apps are checked for music the same way browser tabs are, and Astraeus shows "YouTube Music" or "Spotify" instead of a raw app id.
-- **The Screens card with more than one monitor.** The "Pill on every screen" button no longer spills out of the card on narrower panels, and the screen's name shows again beside **All**.
+### New
+- **Reserve space for the pill.** A new switch in **Settings → Advanced → Panel**. When it's on, maximized windows end just below the island instead of sliding under it, so a browser's tabs are never covered. The panel still opens over your windows as before. The space is given back while a fullscreen app or the fullscreen player is up. It's off by default.
 
-Thanks to @jorjanion for both fixes!
+Thanks to @jorjanion for this one!
 
 > [!NOTE]
 > The executable is not code-signed yet, so Windows SmartScreen may show an "unknown publisher" warning the first time. Click **More info → Run anyway**.
