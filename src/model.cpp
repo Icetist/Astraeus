@@ -255,6 +255,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     vizFull = flag(L"VizFull", 0);
     layout = (std::clamp)(sys::ReadNum(L"Layout", kLayHorizontal), 0, kLayouts - 1);
     pinned = flag(L"Pinned", 0);
+    pillReserve = flag(L"PillReserve", 0);
     floating = flag(L"Floating", 0);
     LoadBoard();
     shelfCapture = flag(L"ShelfCapture", 0); // off unless asked for: the shelf holds only what's dropped on it

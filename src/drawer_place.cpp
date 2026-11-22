@@ -60,7 +60,7 @@ void Drawer::Place() {
     if (reachUsed > 0) work.bottom = (std::min)(work.bottom, mi.rcMonitor.bottom - (LONG)reachUsed); // halobar's dock floats without reserving room: kept clear of it too
     sideH = (std::min)(kSideMaxH, (work.bottom - work.top) / scale - 2 * cfg.fillet - kSideMargin); // sidebar fits between the taskbars
     FitSize(); // the layout's size, for this screen
-    if (barOn || Pinned()) Reserve(Pinned()); // pinned: its room on this screen; unpinned: given back
+    SyncReserve(); // pinned or island: its room on this screen; unpinned: given back
     fastSync = 1; // a new screen, maybe a new refresh rate: judge it afresh
     framesSeen = framesLate = 0;
     Resize(wantH > 0 ? wantH : kStrip, false); // the depth asked for, not the right edge's padded window
@@ -311,10 +311,12 @@ void Drawer::SyncHide() {
     if (hide) {
         Retract();
         ShowWindow(hwnd, SW_HIDE);
+        if (barOn) Reserve(false);
         needsFrame = false;
         FreeDev(); // a game is fullscreen, give the gpu back now
     } else {
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        SyncReserve();
         if (ringing) SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 }

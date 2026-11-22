@@ -452,12 +452,14 @@ void Drawer::SyncStay() {
     if (desk && desk->Up()) { // the long pill is the desktop's: no second one beside it
         if (island && !opened && !peeking && !MouseIn()) Close();
         stayWasAlways = false;
+        SyncReserve();
         return;
     }
     bool always = Stays();
     if (always && !island && !peeking && !alarmBanner && !dragging && !hidden && !stage && spring.value <= 0.5f) ShowIsland(); // the pill comes back by itself
     else if (!always && stayWasAlways && island && !MouseIn()) Close(); // always was just turned off, or an app came under it
     stayWasAlways = always;
+    SyncReserve();
 }
 
 void Drawer::Answer() {
@@ -967,7 +969,7 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         SetCursor(LoadCursorW(nullptr, hand ? IDC_HAND : IDC_ARROW)); // hand set by ui over clickables
         return TRUE;
     case kBarMsg: // pinned: the shell moved bars around, or a fullscreen app came
-        if (wp == ABN_POSCHANGED && barOn) Reserve(true);
+        if (wp == ABN_POSCHANGED && barOn) Reserve(true, true);
         return 0;
     case WM_DPICHANGED:
     case WM_DISPLAYCHANGE:
@@ -1481,6 +1483,7 @@ void Drawer::Frame() {
         BuildStrips();
     }
     SyncEvery(); // switched in settings: the pills come or go now, not at the next second
+    SyncReserve();
     SyncHud();
     model.SyncThemeSet(); // the desktop's theme or the over-apps one; settings previews whichever it's editing
     SyncLook(); // before the device: switching to or from glass rebuilds it

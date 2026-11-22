@@ -85,15 +85,21 @@ private:
     static constexpr int kBoardFocusKey = 0x52A4; // ctrl+alt+shift+d: the keyboard into its dashboard
     void BoardKey();
     int layNow = Model::kLayHorizontal; // the layout the window is built for
-    bool pinNow = false, floatNow = false; // and the two options
+    bool pinNow = false, floatNow = false; // and the options
     bool Tall() const { return Side() || layNow == Model::kLayVertical; } // pages in their narrow column, the rail across the top
     bool Pinned() const { return pinNow; } // the panel stays open, the screen makes room for it
+    bool WantReserve() const;
     bool Floating() const { return floatNow; } // the panel is a card that glides in clear of the edge
     void FitSize(); // the panel's size for the layout and screen
     static constexpr float kFloatGap = 14; // the floating card's gap from the edge
     static constexpr float kCompactMaxH = 680; // the compact column's height at most
     bool barOn = false; // pinned: the panel's room is reserved, maximized windows end where it starts
-    void Reserve(bool on); // that reservation, as a shell appbar
+    HMONITOR barMon = nullptr; // screen the appbar is registered on
+    UINT barEdge = (UINT)-1; // edge the appbar is registered on
+    LONG barDepth = 0; // depth in screen pixels
+    RECT barRc = {}; // last rect registered with ABM_SETPOS
+    void Reserve(bool on, bool force = false); // that reservation, as a shell appbar
+    void SyncReserve(bool force = false) { Reserve(WantReserve(), force); }
     static constexpr UINT kBarMsg = WM_APP + 62; // the shell's appbar notices
     enum : UINT_PTR { kHoverTimer = 1, kCloseTimer, kReleaseTimer, kPeekTimer, kDevTimer, kFollowTimer, kTrimTimer = 8, kFullTimer, kGreetTimer, kDeskTimer, kAdoptTimer, kPasteTimer, kLongTimer }; // all one-shot; 7 is the model's
     static constexpr UINT kAdoptMsg = WM_APP + 60; // a hover strip on another screen asks the panel to come over

@@ -133,6 +133,17 @@ void Paint(Sketch& s, int kind) {
         c.Icon(glyph::Lock, {cx, in.top + 64}, 16, t.accentHi);
         break;
     }
+    case kPillReserve: { // windows end below the island
+        s.Edge(in.top + 2);
+        float pw = 68, ph = 12;
+        c.Fill({cx - pw / 2, in.top + 2, cx + pw / 2, in.top + 2 + ph}, 6, t.accentHi);
+        D2D1_RECT_F win = {in.left + 16, in.top + 2 + ph + 4, in.right - 16, in.bottom - 10};
+        c.Fill({win.left + 2, win.top + 4, win.right + 2, win.bottom + 4}, 8, Color{0, 0, 0, 0.14f});
+        c.Fill(win, 8, t.cardHi);
+        s.Line(win.left + 12, win.top + 14, 50, dim);
+        s.Words(L"Reserved", {in.left, win.top + 24, in.right, win.top + 42}, 11, t.text, Align::Center);
+        break;
+    }
     case kFloating: { // a card off the edge, with air around it
         s.Edge(in.top + 2);
         D2D1_RECT_F card = {in.left + 30, in.top + 18, in.right - 30, in.bottom - 8};
@@ -289,7 +300,7 @@ void Want(Ui& ui, int kind, bool hover) {
 int ForId(const char* id) {
     static const struct { const char* id; int kind; } kMap[] = {
         {"set.pwr.pills", kPowerPills}, {"set.pill.always", kPillAlways}, {"set.pill.bubble", kTimerBubble}, {"set.pinned", kPinned},
-        {"set.floating", kFloating}, {"set.tour.next", kTourNext}, {"set.stage.lyrbtn", kStageLyrBtn}, {"set.stage.editbtn", kStageEditBtn},
+        {"set.pill.reserve", kPillReserve}, {"set.floating", kFloating}, {"set.tour.next", kTourNext}, {"set.stage.lyrbtn", kStageLyrBtn}, {"set.stage.editbtn", kStageEditBtn},
         {"set.desk.every", kDeskEvery},
         {"set.keyonly", kKeyOnly}, {"set.pill.full", kPillFull}, {"set.pill.fullopen", kPillFullOpen}, {"set.shelf.cap", kShelfCatch},
         {"set.shelf.keep", kShelfKeep}, {"set.shelf.wipe", kShelfWipe}, {"set.a11y.follow", kA11yFollow}, {"set.a11y.keys", kA11yKeys},
