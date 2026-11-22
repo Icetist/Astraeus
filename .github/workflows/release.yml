@@ -3,15 +3,22 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch: # a trial: builds and signs, publishes nothing
+    inputs:
+      policy:
+        description: SignPath signing policy
+        default: test-signing
 
 permissions:
   contents: write
   actions: read
 
 env:
-  # code signing through the SignPath Foundation; the signing steps are skipped until these are set in the repo settings
+  # code signing through the SignPath Foundation; skipped until the secrets are set, and on tagged releases until the repo variable SIGN_RELEASES is true (the test certificate shouldn't ship)
   SIGNPATH_ORG: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
   SIGNPATH_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+  SIGN: ${{ secrets.SIGNPATH_ORGANIZATION_ID != '' && (github.event_name == 'workflow_dispatch' || vars.SIGN_RELEASES == 'true') }}
+  PUBLISH: ${{ github.event_name == 'push' }}
 
 jobs:
   build:
@@ -20,6 +27,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Check tag matches version.h
+        if: env.PUBLISH == 'true'
         shell: pwsh
         run: |
           $v = (Select-String -Path src/version.h -Pattern '#define APP_VER_STR "(.+)"').Matches[0].Groups[1].Value
@@ -38,34 +46,46 @@ jobs:
 
       - name: Upload unsigned build
         id: unsigned
-        if: env.SIGNPATH_ORG != ''
+        if: env.SIGN == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Astraeus
           path: build/Astraeus.exe
 
       - name: Sign
-        if: env.SIGNPATH_ORG != ''
+        if: env.SIGN == 'true'
         uses: signpath/github-action-submit-signing-request@v1
         with:
           api-token: ${{ env.SIGNPATH_TOKEN }}
           organization-id: ${{ env.SIGNPATH_ORG }}
           project-slug: astraeus
-          signing-policy-slug: release-signing
+          signing-policy-slug: ${{ inputs.policy || 'release-signing' }}
           github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
           wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600 # release signing waits for the owner to approve it in SignPath
           output-artifact-directory: build/signed
 
       - name: Use the signed exe
-        if: env.SIGNPATH_ORG != ''
+        if: env.SIGN == 'true'
         shell: pwsh
-        run: Copy-Item build/signed/Astraeus.exe build/Astraeus.exe -Force
+        run: |
+          Copy-Item build/signed/Astraeus.exe build/Astraeus.exe -Force
+          $sig = Get-AuthenticodeSignature build/Astraeus.exe
+          Write-Output "::notice::signed by $($sig.SignerCertificate.Subject), status $($sig.Status)"
+
+      - name: Keep the trial's signed exe
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Astraeus-trial
+          path: build/Astraeus.exe
 
       - name: Hash
         shell: pwsh
         run: (Get-FileHash build/Astraeus.exe -Algorithm SHA256).Hash.ToLower() | Set-Content -NoNewline -Encoding ascii build/Astraeus.exe.sha256 # updater refuses exes that don't match
 
       - name: Clear files from an earlier run of this tag
+        if: env.PUBLISH == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -74,6 +94,7 @@ jobs:
           exit 0
 
       - uses: softprops/action-gh-release@v2
+        if: env.PUBLISH == 'true'
         with:
           files: |
             build/Astraeus.exe
@@ -81,7 +102,7 @@ jobs:
           body_path: .github/release-notes.md # rewrite for each release
 
       - name: Earlier versions become pre-releases on a new major version
-        if: endsWith(github.ref_name, '.0.0')
+        if: env.PUBLISH == 'true' && endsWith(github.ref_name, '.0.0')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -94,6 +115,7 @@ jobs:
   winget:
     # opens a pull request on the winget package list for the new version; skipped until WINGET_TOKEN (a classic token with public_repo) is set in the repo secrets
     needs: build
+    if: github.event_name == 'push'
     runs-on: windows-latest
     env:
       WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}

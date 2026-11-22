@@ -277,6 +277,15 @@ What stays on your PC:
 - **A problem report** is only ever copied to your clipboard. It holds your version, PC specs, a short list of plain settings and recent lines from `astraeus.log`, with your user name, PC name and home folder replaced. Read it before you share it.
 - **The mixer's groups and profiles, your to-dos and your server list** live in the registry under `HKCU\Software\Astraeus`.
 
+## 🔏 Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+- **Committers and reviewers:** [Icetist](https://github.com/Icetist). Pull requests from other contributors are reviewed by the owner before they're merged.
+- **Approvers:** [Icetist](https://github.com/Icetist), who approves every signing request.
+
+Only `Astraeus.exe` built by this repository's GitHub Actions release workflow, from the tagged source, is sent for signing. Nothing built anywhere else is signed. What the app sends over the network, and when, is listed under [Privacy](#-privacy); it sends nothing else.
+
 ## ⚙️ Configuration
 
 Everything below lives in `astraeus.ini` next to the executable. Open it from the tray menu (**Edit config**) and save: changes apply right away, no restart needed. Unknown keys and invalid values are noted in `astraeus.log`, and the default is kept. Choices made in the Settings sheet live in the registry; **Export** in Settings writes them, together with the keys of `astraeus.ini`, to a single `.ini` file you can **Import** again.
