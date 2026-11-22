@@ -54,7 +54,7 @@ jobs:
 
       - name: Sign
         if: env.SIGN == 'true'
-        uses: signpath/github-action-submit-signing-request@v1
+        uses: signpath/github-action-submit-signing-request@v3
         with:
           api-token: ${{ env.SIGNPATH_TOKEN }}
           organization-id: ${{ env.SIGNPATH_ORG }}
