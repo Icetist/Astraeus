@@ -128,12 +128,13 @@ void PanelOpts(PageCtx& p, const D2D1_RECT_F& r, bool live) { // how the panel b
     const Theme& t = p.shell;
     Model& m = p.m;
     D2D1_RECT_F in = Box(c, t, r, L"Panel");
-    constexpr float kOptH = 25;
+    constexpr float kOptH = 25, kOptGap = 2, kNoteTop = 8, kNoteGap = 15; // three switches and two notes in the card: rows a bit shorter than kRowH to fit
     if (SwitchRow(ui, t, "set.pinned", Rect(in.left, in.top, Width(in), kOptH), L"Pinned open", m.pinned != 0, live)) Flip(m, m.pinned, L"Pinned");
-    if (SwitchRow(ui, t, "set.pill.reserve", Rect(in.left, in.top + kOptH + 2, Width(in), kOptH), L"Reserve space for the pill", m.pillReserve != 0, live)) Flip(m, m.pillReserve, L"PillReserve");
-    if (SwitchRow(ui, t, "set.floating", Rect(in.left, in.top + 2 * (kOptH + 2), Width(in), kOptH), L"Floating card", m.floating != 0, live)) Flip(m, m.floating, L"Floating");
-    Note(c, t, in, in.top + 3 * kOptH + 8, L"Reserved: maximized windows end below the island");
-    Note(c, t, in, in.top + 3 * kOptH + 23, L"Floating: a card with a gap from the edge");
+    if (SwitchRow(ui, t, "set.pill.reserve", Rect(in.left, in.top + kOptH + kOptGap, Width(in), kOptH), L"Reserve space for the pill", m.pillReserve != 0, live)) Flip(m, m.pillReserve, L"PillReserve");
+    if (SwitchRow(ui, t, "set.floating", Rect(in.left, in.top + 2 * (kOptH + kOptGap), Width(in), kOptH), L"Floating card", m.floating != 0, live)) Flip(m, m.floating, L"Floating");
+    float notes = in.top + 3 * kOptH + kNoteTop;
+    Note(c, t, in, notes, L"Pinned or reserved: maximized windows end below it");
+    Note(c, t, in, notes + kNoteGap, L"Floating: a card with a gap from the edge");
 }
 
 void Layout(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the panel's shape: the wide island, or a narrow column
