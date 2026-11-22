@@ -13,10 +13,10 @@
 <meta property="og:title" content="Astraeus: a dynamic island for Windows">
 <meta property="og:description" content="A panel that drips open from the edge of your screen with your music, synced lyrics, quick toggles, live stats and tools. Native C++, one file, free and open source.">
 <meta property="og:url" content="https://icetist.github.io/Astraeus/">
-<meta property="og:image" content="https://icetist.github.io/Astraeus/assets/img/og.png">
+<meta property="og:image" content="https://icetist.github.io/Astraeus/assets/img/social.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="The Astraeus logo and name above its Home panel">
+<meta property="og:image:alt" content="Astraeus for Windows, in grainy white type on black, beside the island pill dripping from the top edge">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="assets/img/favicon-32.png" sizes="32x32" type="image/png">
@@ -105,6 +105,8 @@ canvas#liquid { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0
 .get { display: inline-flex; align-items: center; gap: 10px; margin-top: 22px; height: 54px; padding: 0 28px; border-radius: 99px; background: var(--fg); color: var(--bg); text-decoration: none; font-size: 17px; font-weight: 500; transition: transform .5s var(--ease); }
 body.inv .get { background: var(--bg); color: var(--fg); }
 .get:hover { transform: scale(1.04); }
+.get.s { height: 46px; margin-top: 18px; padding: 0 24px; font-size: 15px; pointer-events: auto; }
+.facts { display: block; margin-top: 12px; opacity: .72; }
 
 /* the real thing: a strip of screenshots you can fling */
 .strip { position: absolute; left: 0; top: 50%; translate: 0 -50%; display: flex; gap: 2.4vw; padding: 0 var(--m); cursor: grab; touch-action: pan-y; will-change: transform; }
@@ -163,6 +165,11 @@ html::-webkit-scrollbar { display: none; }
 .spec { position: absolute; display: grid; grid-template-columns: auto auto; column-gap: 22px; row-gap: 2px; padding-top: 8px; border-top: 1px solid currentColor; }
 .spec dt { opacity: .55; }
 .spec dd { margin: 0; text-align: right; }
+@media (max-width: 760px) { /* after .spec, or it wins: phones get the words below the island, the title whole */
+  .spec, .hero-ov .fig { display: none; }
+  .hero-ov .copy { top: 38vh !important; width: auto !important; }
+  .ov .hero-t { font-size: 15vw !important; }
+}
 
 /* the loading screen: the island is the progress bar */
 /* the loader is the page's own liquid: the island grows along the top while a counter, set like the title, counts where the title will be */
@@ -242,7 +249,7 @@ html.has-cur, html.has-cur a, html.has-cur button, html.has-cur .strip { cursor:
     <span class="cross" style="left:calc(50vw + var(--hx) - var(--hw) - 2vh); top:2.6vh"></span>
     <span class="cross" style="left:calc(50vw + var(--hx) - var(--hw) - 2vh); top:calc(var(--hh) * 2 + 12vh)"></span>
     <div class="call r mono" style="right:calc(50vw - var(--hx) + var(--hw) - var(--hh) * 1.05); top:calc(var(--hh) + 2vh + var(--hh) * .5)">( NOW PLAYING )<i style="width:calc(var(--hh) * 1.2)"></i></div>
-    <div class="copy" style="left:var(--m); top:13vh; width:min(380px, 34vw)"><span class="mono">An island for Windows</span><p>It lives on the top edge of your screen: your music, synced lyrics, quick toggles and live stats, dripping open the moment you rest the mouse there.</p></div>
+    <div class="copy" style="left:var(--m); top:13vh; width:min(380px, 34vw)"><span class="mono">A free app for Windows</span><p>A small pill at the top of your screen, like the one on an iPhone. Move your mouse up to it and it opens: your music and its lyrics, Wi-Fi, Bluetooth, volume, the weather and more, without opening another app.</p><a class="get s" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe">Download free</a><span class="facts mono">Windows 10 and 11 · No account · No ads</span></div>
     <h1 class="big hero-t" data-melt style="left:calc(var(--m) - .4vw); bottom:7vh">Astraeus<br>for Windows</h1>
     <span class="cue mono"><i></i>Scroll</span>
     <span class="foot mono">Win Alt A opens it anywhere</span>
@@ -255,8 +262,8 @@ html.has-cur, html.has-cur a, html.has-cur button, html.has-cur .strip { cursor:
     <div class="call mono" style="left:calc(50vw + var(--pw) - 2px); top:calc(var(--kh) * .1025)"><i style="width:5vw"></i>( WI-FI · BLUETOOTH )</div>
     <div class="call mono" style="left:calc(50vw + var(--pw) - 2px); top:calc(var(--kh) * .3825)"><i style="width:5vw"></i>( CPU · MEMORY · NETWORK )</div>
     <span class="fig mono" style="left:calc(50vw - var(--pw)); top:calc(var(--kh) * .48 + 14px)">FIG. 02 · THE PANEL, DRIPPING OPEN</span>
-    <div class="copy" style="left:var(--m); bottom:13vh"><span class="mono">The panel</span><p>It drips open from the edge: your music, synced lyrics, quick toggles, live stats and everyday tools, all a mouse rest away.</p></div>
-    <div class="big r" data-melt style="right:var(--m); bottom:8vh">9 MB<small>of memory while it waits, closed*</small></div>
+    <div class="copy" style="left:var(--m); bottom:13vh"><span class="mono">The panel</span><p>Rest your mouse at the top of the screen and it opens: what's playing, Wi-Fi and Bluetooth switches, volume and brightness, and how busy your PC is. Move away and it tucks itself back in.</p></div>
+    <div class="big r" data-melt style="right:var(--m); bottom:8vh">9 MB<small>of memory while it waits, less than one browser tab*</small></div>
     <span class="foot mono">* Measured on an older dual-core laptop with integrated graphics</span>
   </section>
 
@@ -264,15 +271,15 @@ html.has-cur, html.has-cur a, html.has-cur button, html.has-cur .strip { cursor:
   <section class="ov" data-name="the lyrics" aria-label="Lyrics">
     <span class="fig mono" style="left:calc(50vw - 42vh * var(--s)); top:calc(50vh + 25vh * var(--s))">FIG. 03 · A LINE, SUNG AS IT'S SUNG</span>
     <div class="call mono" style="left:calc(50vw + 36vh * var(--s)); top:50vh"><i style="width:6vh"></i>( NOW )</div>
-    <div class="copy" style="right:var(--m); top:13vh"><span class="mono">Lyrics</span><p>Synced lyrics from three sources, each word lit as it's sung, the rest drifting out of focus. Right-to-left lyrics read right to left.</p></div>
-    <div class="big" data-melt style="left:var(--m); bottom:8vh">3<small>sources for every song's words</small></div>
+    <div class="copy" style="right:var(--m); top:13vh"><span class="mono">Lyrics</span><p>Sing along. The song's words show up as it plays, each line lighting up right as it's sung, like karaoke. Works with Spotify, YouTube Music and most music apps and sites.</p></div>
+    <div class="big" data-melt style="left:var(--m); bottom:8vh">3<small>places it looks for every song's words</small></div>
   </section>
 
   <!-- 4: vinyl -->
   <section class="ov" data-name="the record" aria-label="Vinyl">
     <span class="fig mono" style="left:calc(50vw - 35vh * var(--s)); top:calc(50vh + 33vh * var(--s))">FIG. 04 · THE RECORD, TURNING</span>
     <div class="call mono" style="left:calc(50vw + 40vh * var(--s)); top:calc(50vh - 28vh * var(--s))"><i style="width:6vh"></i>( THE ARM )</div>
-    <div class="copy" style="left:var(--m); top:13vh"><span class="mono">Fullscreen</span><p>Click the cover and the song fills the screen. Put the record on: the cover turns into a sleeve, the record slides out and the arm drops in.</p></div>
+    <div class="copy" style="left:var(--m); top:13vh"><span class="mono">Fullscreen</span><p>Click the album cover and the song fills your whole screen. Turn on the record player: the cover becomes a sleeve, the record slides out and the needle drops in.</p></div>
     <div class="big r" data-melt style="right:var(--m); bottom:8vh">33⅓<small>turns a minute, or slower</small></div>
   </section>
 
@@ -281,14 +288,14 @@ html.has-cur, html.has-cur a, html.has-cur button, html.has-cur .strip { cursor:
     <span class="fig mono" style="left:calc(50vw - 46vh * var(--s)); top:calc(50vh - 22vh * var(--s))">FIG. 05 · THE WAVEFORM, LIVE</span>
     <span class="cross" style="left:calc(50vw - 48vh * var(--s)); top:calc(50vh - 25vh * var(--s))"></span><span class="cross" style="left:calc(50vw + 48vh * var(--s)); top:calc(50vh - 25vh * var(--s))"></span>
     <span class="cross" style="left:calc(50vw - 48vh * var(--s)); top:calc(50vh + 25vh * var(--s))"></span><span class="cross" style="left:calc(50vw + 48vh * var(--s)); top:calc(50vh + 25vh * var(--s))"></span>
-    <div class="copy" style="left:var(--m); top:13vh"><span class="mono">The music</span><p>Bars that move with whatever is playing, in the album art's colors, and a glow round the screen's edge that swells on the beat.</p></div>
+    <div class="copy" style="left:var(--m); top:13vh"><span class="mono">The music</span><p>Bars that dance to whatever's playing, in the colors of the album cover, and a soft glow around your screen that pulses with the beat.</p></div>
     <div class="big r" data-melt style="right:var(--m); top:13vh">48<small>bars, dancing</small></div>
   </section>
 
   <!-- 6: every screen -->
   <section class="ov" data-name="every screen" aria-label="Every screen">
     <span class="fig mono" style="left:calc(50vw - 59vh * var(--s)); top:calc(50vh + 20vh * var(--s))">FIG. 06 · THREE SCREENS, THREE PILLS</span>
-    <div class="copy" style="right:var(--m); top:11vh"><span class="mono">Every screen</span><p>One island that follows your mouse, or a pill on every monitor. Each keeps its own size, its own blur and its own fullscreen app.</p></div>
+    <div class="copy" style="right:var(--m); top:11vh"><span class="mono">Every screen</span><p>More than one monitor? Have one pill that follows your mouse from screen to screen, or one on every screen, each with its own size and look.</p></div>
     <div class="big r" data-melt style="right:var(--m); bottom:8vh; font-size:min(13vw, 22vh)">×3<small>or as many as you've got</small></div>
   </section>
 
@@ -329,8 +336,8 @@ html.has-cur, html.has-cur a, html.has-cur button, html.has-cur .strip { cursor:
   <!-- 8: engineering -->
   <section class="ov" data-name="the engine" aria-label="Engineering">
     <span class="fig mono" style="left:var(--m); top:calc(50vh - 14vh)">FIG. 08 · CPU, CLOSED — ONE BREATH WHEN YOU LOOK</span>
-    <div class="copy" style="right:var(--m); top:13vh"><span class="mono">Engineering</span><p>One native C++ file, drawn with Direct2D and DirectComposition. No Electron, no web view, no runtime. It draws only while something moves, and hands the GPU back a few seconds after it closes.</p></div>
-    <div class="big" data-melt style="left:var(--m); bottom:8vh">0.08%<small>of one CPU core while closed*, about 2 MB of memory a few seconds after</small></div>
+    <div class="copy" style="right:var(--m); top:13vh"><span class="mono">Light and fast</span><p>It barely touches your PC while it waits, so your games, battery and fans won't notice it's there. A real Windows app in one small file, not a website in disguise.</p></div>
+    <div class="big" data-melt style="left:var(--m); bottom:8vh">0.08%<small>of your processor while it waits*</small></div>
     <span class="foot mono">* Measured on an older dual-core laptop with integrated graphics</span>
   </section>
 
@@ -338,7 +345,7 @@ html.has-cur, html.has-cur a, html.has-cur button, html.has-cur .strip { cursor:
   <section class="ov" data-name="get it" aria-label="Download">
     <span class="fig mono" style="left:calc(50vw + 30vh); top:11vh">FIG. 09 · THE STAR, ASTRAEUS' OWN</span>
     <h2 class="big" data-melt style="left:var(--m); top:20vh; font-size:min(17vw, 30vh)">Get it.</h2>
-    <div class="copy" style="left:var(--m); bottom:9vh; width:min(430px, 80vw)"><p>Free and open source. One file for Windows 10 and 11, and new releases install themselves.</p><a class="get" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe">Download Astraeus.exe</a></div>
+    <div class="copy" style="left:var(--m); bottom:9vh; width:min(430px, 80vw)"><p>Free, with no ads and no account. One small download for Windows 10 and 11: no installer, and it keeps itself up to date.</p><a class="get" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe">Download Astraeus</a><span class="facts mono">If Windows says "Windows protected your PC", click More info, then Run anyway</span></div>
     <div class="copy" style="right:var(--m); bottom:9vh; text-align:right"><span class="mono">GPL-3.0 · No account · No admin rights</span></div>
   </section>
 </div>
