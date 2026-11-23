@@ -1,0 +1,70 @@
+# Keeps the ✦ LIVE counters in the Astraeus Discord up to date.
+# Renames two locked voice channels to show GitHub stars and total release downloads.
+# Needs one repo secret: DISCORD_BOT_TOKEN (the "Astraeus Stats" bot's token).
+
+name: Discord stats
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"   # every 3 hours
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update counters
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          REPO: ${{ github.repository }}
+          STARS_CHANNEL: "1574387406411530290"
+          DOWNLOADS_CHANNEL: "1574387489555226645"
+        run: |
+          set -euo pipefail
+
+          gh_api() { curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$1"; }
+
+          stars=$(gh_api "https://api.github.com/repos/$REPO" | jq '.stargazers_count')
+
+          downloads=0
+          page=1
+          while :; do
+            batch=$(gh_api "https://api.github.com/repos/$REPO/releases?per_page=100&page=$page")
+            count=$(echo "$batch" | jq 'length')
+            [ "$count" -eq 0 ] && break
+            sum=$(echo "$batch" | jq '[.[].assets[].download_count] | add // 0')
+            downloads=$((downloads + sum))
+            page=$((page + 1))
+          done
+
+          fmt() {
+            awk -v n="$1" 'BEGIN {
+              if (n >= 1000000) printf "%.1fM", n/1000000;
+              else if (n >= 1000) printf "%.1fk", n/1000;
+              else printf "%d", n }' | sed 's/\.0\([kM]\)/\1/'
+          }
+
+          rename() {
+            local id="$1" name="$2"
+            current=$(curl -fsSL -H "Authorization: Bot $DISCORD_BOT_TOKEN" "https://discord.com/api/v10/channels/$id" | jq -r '.name')
+            if [ "$current" = "$name" ]; then
+              echo "unchanged: $name"
+              return
+            fi
+            curl -fsSL -X PATCH \
+              -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+              -H "Content-Type: application/json" \
+              -H "X-Audit-Log-Reason: GitHub stats refresh" \
+              -d "$(jq -n --arg n "$name" '{name: $n}')" \
+              "https://discord.com/api/v10/channels/$id" > /dev/null
+            echo "renamed: $current -> $name"
+          }
+
+          rename "$STARS_CHANNEL" "⭐・Stars: $(fmt "$stars")"
+          rename "$DOWNLOADS_CHANNEL" "📥・Downloads: $(fmt "$downloads")"
