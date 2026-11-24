@@ -69,7 +69,7 @@ canvas#liquid { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0
 .bar > * { pointer-events: auto; }
 .bar b { font-weight: 500; letter-spacing: -.01em; }
 .bar-r { display: flex; align-items: center; gap: 18px; }
-.look-btn, .dl-btn { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 13px; border: 1px solid currentColor; border-radius: 99px; background: none; font: inherit; color: inherit; cursor: pointer; text-decoration: none; }
+.look-btn, .chat-btn, .dl-btn { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 13px; border: 1px solid currentColor; border-radius: 99px; background: none; font: inherit; color: inherit; cursor: pointer; text-decoration: none; }
 .look-btn i { width: 11px; height: 11px; border-radius: 50%; border: 1px solid currentColor; background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
 .dl-btn { background: currentColor; }
 .dl-btn span { color: #000; }
@@ -236,6 +236,7 @@ html.has-cur, html.has-cur a, html.has-cur button, html.has-cur .strip { cursor:
   <span><b>Astraeus</b></span>
   <div class="bar-r">
     <button class="look-btn mono" id="lookBtn" type="button" aria-label="Change the page's look"><i></i><span id="lookName">Night</span></button>
+    <a class="chat-btn mono" href="https://discord.gg/8qgKVTuERa" aria-label="Join the Astraeus Discord server">Discord</a>
     <a class="dl-btn mono" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe"><span>Download</span></a>
   </div>
 </header>
@@ -248,7 +249,7 @@ html.has-cur, html.has-cur a, html.has-cur button, html.has-cur .strip { cursor:
     <span class="fig mono" style="left:calc(50vw + var(--hx) - var(--hw)); top:calc(var(--hh) * 2 + 4vh + 14px)">FIG. 00 · THE ISLAND, MAGNIFIED</span>
     <span class="cross" style="left:calc(50vw + var(--hx) - var(--hw) - 2vh); top:2.6vh"></span>
     <span class="cross" style="left:calc(50vw + var(--hx) - var(--hw) - 2vh); top:calc(var(--hh) * 2 + 12vh)"></span>
-    <div class="call r mono" style="right:calc(50vw - var(--hx) + var(--hw) - var(--hh) * 1.05); top:calc(var(--hh) + 2vh + var(--hh) * .5)">( NOW PLAYING )<i style="width:calc(var(--hh) * 1.2)"></i></div>
+    <div class="call r mono" style="right:calc(50vw - var(--hx) + var(--hw) - var(--hh) * 1.05); top:calc(var(--hh) + 2vh)">( NOW PLAYING )<i style="width:calc(var(--hh) * 1.2)"></i></div>
     <div class="copy" style="left:var(--m); top:13vh; width:min(380px, 34vw)"><span class="mono">A free app for Windows</span><p>A small pill at the top of your screen, like the one on an iPhone. Move your mouse up to it and it opens: your music and its lyrics, Wi-Fi, Bluetooth, volume, the weather and more, without opening another app.</p><a class="get s" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe">Download free</a><span class="facts mono">Windows 10 and 11 · No account · No ads</span></div>
     <h1 class="big hero-t" data-melt style="left:calc(var(--m) - .4vw); bottom:7vh">Astraeus<br>for Windows</h1>
     <span class="cue mono"><i></i>Scroll</span>
@@ -368,7 +369,7 @@ html.has-cur, html.has-cur a, html.has-cur button, html.has-cur .strip { cursor:
     </ul></div>
     <div><h3 class="mono">Find me</h3><ul id="contact">
       <li><a href="https://github.com/Icetist">GitHub <span>↗</span></a></li>
-      <li><a href="https://discordapp.com/users/711824195885072405">Discord <span>↗</span></a></li>
+      <li><a href="https://discord.com/users/711824195885072405">Discord <span>↗</span></a></li>
       <li><a href="https://www.instagram.com/saahiltalha/">Instagram <span>↗</span></a></li>
       <li><a href="https://www.linkedin.com/in/saahiltalha/">LinkedIn <span>↗</span></a></li>
       <li><a href="https://www.reddit.com/user/IcetistOfficialz">Reddit <span>↗</span></a></li>
