@@ -12,6 +12,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4?style=flat-square&logo=windows)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square&logo=cplusplus)
 ![License](https://img.shields.io/badge/license-GPL--3.0-9F8CFF?style=flat-square)
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/8qgKVTuERa)
 
 ### [Download Astraeus.exe](https://github.com/Icetist/Astraeus/releases/latest)
 
@@ -35,6 +36,8 @@ Astraeus is a dashboard that lives in a thin strip along the edge of your screen
 No Electron, no web view, no runtime to install. Just one small native executable written in C++20 with Direct2D and DirectComposition.
 
 <p align="center"><sub>If Astraeus makes your desktop a little nicer, consider leaving a ⭐. It genuinely helps.</sub></p>
+
+<p align="center"><sub>Questions, ideas or just want to follow along? Join the <a href="https://discord.gg/8qgKVTuERa">official Astraeus Discord server</a>.</sub></p>
 
 ## ✨ Features
 
