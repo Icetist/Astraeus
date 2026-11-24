@@ -25,10 +25,43 @@ jobs:
           REPO: ${{ github.repository }}
           STARS_CHANNEL: "1574387406411530290"
           DOWNLOADS_CHANNEL: "1574387489555226645"
+          UA: "DiscordBot (https://github.com/Icetist/Astraeus, 1.0)"
         run: |
           set -euo pipefail
 
+          # Trim stray whitespace/newlines that sometimes sneak into pasted secrets
+          DISCORD_BOT_TOKEN="$(printf '%s' "$DISCORD_BOT_TOKEN" | tr -d '[:space:]')"
+          DISCORD_BOT_TOKEN="${DISCORD_BOT_TOKEN#Bot }"
+
           gh_api() { curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$1"; }
+
+          # Discord call that prints the real error body instead of hiding it
+          discord() {
+            local method="$1" url="$2" data="${3:-}"
+            local out code
+            out=$(mktemp)
+            if [ -n "$data" ]; then
+              code=$(curl -sS -o "$out" -w '%{http_code}' -X "$method" \
+                -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+                -H "User-Agent: $UA" \
+                -H "Content-Type: application/json" \
+                -H "X-Audit-Log-Reason: GitHub stats refresh" \
+                --data "$data" "$url")
+            else
+              code=$(curl -sS -o "$out" -w '%{http_code}' -X "$method" \
+                -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+                -H "User-Agent: $UA" "$url")
+            fi
+            if [ "$code" -ge 300 ]; then
+              echo "::error::Discord $method $url -> HTTP $code: $(head -c 500 "$out")" >&2
+              return 1
+            fi
+            cat "$out"
+          }
+
+          # Sanity check: who are we?
+          me=$(discord GET "https://discord.com/api/v10/users/@me")
+          echo "Authenticated as: $(echo "$me" | jq -r '.username')"
 
           stars=$(gh_api "https://api.github.com/repos/$REPO" | jq '.stargazers_count')
 
@@ -42,6 +75,7 @@ jobs:
             downloads=$((downloads + sum))
             page=$((page + 1))
           done
+          echo "Stars: $stars, downloads: $downloads"
 
           fmt() {
             awk -v n="$1" 'BEGIN {
@@ -51,18 +85,13 @@ jobs:
           }
 
           rename() {
-            local id="$1" name="$2"
-            current=$(curl -fsSL -H "Authorization: Bot $DISCORD_BOT_TOKEN" "https://discord.com/api/v10/channels/$id" | jq -r '.name')
+            local id="$1" name="$2" current
+            current=$(discord GET "https://discord.com/api/v10/channels/$id" | jq -r '.name')
             if [ "$current" = "$name" ]; then
               echo "unchanged: $name"
               return
             fi
-            curl -fsSL -X PATCH \
-              -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
-              -H "Content-Type: application/json" \
-              -H "X-Audit-Log-Reason: GitHub stats refresh" \
-              -d "$(jq -n --arg n "$name" '{name: $n}')" \
-              "https://discord.com/api/v10/channels/$id" > /dev/null
+            discord PATCH "https://discord.com/api/v10/channels/$id" "$(jq -n --arg n "$name" '{name: $n}')" > /dev/null
             echo "renamed: $current -> $name"
           }
 
