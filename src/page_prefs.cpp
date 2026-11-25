@@ -658,7 +658,9 @@ constexpr float kAdvHeadH = 56; // the advanced section's bar
 constexpr float kAdvRow = 150; // its cards: room for a slider and its notes
 constexpr float kCodeRow = 76;
 bool advOpen = false; // folded each launch: the everyday settings come first
-constexpr float kUpdH = 64, kUpdBtnW = 170; // the update card under advanced, and its button
+constexpr float kUpdBtnH = 30, kUpdBtnW = 170; // the update card under advanced, and its button
+constexpr float kUpdAutoH = 24, kUpdAutoGap = 4; // the small automatic switch beneath the button
+constexpr float kUpdH = kBoxChrome + kUpdBtnH + kUpdAutoGap + kUpdAutoH;
 
 void Updates(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the version, and a check right now: the tray menu's row, here too
     Ui& ui = p.ui;
@@ -668,15 +670,16 @@ void Updates(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the version, and 
     static HWND host = nullptr; // the updater lives there; looked up once, not every frame
     if (!IsWindow(host)) host = FindWindowW(L"AstraeusHost", nullptr);
     bool busy = tray::UpdateBusy();
-    float cy = (in.top + in.bottom) / 2;
-    if (Act(ui, t, Ui::Id("set.update"), Rect(in.left, cy - 15, kUpdBtnW, 30), L"Check for updates", true, busy, live && !busy) && host) {
+    Model& m = p.m;
+    if (Act(ui, t, Ui::Id("set.update"), Rect(in.left, in.top, kUpdBtnW, kUpdBtnH), L"Check for updates", true, busy, live && !busy) && host) {
         tray::SetUpdate(tray::Upd::Checking);
         PostMessageW(host, WM_COMMAND, tray::kUpdate, 0); // the same check the tray menu runs
     }
     if (busy) ui.KeepAlive(); // the words follow the check as it goes
     std::wstring state = tray::UpdateText(), note = L"v" APP_VER_W;
     if (state != L"Check for updates") note += L"  ·  " + state; // idle: just the version
-    c.Text(note, Rect(in.left + kUpdBtnW + 14, in.top, Width(in) - kUpdBtnW - 14, Height(in)), Weight::Regular, 11.5f, t.textDim);
+    c.Text(note, Rect(in.left + kUpdBtnW + 14, in.top, Width(in) - kUpdBtnW - 14, kUpdBtnH), Weight::Regular, 11.5f, t.textDim);
+    if (SwitchRow(ui, t, "set.update.auto", Rect(in.left, in.top + kUpdBtnH + kUpdAutoGap, kUpdBtnW, kUpdAutoH), L"Automatic updates", m.autoUpdate != 0, live)) Flip(m, m.autoUpdate, L"AutoUpdate"); // off: only the button above checks
 }
 
 void AdvancedHead(PageCtx& p, const D2D1_RECT_F& r, bool live, float open) { // a bar that unfolds the rest

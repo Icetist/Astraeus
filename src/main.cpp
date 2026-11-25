@@ -435,7 +435,7 @@ LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ++app->ticks;
             RetryShell();
             if (app->ticks == 3) app->model->Prefetch(); // weather is ready before the panel first opens
-            if (app->cfg.autoUpdate && (app->ticks == 30 || app->ticks % 10800 == 0)) // 30s after launch, then every 3h
+            if (app->cfg.autoUpdate && app->model->autoUpdate && (app->ticks == 30 || app->ticks % 10800 == 0)) // 30s after launch, then every 3h
                 app->updater.Check(app->host, WM_APP_UPDATE);
             if (app->restartPending && !app->drawer->Busy() && !app->drawer->UnderFullscreen()) Restart(app->exePath); // never yank the panel away mid-use, nor a game or a video out of fullscreen: a starting copy can take the focus
             app->drawer->OnSecond();

@@ -125,7 +125,7 @@ public:
     void SetQuiet(bool on); // do not disturb, shared with halobar
     void SetArtBack(bool on); // the media page's album art background, shared with halobar too
     bool PollShared(); // once a second: do not disturb, halobar's pills and theme; true when the look changed
-    bool PillsWanted() const { return !quiet && (notifyPills || haloPills); } // windows notifications drop as pills now
+    bool PillsWanted() const { return !quiet && !haloKeeps && (notifyPills || haloPills); } // windows notifications drop as pills now
     bool Following() const { return look == kLookHalo; } // the look is halobar's
     bool WatchesDesk() const { return pillDesk != 0 || deskPill != 0 || deskApps != 0 || appsTheme != 0; } // something here depends on what's under the panel
     bool HaloRuns() const { return haloRuns; }
@@ -347,6 +347,7 @@ public:
     int notifyPills = 0; // 1: windows notifications also drop as a pill
     int quiet = 0; // do not disturb: no notification pills; shared with halobar through the same value
     bool haloPills = false; // halobar runs with its pills on: it stays quiet while we're up, so we show them
+    bool haloKeeps = false; // halobar runs with its pills kept to itself: none drop here, ours included
     int fullLyrics = 1; // the fullscreen player shows synced lyrics beside the cover (on by default)
     int mediaLyrics = 0; // the media page shows them too, beside the song (off by default)
     int fahr = 0; // temperatures in fahrenheit; until it's set in settings, as the ini says
@@ -447,6 +448,7 @@ public:
     int a11yText = 100; // percent, the text size picked here
     int a11yKeys = 1; // tab, enter and the arrows
     int a11yReader = 1; // screen readers can see the panel
+    int autoUpdate = 1; // new releases install on their own; off: only a press of the button checks
     void ReadAccess(); // what windows has for high contrast and text size: at start, and when its settings change
     bool HighContrast() const;
     int TextPct() const; // the larger of the size picked here and windows'

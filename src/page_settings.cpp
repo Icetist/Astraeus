@@ -670,7 +670,7 @@ void Notices(PageCtx& p, const D2D1_RECT_F& r, bool live) { // a little screen w
         c.Fill(Rect(pill.left + ph + 2, pill.top + ph * 0.38f, pw * 0.5f, ph * 0.24f), ph * 0.12f, Color{1, 1, 1, 0.75f * on});
     }
     if (h.hover) c.Stroke(Inset(in, -4, -4), 12, t.accent.Alpha(0.35f), 1.5f);
-    const wchar_t* label = m.quiet ? L"Do not disturb" : m.notifyPills ? L"Shown as pills" : m.haloPills ? L"Pills for HaloBar" : L"Off"; // halobar hands its pills over while we run
+    const wchar_t* label = m.quiet ? L"Do not disturb" : m.haloKeeps ? L"Shown by HaloBar" : m.notifyPills ? L"Shown as pills" : m.haloPills ? L"Pills for HaloBar" : L"Off"; // halobar hands its pills over while we run
     c.Text(label, Rect(in.left, in.bottom - 16, Width(in) - kDndW - 4, 14), Weight::Medium, 11, m.PillsWanted() ? t.accentHi : t.textDim);
     c.Fill(dnd, 9, t.track.Alpha(0.8f).Mix(t.accent, quiet));
     c.Icon(glyph::Dnd, {(dnd.left + dnd.right) / 2, (dnd.top + dnd.bottom) / 2}, 14, t.textDim.Mix(t.onAccent, quiet).Mix(t.text, dh.hover ? 0.4f * (1 - quiet) : 0), quiet > 0.5f);

@@ -166,6 +166,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     a11yText = (std::clamp)(sys::ReadNum(L"A11yText", kTextMin), kTextMin, kTextMax);
     a11yKeys = flag(L"A11yKeys", 1);
     a11yReader = flag(L"A11yReader", 1);
+    autoUpdate = flag(L"AutoUpdate", 1);
     ReadAccess();
     lyricScale = (std::clamp)(sys::ReadNum(L"LyricScale", kLyricDef), kLyricMin, kLyricMax);
     bgOpacity = (std::clamp)(sys::ReadNum(L"BgOpacity", kMaxOpacity), kMinOpacity, kMaxOpacity);
@@ -1136,11 +1137,13 @@ bool Model::PollShared() {
     haloSetWas = setNow;
     Halo was = halo, now;
     bool pills = haloRuns; // running without saved settings: its default is pills on
+    bool keeps = false; // and handed over to us
     int dock = -1; // its dock's edge, only while it runs
     int reach = 0; // its bottom dock's height off the screen's edge
     HKEY key = nullptr;
     if ((haloRuns || theme) && RegOpenKeyExW(HKEY_CURRENT_USER, kHaloKey, 0, KEY_QUERY_VALUE, &key) == ERROR_SUCCESS) {
         pills = haloRuns && HaloNum(key, L"Pills", 1, 0, 1) != 0;
+        keeps = pills && HaloNum(key, L"PillsOwn", 0, 0, 1) != 0; // it shows them itself: one pill, not one in each app
         static constexpr int kHaloToOurs[] = {-1, 1, 2, 0}; // halobar counts bottom, left, right, top; we have no bottom
         int haloSide = HaloNum(key, L"Edge", 0, 0, 3);
         dock = haloRuns ? kHaloToOurs[haloSide] : -1;
@@ -1164,6 +1167,7 @@ bool Model::PollShared() {
         RegCloseKey(key);
     }
     haloPills = pills;
+    haloKeeps = keeps;
     haloEdge = dock; // the drawer re-docks off it once the panel is closed, and back when it leaves
     haloReach = reach; // the sidebar fits above its dock
     if (theme) halo = now; // not installed: its defaults, which follow us, so dark
