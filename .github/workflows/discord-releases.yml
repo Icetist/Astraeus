@@ -1,0 +1,75 @@
+# Posts every new Astraeus release to #🚀・releases in Discord, with the full release notes.
+# Needs one repo secret: DISCORD_RELEASES_WEBHOOK (the "Astraeus Releases" webhook URL, without /github on the end).
+
+name: Discord release notes
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to (re)post, e.g. v2.8.7. Leave empty for the latest."
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post release to Discord
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WEBHOOK: ${{ secrets.DISCORD_RELEASES_WEBHOOK }}
+          TAG_INPUT: ${{ github.event.inputs.tag }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          UPDATE_PINGS_ROLE: "1574314946123137055"
+          UA: "DiscordBot (https://github.com/Icetist/Astraeus, 1.0)"
+        run: |
+          set -euo pipefail
+          WEBHOOK="$(printf '%s' "$WEBHOOK" | tr -d '[:space:]')"
+          WEBHOOK="${WEBHOOK%/github}"
+
+          tag="${EVENT_TAG:-$TAG_INPUT}"
+          if [ -n "$tag" ]; then
+            rel=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$REPO/releases/tags/$tag")
+          else
+            rel=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$REPO/releases/latest")
+          fi
+
+          payload=$(echo "$rel" | jq --arg role "$UPDATE_PINGS_ROLE" '
+            def trim_to($n): if length > $n then .[0:$n] + "\n\n…and more on GitHub." else . end;
+            (.body // "" | gsub("\r"; "")
+              # Discord only renders up to ### headings; turn deeper ones into bold lines
+              | gsub("(?m)^#{4,6} (?<t>.+)$"; "**\(.t)**")
+              | trim_to(3800)) as $notes
+            | ([.assets[] | select(.name | test("\\.(exe|msi|zip|msix)$"; "i"))][0]) as $dl
+            | {
+                username: "Astraeus",
+                content: "<@&\($role)> **Astraeus \(.tag_name)** is out.",
+                allowed_mentions: { roles: [$role] },
+                embeds: [{
+                  title: (if (.name // "") != "" then .name else "Astraeus \(.tag_name)" end),
+                  url: .html_url,
+                  description: (if $notes == "" then "No notes this time, just fixes and polish." else $notes end),
+                  color: 15724262,
+                  fields: ([
+                    (if $dl then { name: "Download", value: "[\($dl.name)](\($dl.browser_download_url))", inline: true } else empty end),
+                    { name: "All releases", value: "[GitHub](https://github.com/\(env.REPO)/releases)", inline: true }
+                  ]),
+                  footer: { text: (if .prerelease then "Pre-release" else "AutoUpdate will pick this up within a few hours" end) },
+                  timestamp: .published_at
+                }]
+              }')
+
+          code=$(curl -sS -o /tmp/out -w '%{http_code}' -X POST \
+            -H "Content-Type: application/json" -H "User-Agent: $UA" \
+            --data "$payload" "$WEBHOOK?wait=true")
+          if [ "$code" -ge 300 ]; then
+            echo "::error::Discord webhook -> HTTP $code: $(head -c 500 /tmp/out)"
+            exit 1
+          fi
+          echo "Posted $(echo "$rel" | jq -r .tag_name) to Discord"
