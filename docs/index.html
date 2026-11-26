@@ -22,20 +22,19 @@
 <link rel="icon" href="assets/img/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Astraeus","operatingSystem":"Windows 10, Windows 11","applicationCategory":"UtilitiesApplication","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://www.gnu.org/licenses/gpl-3.0.html","downloadUrl":"https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe","url":"https://icetist.github.io/Astraeus/","description":"A native dynamic island for Windows: a panel with your music, synced lyrics, quick toggles, system stats and everyday tools."}</script>
-<link rel="preload" href="assets/fonts/outfit-400.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="assets/fonts/outfit-500.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/host-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/jetbrains-mono-500.woff2" as="font" type="font/woff2" crossorigin>
 <script>
 // the theme before the first paint, so a returning visitor never sees the wrong one flash
 (function () { var t = "night"; try { t = localStorage.getItem("astraeus-look") || t; } catch (e) {} document.documentElement.dataset.look = t; })();
 </script>
 <style>
-@font-face { font-family: "Outfit"; font-weight: 200; font-display: swap; src: url("assets/fonts/outfit-200.woff2") format("woff2"); }
-@font-face { font-family: "Outfit"; font-weight: 300; font-display: swap; src: url("assets/fonts/outfit-300.woff2") format("woff2"); }
-@font-face { font-family: "Outfit"; font-weight: 400; font-display: swap; src: url("assets/fonts/outfit-400.woff2") format("woff2"); }
-@font-face { font-family: "Outfit"; font-weight: 500; font-display: swap; src: url("assets/fonts/outfit-500.woff2") format("woff2"); }
+@font-face { font-family: "Host Grotesk"; font-weight: 300 800; font-display: swap; src: url("assets/fonts/host-grotesk.woff2") format("woff2"); } /* one variable file: every weight, real bold for the big words */
+@font-face { font-family: "JetBrains Mono"; font-weight: 500; font-display: swap; src: url("assets/fonts/jetbrains-mono-500.woff2") format("woff2"); } /* shipped, so the labels look the same on every pc */
 :root {
   --m: clamp(18px, 2.4vw, 34px); /* the page's margin */
-  --mono: "Cascadia Mono", "SF Mono", "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --sans: "Host Grotesk", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
   --ease: cubic-bezier(.22, 1, .36, 1);
   --pw: 40vh; --kh: 50vh; --s: 1; /* the panel's half width and scaled height, the figures' scale: set from the script */
 }
@@ -46,7 +45,7 @@
 html { background: var(--bg); color: var(--fg); -webkit-text-size-adjust: 100%; }
 html.lenis, html.lenis body { height: auto; }
 .lenis.lenis-smooth { scroll-behavior: auto !important; }
-body { margin: 0; font: 400 16px/1.45 "Outfit", system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow-x: clip; }
+body { margin: 0; font: 400 16px/1.45 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: clip; }
 ::selection { background: var(--fg); color: var(--bg); }
 a { color: inherit; }
 .ink { color: var(--fg); transition: color .6s var(--ease); }
@@ -89,11 +88,10 @@ canvas#liquid { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0
 .call.r i::before { left: auto; right: -7px; }
 .copy { position: absolute; width: min(330px, 80vw); }
 .copy p { margin: 7px 0 0; font-size: clamp(16px, 1.25vw, 19px); line-height: 1.32; }
-.hero-t { font-size: min(10.6vw, 24vh) !important; line-height: .84 !important; }
-.big { -webkit-text-stroke: .022em currentColor; paint-order: stroke fill; } /* heavier than the font's heaviest file: ink, not hairline */
-.big small { -webkit-text-stroke: 0; }
-.big { pointer-events: auto; position: absolute; font-weight: 500; letter-spacing: -.065em; line-height: .78; white-space: nowrap; font-size: min(17vw, 30vh); }
-.big small { display: block; font: 400 clamp(17px, 1.5vw, 22px)/1.2 "Outfit"; letter-spacing: -.01em; margin-top: 2.2vh; }
+.hero-t { font-size: min(10.6vw, 20vh) !important; line-height: .84 !important; }
+.big { pointer-events: auto; position: absolute; margin: 0; font-weight: 700; /* no browser heading margin: it pushed "get it." down into its own words */ letter-spacing: -.045em; line-height: .78; white-space: nowrap; font-size: min(17vw, 30vh); }
+.big .ink { display: block; }
+.big small { display: block; font: 400 clamp(17px, 1.5vw, 22px)/1.2 var(--sans); letter-spacing: -.01em; margin-top: 2.2vh; }
 .big.r { text-align: right; }
 .scale { position: absolute; right: var(--m); bottom: 40px; display: grid; justify-items: end; gap: 3px; }
 .scale i { width: 46px; height: 5px; border: 1px solid currentColor; border-top: 0; }
@@ -119,15 +117,16 @@ body.inv .get { background: var(--bg); color: var(--fg); }
 .track { position: relative; z-index: 1; }
 
 /* ---------- the end: links, support and credits, on paper of its own ---------- */
-.end { position: relative; z-index: 4; background: var(--bg); color: var(--fg); padding: 12vh var(--m) 26px; content-visibility: auto; contain-intrinsic-size: auto 1100px; }
-.end-word { margin: 0 0 8vh; font-weight: 500; font-size: min(24vw, 46vh); letter-spacing: -.07em; line-height: .8; }
+.end { position: relative; z-index: 4; background: var(--bg); color: var(--fg); padding: max(66px, 9vh) var(--m) 22px; content-visibility: auto; contain-intrinsic-size: auto 100vh;
+  box-sizing: border-box; min-height: 100svh; display: flex; flex-direction: column; justify-content: space-between; gap: 4vh; } /* one screen, all of it at once: no scrolling on to find the last links */
+.end-word { margin: 0; font-weight: 700; font-size: min(24vw, 32vh); letter-spacing: -.05em; line-height: .8; }
 .cols { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3vw; }
 .cols h3 { margin: 0 0 14px; }
 .cols ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid currentColor; }
 .cols li { border-bottom: 1px solid color-mix(in srgb, currentColor 35%, transparent); }
-.cols li a, .cols li span { display: flex; justify-content: space-between; padding: 9px 0; text-decoration: none; font-size: 15px; }
+.cols li > a, .cols li > span { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; text-decoration: none; font-size: 15px; } /* only the row: the small tag inside keeps its own size */
 .cols li a:hover { padding-left: 6px; transition: padding .3s var(--ease); }
-.end-foot { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; margin-top: 9vh; }
+.end-foot { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; }
 .pills { display: flex; gap: 10px; }
 .pill { height: 40px; padding: 0 18px; border: 1px solid currentColor; border-radius: 99px; background: none; color: inherit; font: inherit; font-size: 14px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
 .pill:hover { background: var(--fg); color: var(--bg); }
@@ -159,7 +158,7 @@ html::-webkit-scrollbar { display: none; }
 .progress i { display: block; width: 100%; height: 100%; background: currentColor; transform-origin: top; transform: scaleY(0); opacity: .55; }
 
 /* the stage's number, large and faint behind everything */
-.numeral { position: absolute; right: -2vw; top: 50%; translate: 0 -50%; font-weight: 300; font-size: min(52vw, 92vh); line-height: .8; letter-spacing: -.08em; opacity: .045; pointer-events: none; }
+.numeral { position: absolute; right: -2vw; top: 50%; translate: 0 -50%; font-weight: 300; font-size: min(52vw, 92vh); line-height: .8; letter-spacing: -.06em; opacity: .045; pointer-events: none; }
 
 /* a spec sheet on every stage: the real numbers, small */
 .spec { position: absolute; display: grid; grid-template-columns: auto auto; column-gap: 22px; row-gap: 2px; padding-top: 8px; border-top: 1px solid currentColor; }
@@ -214,7 +213,7 @@ html.has-cur, html.has-cur a, html.has-cur button, html.has-cur .strip { cursor:
 .room-words li { padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
 .room-cap { position: absolute; left: var(--m); bottom: 40px; color: #fff; text-shadow: 0 1px 12px rgba(0, 0, 0, .6); opacity: 0; } /* full-bleed: a quiet caption, on the picture's own shade */
 .room::after { content: ""; position: absolute; inset: auto 0 0; height: 22vh; background: linear-gradient(transparent, rgba(0, 0, 0, .35)); opacity: var(--scrim, 0); pointer-events: none; }
-.real-n { position: absolute; left: var(--m); bottom: 8vh; font-weight: 500; font-size: min(14vw, 24vh); letter-spacing: -.07em; line-height: .8; font-variant-numeric: tabular-nums; }
+.real-n { position: absolute; left: var(--m); bottom: 8vh; font-weight: 700; font-size: min(14vw, 24vh); letter-spacing: -.05em; line-height: .8; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -251,7 +250,7 @@ html.has-cur, html.has-cur a, html.has-cur button, html.has-cur .strip { cursor:
     <span class="cross" style="left:calc(50vw + var(--hx) - var(--hw) - 2vh); top:calc(var(--hh) * 2 + 12vh)"></span>
     <div class="call r mono" style="right:calc(50vw - var(--hx) + var(--hw) - var(--hh) * 1.05); top:calc(var(--hh) + 2vh)">( NOW PLAYING )<i style="width:calc(var(--hh) * 1.2)"></i></div>
     <div class="copy" style="left:var(--m); top:13vh; width:min(380px, 34vw)"><span class="mono">A free app for Windows</span><p>A small pill at the top of your screen, like the one on an iPhone. Move your mouse up to it and it opens: your music and its lyrics, Wi-Fi, Bluetooth, volume, the weather and more, without opening another app.</p><a class="get s" href="https://github.com/Icetist/Astraeus/releases/latest/download/Astraeus.exe">Download free</a><span class="facts mono">Windows 10 and 11 · No account · No ads</span></div>
-    <h1 class="big hero-t" data-melt style="left:calc(var(--m) - .4vw); bottom:7vh">Astraeus<br>for Windows</h1>
+    <h1 class="big hero-t" data-melt style="left:calc(var(--m) - .4vw); bottom:calc(4vh + .67em)">Astraeus<br>for Windows</h1>
     <span class="cue mono"><i></i>Scroll</span>
     <span class="foot mono">Win Alt A opens it anywhere</span>
   </section>
@@ -375,7 +374,8 @@ html.has-cur, html.has-cur a, html.has-cur button, html.has-cur .strip { cursor:
       <li><a href="https://www.reddit.com/user/IcetistOfficialz">Reddit <span>↗</span></a></li>
     </ul></div>
     <div><h3 class="mono">Made with</h3><ul>
-      <li><span>Outfit and Nunito <span class="mono">OFL</span></span></li>
+      <li><span>Outfit and Nunito <span class="mono">The app</span></span></li>
+      <li><span>Host Grotesk, JetBrains Mono <span class="mono">Site</span></span></li>
       <li><span>GSAP and Lenis <span class="mono">Scroll</span></span></li>
       <li><span>Direct2D, DirectComposition <span class="mono">The app</span></span></li>
     </ul></div>
@@ -604,6 +604,15 @@ const ease = (x) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
 
 /* ---------- the big words melt in and out: an svg filter each, live only while it moves ---------- */
 const melts = $$("[data-melt]");
+const inks = melts.map((el) => { // the filter goes on the big letters only: on the small line under them it chewed the words unreadable
+  const sub = $("small", el);
+  if (!sub) return el;
+  const ink = document.createElement("span");
+  ink.className = "ink";
+  [...el.childNodes].filter((n) => n !== sub).forEach((n) => ink.append(n));
+  el.prepend(ink);
+  return ink;
+});
 const MELT_OUT = 220;
 // a soft white dot: where the pointer is, the second pass's noise is let through; everywhere else stays still
 const DOT = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3CradialGradient id='g'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.55' stop-color='%23fff' stop-opacity='.8'/%3E%3Cstop offset='1' stop-color='%23fff' stop-opacity='0'/%3E%3C/radialGradient%3E%3Ccircle cx='50' cy='50' r='50' fill='url(%23g)'/%3E%3C/svg%3E";
@@ -621,10 +630,10 @@ $("#melts").innerHTML = melts.map((_, i) => `<filter id="m${i}" x="-20%" y="-40%
   <feComponentTransfer in="sg" result="holes"><feFuncA type="discrete" tableValues="0 0 0 0 1 1"/></feComponentTransfer>
   <feComposite in="e" in2="holes" operator="out"/></filter>`).join(""); // ink edges, roughened and bled round; under the pointer, grain eats into them like static, and nothing moves
 const meltNow = melts.map(() => ({ v: MELT_OUT, h: 0 }));
-melts.forEach((el, i) => (el.style.filter = `url(#m${i})`));
+inks.forEach((el, i) => (el.style.filter = `url(#m${i})`));
 function filterOff() {} // the rough edge stays on: the words are still, so the browser keeps the filtered result
 function melt(i, to, dur) { // the whole word, smeared to nothing or settled clear
-  const el = melts[i], f = $(`#m${i} .whole`), o = meltNow[i];
+  const el = inks[i], f = $(`#m${i} .whole`), o = meltNow[i];
   el.style.filter = `url(#m${i})`;
   if (still || !window.gsap) { o.v = to; f.setAttribute("scale", String(to)); filterOff(i); return; }
   gsap.to(o, { v: to, duration: dur, ease: to ? "power2.in" : "expo.out", overwrite: "auto", onUpdate: () => f.setAttribute("scale", o.v.toFixed(1)), onComplete: () => filterOff(i) });
@@ -637,7 +646,7 @@ melts.forEach((el, i) => { // under the pointer the word's edges break into boil
   const tick = () => { seed = (seed % 97) + 1; boil.setAttribute("seed", String(seed)); if (o.h > 0.02) boiling = setTimeout(tick, 80); else boiling = 0; }; // re-rolled a dozen times a second, as the liquid's edge is
   el.addEventListener("pointermove", (e) => {
     if (still || !window.gsap || meltOf[shown] !== i) return;
-    const r = el.getBoundingClientRect();
+    const r = inks[i].getBoundingClientRect();
     dot.setAttribute("x", (e.clientX - r.left - HOVER_R).toFixed(0)); dot.setAttribute("y", (e.clientY - r.top - HOVER_R).toFixed(0));
     gsap.timeline().to(o, { h: STATIC, duration: 0.15, ease: "power2.out", overwrite: "auto", onUpdate: () => amt.setAttribute("k1", o.h.toFixed(3)) })
       .to(o, { h: 0, duration: 0.9, delay: 0.25, ease: "power2.out", onUpdate: () => amt.setAttribute("k1", o.h.toFixed(3)) });
