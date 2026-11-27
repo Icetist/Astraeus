@@ -6,6 +6,9 @@ name: Discord release notes
 on:
   release:
     types: [published]
+  workflow_run: # the Release workflow publishes with GITHUB_TOKEN, and GitHub starts no workflow from that release event
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -18,6 +21,8 @@ permissions:
 jobs:
   post:
     runs-on: ubuntu-latest
+    # after Release: only a tag push that succeeded published anything (a manual trial run publishes nothing)
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && startsWith(github.event.workflow_run.head_branch, 'v'))
     steps:
       - name: Post release to Discord
         env:
@@ -25,7 +30,7 @@ jobs:
           REPO: ${{ github.repository }}
           WEBHOOK: ${{ secrets.DISCORD_RELEASES_WEBHOOK }}
           TAG_INPUT: ${{ github.event.inputs.tag }}
-          EVENT_TAG: ${{ github.event.release.tag_name }}
+          EVENT_TAG: ${{ github.event.release.tag_name || github.event.workflow_run.head_branch }}
           UPDATE_PINGS_ROLE: "1574314946123137055"
           UA: "DiscordBot (https://github.com/Icetist/Astraeus, 1.0)"
         run: |
