@@ -9,6 +9,7 @@
 #include "anim.h"
 #include "glyphs.h"
 #include "history.h"
+#include "sys_toggles.h"
 #include "page_sheet.h"
 #include "pages.h"
 #include "saver.h"
@@ -425,6 +426,30 @@ void Tile(PageCtx& p, int id, const D2D1_RECT_F& r) { // one quick tile: its sta
         }
         break;
     }
+    case Model::kTlNight:
+        m.ReadToggles(); // windows' own settings can change these too: looked at every few seconds while they show
+        if (w::Tile(ui, t, uid, r, glyph::NightLight, label(L"Night light", L"Night"), m.toggles.night ? L"On" : L"Off", m.toggles.night) && sys::toggles::SetNightLight(!m.toggles.night))
+            m.toggles.night = !m.toggles.night;
+        break;
+    case Model::kTlHdr:
+        m.ReadToggles();
+        if (w::Tile(ui, t, uid, r, glyph::HdrOn, L"HDR", m.toggles.hdr ? L"On" : L"Off", m.toggles.hdr) && sys::toggles::SetHdr(!m.toggles.hdr)) m.toggles.hdr = !m.toggles.hdr; // the screens blink once as they switch
+        break;
+    case Model::kTlHotspot: {
+        m.ReadToggles();
+        int spot = m.toggles.spot.load();
+        if (spot == Model::kSpotBusy) ui.KeepAlive(); // its words follow the switch as windows makes it
+        if (w::Tile(ui, t, uid, r, glyph::Hotspot, label(L"Mobile hotspot", L"Hotspot"), spot == Model::kSpotBusy ? L"Switching…" : spot == Model::kSpotOn ? L"On" : L"Off", spot == Model::kSpotOn, spot != Model::kSpotBusy))
+            m.FlipHotspot();
+        break;
+    }
+    case Model::kTlNearby:
+        m.ReadToggles();
+        if (w::Tile(ui, t, uid, r, glyph::Share, label(L"Nearby sharing", L"Nearby"), m.toggles.nearby ? L"On" : L"Off", m.toggles.nearby)) {
+            p.wantClose = true;
+            sys::toggles::OpenNearby(); // only windows' own settings may switch it
+        }
+        break;
     default:
         if (w::Tile(ui, t, uid, r, glyph::Settings, L"Settings", L"Astraeus", false)) m.OpenSettings(); // windows settings is one tap away inside the sheet
         break;

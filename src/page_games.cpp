@@ -71,7 +71,12 @@ const Pref kPrefs[] = {{&Model::gamePill, L"GamePill", 1}, {&Model::gameSummary,
                        {&Model::cueStyle, L"CueStyle", 0}, {&Model::cueVol, L"CueVolume", sys::cues::kVolDef}, {&Model::cueOn, L"CueGameOn", 1}, {&Model::cueOff, L"CueGameOff", 1},
                        {&Model::cueAlways, L"CueAlways", 1}, {&Model::clipSecs, L"ClipSeconds", 30}, {&Model::clipQuality, L"ClipQuality", 1},
                        {&Model::clipAudio, L"ClipAudio", 1}, {&Model::clipCursor, L"ClipCursor", 0},
-                       {&Model::clipFps, L"ClipFps", 60}, {&Model::clipHeight, L"ClipHeight", 0}, {&Model::clipMic, L"ClipMic", 0}, {&Model::clipAfter, L"ClipAfter", 0}}; // not the master switch: reset never turns recording off
+                       {&Model::clipFps, L"ClipFps", 60}, {&Model::clipHeight, L"ClipHeight", 0}, {&Model::clipMic, L"ClipMic", 0}, {&Model::clipAfter, L"ClipAfter", 0},
+                       {&Model::clipVoice, L"ClipVoice", 0}}; // not the master switch: reset never turns recording off
+const wchar_t* const kVoiceLines[] = {L"Say it while a game records and a clip is saved, as the shortcut does. Heard on this PC only.",
+                                      L"Needs Windows' speech pack, and Settings › Privacy › Microphone › desktop apps on."};
+constexpr float kPhraseRowH = 46, kPhraseBig = 19, kPhraseBoxH = 32, kPhrasePad = 8, kPhraseMinW = 70, kPhraseGap = 4; // the phrase, big enough to read off while playing
+constexpr size_t kWakeLen = 6; // "Astra ": fixed, only the words after it change
 constexpr float kNoteH = 34; // two short lines under the clip settings
 constexpr float kNoticeW = 600, kNoticeH = 300, kNoticeBtnW = 170, kMarkR = 18; // the page while recording is off
 constexpr float kClipBtnW = 104; // save clip, on the card on top
@@ -200,7 +205,9 @@ void ListRunning() { // programs with a window of their own right now, once each
         if (pid == GetCurrentProcessId()) return TRUE;
         std::wstring exe = sys::games::Lower(sys::games::ExeOf(pid));
         if (exe.empty() || exe.find(L"\\windows\\") != std::wstring::npos || !a.seen.insert(exe).second) return TRUE; // windows' own: never a game
-        a.out->push_back({exe, sys::games::ProductName(exe)});
+        wchar_t title[256] = {};
+        GetWindowTextW(w, title, (int)std::size(title));
+        a.out->push_back({exe, *title ? std::wstring(title) : sys::games::ProductName(exe)}); // what its window is called, as the taskbar shows it
         return TRUE;
     }, reinterpret_cast<LPARAM>(&ask));
     std::sort(running.begin(), running.end(), [](const Running& x, const Running& y) { return sys::games::Lower(x.name) < sys::games::Lower(y.name); });
@@ -230,7 +237,9 @@ void InfoTip(Canvas& c, const Theme& t, const D2D1_RECT_F& area) { // drawn last
     for (int i = 0; i < 2; ++i) c.Text(tipLines[i], Rect(x + kTipPad, y + kTipPad - 3 + i * kTipLine, wide, kTipLine), Weight::Regular, 12, (i ? t.textDim : t.text).Alpha(tipFade));
 }
 
-float SettingsH() { return 30 + 4 * kLine + 8 + kLine + kSlideH + 3 * kLine + 12 + 8 + 11 * kLine + kNoteH; } // the card's title, four switches, the sound's look, its volume, three switches; then clips: six choices, two switches, three keys, a note
+float SettingsH() { return 30 + 4 * kLine + 8 + kLine + kSlideH + 3 * kLine + 12 + 8 + 12 * kLine + kPhraseRowH + kNoteH; } // the card's title, four switches, the sound's look, its volume, three switches; then clips: six choices, three switches, the phrase, three keys, a note
+
+void NameField(Ui& ui, const Theme& t, Model& m, const D2D1_RECT_F& r);
 
 void Settings(PageCtx& p, const D2D1_RECT_F& r) {
     Ui& ui = p.ui;
@@ -304,6 +313,34 @@ void Settings(PageCtx& p, const D2D1_RECT_F& r) {
     if (int got = choice("gm.clip.snd", L"Sound", sounds, 3, m.clipAudio); got >= 0) m.SetPref(m.clipAudio, L"ClipAudio", got);
     row("gm.clip.mic", L"Your microphone too", m.clipMic, L"ClipMic", rec);
     row("gm.clip.cursor", L"Show the mouse pointer", m.clipCursor, L"ClipCursor", rec);
+    row("gm.clip.voice", L"Say a phrase to save a clip", m.clipVoice, L"ClipVoice", rec);
+    InfoDot(ui, t, {in.left + c.Measure(L"Say a phrase to save a clip", Weight::Regular, 11.5f) + kInfoR + 8, y - kLine / 2}, "gm.info.voice", kVoiceLines);
+    {
+        bool live = rec && m.clipVoice, editing = m.field == Model::kFieldClipPhrase;
+        float mid = y + kPhraseRowH / 2;
+        c.Text(L"Phrase", Rect(in.left, mid - kLine / 2, 90, kLine), Weight::Regular, 11.5f, live ? t.text : t.textLow);
+        std::wstring tail = m.clipPhrase.size() > kWakeLen ? m.clipPhrase.substr(kWakeLen) : L"";
+        const std::wstring& words = editing ? m.fieldEdit : tail;
+        float boxW = (std::max)(c.Measure(words, Weight::Medium, kPhraseBig) + 2 * kPhrasePad + (editing ? 4 : 0), kPhraseMinW);
+        D2D1_RECT_F box = Rect(in.right - boxW, mid - kPhraseBoxH / 2, boxW, kPhraseBoxH);
+        float wakeW = c.Measure(L"Astra", Weight::Medium, kPhraseBig) + 2;
+        c.Text(L"Astra", Rect(box.left - kPhraseGap - wakeW, box.top, wakeW, kPhraseBoxH), Weight::Medium, kPhraseBig, live ? t.accentHi : t.textLow); // fixed: the word that wakes it
+        Ui::Hit h = live && !editing ? ui.Button(Ui::Id("gm.clip.phrase"), box) : Ui::Hit{};
+        float hov = ui.Smooth(Ui::Id("gm.clip.phrase.h"), h.hover ? 1.0f : 0, 16);
+        if (editing) {
+            c.Fill(box, 9, t.track.Mix(t.cardHi, 0.5f));
+            c.Stroke(box, 9, t.accent.Alpha(0.8f), 1);
+            ui.KeepAlive(); // the caret blinks
+        } else if (hov > 0.002f) {
+            c.Fill(box, 9, t.track.Alpha(0.8f * hov));
+        }
+        bool caret = editing && (int)(ui.Now() * 2) % 2 == 0;
+        c.Text(words + (caret ? L"|" : L""), Rect(box.left + kPhrasePad, box.top, boxW - kPhrasePad, kPhraseBoxH), Weight::Medium, kPhraseBig, live ? t.text : t.textLow);
+        if (!editing && live) c.Line({box.left + kPhrasePad, box.bottom - 5}, {box.right - kPhrasePad, box.bottom - 5}, t.textLow.Alpha(0.5f + 0.5f * hov), 1); // can be changed
+        if (h.clicked) m.field = Model::kFieldClipPhrase, m.fieldEdit = tail;
+        ui.Name(L"Phrase: " + m.clipPhrase);
+        y += kPhraseRowH;
+    }
     auto keyChip = [&](const char* id, const wchar_t* label, int which, int combo) { // click, then press the key; esc keeps it
         c.Text(label, Rect(in.left, y, 140, kLine), Weight::Regular, 11.5f, rec ? t.text : t.textLow);
         if (which >= 2) InfoDot(ui, t, {in.left + c.Measure(label, Weight::Regular, 11.5f) + kInfoR + 8, y + kLine / 2}, which == 2 ? "gm.info.pause" : "gm.info.long", which == 2 ? kPauseLines : kLongLines); // what the key is for
@@ -321,10 +358,13 @@ void Settings(PageCtx& p, const D2D1_RECT_F& r) {
     if (m.clipKeyWhich) note = m.clipKeyWhich >= 2 ? L"Press the key, with Ctrl, Alt or Shift if you like. Backspace: none" : L"Press the key, with Ctrl, Alt or Shift if you like. Esc keeps the old one";
     else if (m.clipKeyClash) note = L"Another app holds that shortcut: pick a different one";
     else if (!m.clipWhy.empty()) note = m.clipWhy;
+    else if (m.field == Model::kFieldClipPhrase) note = L"Up to two short words after Astra, then Enter. Esc keeps the old ones";
+    else if (rec && m.clipVoice && !m.PhraseWhy().empty()) note = m.PhraseWhy();
     else if (m.clip) note = L"Only the game's window is recorded. Holding " + std::to_wstring((int)std::lround(m.clip->Bytes() / 1048576.0)) + L" MB" + (m.clip->HardwareEncoder() ? L"" : L", encoded by the processor");
     else note = L"Only the game's window is recorded, never the screen. About " + std::to_wstring((int)std::lround((kMbitAt1080[m.clipQuality] / 8 + kAudioMbPerSec) * m.ClipKeep())) + L" MB of memory while playing";
     sub = L"Saved to Videos\\Astraeus, a folder for each game";
-    c.Text(note, Rect(in.left, y + 2, Width(in), 16), Weight::Light, 11, m.clipKeyClash || !m.clipWhy.empty() ? kDanger : t.textDim);
+    bool bad = m.clipKeyClash || !m.clipWhy.empty() || (rec && m.clipVoice && !m.PhraseWhy().empty() && m.field != Model::kFieldClipPhrase && !m.clipKeyWhich);
+    c.Text(note, Rect(in.left, y + 2, Width(in), 16), Weight::Light, 11, bad ? kDanger : t.textDim);
     c.Text(sub, Rect(in.left, y + 18, Width(in), 16), Weight::Light, 11, t.textLow);
 }
 
@@ -412,7 +452,7 @@ void Adding(PageCtx& p, float& y, const D2D1_RECT_F& col) {
         if (row.bottom < p.area.top || row.top > p.area.bottom) continue;
         RowBase(ui, t, Ui::Id("gm.run", (int)i), row, L"", r.exe, r.name, r.exe.substr(r.exe.find_last_of(L'\\') + 1), kBtnW + 12);
         if (Act(ui, t, Ui::Id("gm.run.add", (int)i), Rect(row.right - kBtnW - 6, (row.top + row.bottom) / 2 - kBtnH / 2, kBtnW, kBtnH), L"It's a game", false, false, true)) {
-            m.games.Mark(r.exe);
+            m.games.Mark(r.exe, r.name);
             adding = false;
             return;
         }
@@ -444,7 +484,7 @@ void Library(PageCtx& p, float& y, const D2D1_RECT_F& col) {
     const auto& lib = m.games.Library();
     std::wstring head = L"ON THIS PC  ·  " + std::to_wstring(lib.size());
     Head(ui, t, Rect(col.left, y, Width(col), kListHead), head.c_str(), m.games.Scanning());
-    if (Act(ui, t, Ui::Id("gm.add"), Rect(col.right - kBtnW, y + 3, kBtnW, kBtnH), L"Add a game", true, false, true)) adding = true, ListRunning();
+    if (Act(ui, t, Ui::Id("gm.add"), Rect(col.right - kBtnW, y + 3, kBtnW, kBtnH), L"Add a game", true, false, true)) adding = true, ListRunning(), scrollMain = 0; // to the top: the list's header, with Browse, in view
     if (Act(ui, t, Ui::Id("gm.rescan"), Rect(col.right - 2 * kBtnW - 8, y + 3, kBtnW, kBtnH), L"Look again", false, m.games.Scanning(), true)) m.games.Rescan();
     y += kListHead;
     const wchar_t* sorts[] = {L"A to Z", L"Last played", L"Most played"};

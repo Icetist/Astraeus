@@ -61,7 +61,7 @@ void ClipStudio::DrawPanel(const Theme& t, const D2D1_RECT_F& r, float a) {
     int pick = sheet::Segmented(ui, t, "cs.tabs", Rect(in.left, in.top, Width(in), kSegH), tabs, 4, tab, true);
     if (pick >= 0 && pick != tab) tab = pick, panelScroll = 0;
     D2D1_RECT_F body = Rect(in.left, in.top + kSegH + 16, Width(in), in.bottom - in.top - kSegH - 16);
-    if (Inside(body, input.mouse) && input.wheel != 0) panelScroll -= input.wheel * kWheelStep, input.wheel = 0; // a short screen: the panel scrolls
+    if (float n = ui.Wheel(body)) panelScroll -= n * kWheelStep, input.wheel = 0; // the panel takes the wheel before its sliders see it: scrolling past one never moves it
     panelScroll = (std::clamp)(panelScroll, 0.0f, (std::max)(0.0f, panelContent - Height(body)));
     float top = body.top - ui.Smooth(Ui::Id("cs.pscroll"), panelScroll, 18);
     c.PushClip(Inset(body, -4, 0));
@@ -118,66 +118,84 @@ void ClipStudio::PanelSpeed(const Theme& t, const D2D1_RECT_F& r) {
 void ClipStudio::PanelFrame(const Theme& t, const D2D1_RECT_F& r) {
     Canvas& c = *canvas;
     float x = r.left, w = Width(r), y = r.top;
-    c.TextSp(L"SHAPE", Rect(x, y, w, 14), Weight::Medium, 10, t.textLow, 1.4f);
-    y += 20;
+    bool hit = false;
+    auto head = [&](const wchar_t* text) {
+        c.TextSp(text, Rect(x, y, w, 14), Weight::Medium, 10, t.textLow, 1.4f);
+        y += 20;
+    };
+    auto line = [&](const wchar_t* text) {
+        c.Text(text, Rect(x, y, w, kLine), Weight::Regular, kSmall, t.textDim);
+        y += kLine;
+    };
+    head(L"SHAPE");
     static const wchar_t* const shapes[] = {L"As recorded", L"9:16", L"1:1"};
     int pick = sheet::Segmented(ui, t, "cs.shape", Rect(x, y, w, kSegH), shapes, 3, cut.shape, !busy);
-    if (pick >= 0 && pick != cut.shape) {
-        cut.shape = pick;
-        Commit();
-    }
-    y += kSegH + 12;
+    if (pick >= 0 && pick != cut.shape) cut.shape = pick, Commit();
+    y += kSegH + 10;
     const wchar_t* about[3] = {L"The clip keeps the shape it was recorded in.", L"Tall, for YouTube Shorts, Reels and TikTok.", L"Square, for posts."};
-    c.Text(about[cut.shape], Rect(x, y, w, kLine), Weight::Regular, kSmall, t.textDim);
-    y += kLine + 12;
+    line(about[cut.shape]);
     if (vw && vh) {
         int ow = 0, oh = 0;
         clipedit::OutSize(cut.shape, (int)vw, (int)vh, ow, oh);
         c.Text(L"Saved at " + std::to_wstring(ow) + L" × " + std::to_wstring(oh), Rect(x, y, w, kLine), Weight::Medium, kSmall, t.text);
-        y += kLine + 14;
+        y += kLine;
     }
-    if (cut.shape == clipedit::kWide) {
-        panelContent = y - r.top;
-        return;
+    y += 14;
+    if (cut.shape != clipedit::kWide) {
+        static const wchar_t* const fits[] = {L"Fill the frame", L"Fit with bars"};
+        int fitPick = sheet::Segmented(ui, t, "cs.fit", Rect(x, y, w, kSegH), fits, 2, cut.fit ? 1 : 0, !busy);
+        if (fitPick >= 0 && (fitPick == 1) != cut.fit) cut.fit = fitPick == 1, Commit();
+        Tip(Rect(x, y, w, kSegH), cut.fit ? L"All of the picture, with black above and below" : L"The picture covers the frame; what's outside is left out");
+        y += kSegH + 18;
     }
-    c.TextSp(L"THE PICTURE", Rect(x, y, w, 14), Weight::Medium, 10, t.textLow, 1.4f);
-    y += 20;
-    static const wchar_t* const fits[] = {L"Fill the frame", L"Fit with bars"};
-    int fitPick = sheet::Segmented(ui, t, "cs.fit", Rect(x, y, w, kSegH), fits, 2, cut.fit ? 1 : 0, !busy);
-    if (fitPick >= 0 && (fitPick == 1) != cut.fit) cut.fit = fitPick == 1, Commit();
-    y += kSegH + 12;
-    if (cut.fit) {
-        c.Text(L"All of the picture stays, smaller, with black", Rect(x, y, w, kLine), Weight::Regular, kSmall, t.textDim);
-        c.Text(L"above and below it.", Rect(x, y + kLine, w, kLine), Weight::Regular, kSmall, t.textDim);
-        panelContent = y + 2 * kLine - r.top;
-        return;
+    head(L"SIZE AND TURN");
+    {
+        float v = std::log(cut.zoom / clipedit::kMinZoom) / std::log(clipedit::kMaxZoom / clipedit::kMinZoom); // even steps up and down from 100%
+        bool released = false;
+        if (sheet::Knob(ui, t, Ui::Id("cs.zoom"), Rect(x, y, w, sheet::kSlideH), L"Size", Pct(cut.zoom), v, !busy, released, 0.02f))
+            cut.zoom = clipedit::kMinZoom * std::pow(clipedit::kMaxZoom / clipedit::kMinZoom, v), knobBusy = true;
+        if (released && knobBusy) knobBusy = false, Commit();
+        y += sheet::kSlideH + 6;
     }
-    c.Text(L"Drag the frame on the video to choose what stays.", Rect(x, y, w, kLine), Weight::Regular, kSmall, t.textDim);
-    y += kLine + 14;
-    c.Text(L"Move the frame over time", Rect(x, y + 2, w - 56, 20), Weight::Medium, 13.5f, t.text);
+    {
+        float v = (cut.angle + 180) / 360;
+        bool released = false;
+        wchar_t deg[16];
+        swprintf_s(deg, L"%d°", (int)std::lround(cut.angle));
+        if (sheet::Knob(ui, t, Ui::Id("cs.turn"), Rect(x, y, w, sheet::kSlideH), L"Turn", deg, v, !busy, released, 1.0f / 72)) cut.angle = v * 360 - 180, knobBusy = true;
+        if (released && knobBusy) knobBusy = false, Commit();
+        y += sheet::kSlideH + 10;
+    }
+    float half = (w - kGap) / 2;
+    PanelButton(t, "cs.p.turn90", x, y, half, L"Turn 90°", L"A quarter turn clockwise", false, !busy, hit);
+    if (hit) cut.angle = cut.angle + 90 > 180 ? cut.angle - 270 : cut.angle + 90, Commit();
+    y = PanelButton(t, "cs.p.place0", x + half + kGap, y, half, L"Reset", L"Back to its size, straight, in the middle", false,
+                    !busy && (cut.zoom != 1 || cut.angle != 0 || cut.frameX != 0.5f || cut.frameY != 0.5f), hit);
+    if (hit) cut.zoom = 1, cut.angle = 0, cut.frameX = cut.frameY = 0.5f, Commit();
+    line(L"Drag the picture to move it. Scroll to resize it,");
+    line(L"Shift+scroll to turn it, or use its handles.");
+    y += 16;
+    head(L"MOVING");
+    c.Text(L"Move it over time", Rect(x, y + 2, w - 56, 20), Weight::Medium, 13.5f, t.text);
     c.Text(L"It glides between where you put it", Rect(x, y + 22, w - 56, kLine), Weight::Regular, kSmall, t.textDim);
     if (w::Switch(ui, t, Ui::Id("cs.moving"), {x + w - 20, y + 18}, cut.moving, !busy)) {
         cut.moving = !cut.moving;
         if (cut.moving && cut.spots.empty()) clipedit::SetSpot(cut, at, cut.frameX, cut.frameY); // where it is now becomes the first spot
         Commit();
     }
-    ui.Name(L"Move the frame over time");
+    ui.Name(L"Move it over time");
     y += kRowSwitch + 4;
-    bool hit = false;
     if (cut.moving) {
         int spot = clipedit::SpotNear(cut, at);
         std::wstring count = std::to_wstring(cut.spots.size()) + (cut.spots.size() == 1 ? L" spot" : L" spots");
-        c.Text(count + L"  ·  move the playhead, then drag the frame", Rect(x, y, w, kLine), Weight::Regular, kSmall, t.textDim);
+        c.Text(count + L"  ·  move the playhead, then the picture", Rect(x, y, w, kLine), Weight::Regular, kSmall, t.textDim);
         y += kLine + 10;
-        float half = (w - kGap) / 2;
         PanelButton(t, "cs.p.spotdel", x, y, half, L"Remove this spot", L"Takes away the spot at the playhead", false, spot >= 0, hit);
         if (hit && spot >= 0) cut.spots.erase(cut.spots.begin() + spot), Commit();
-        y = PanelButton(t, "cs.p.spotclr", x + half + kGap, y, half, L"Clear spots", L"The frame stays still again", false, !cut.spots.empty(), hit);
+        y = PanelButton(t, "cs.p.spotclr", x + half + kGap, y, half, L"Clear spots", L"The picture stays still again", false, !cut.spots.empty(), hit);
         if (hit) cut.spots.clear(), cut.moving = false, Commit();
-    } else {
-        y = PanelButton(t, "cs.p.center", x, y, w, L"Center the frame", L"Puts the frame back in the middle of the picture", false, cut.frameX != 0.5f || cut.frameY != 0.5f, hit);
-        if (hit) cut.frameX = cut.frameY = 0.5f, Commit();
     }
+    y += 6;
     panelContent = y - r.top;
 }
 

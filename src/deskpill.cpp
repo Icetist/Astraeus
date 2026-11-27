@@ -909,6 +909,7 @@ void DeskPill::Second() {
     if (!wantUp || Editing()) return;
     if (std::find(spec.items.begin(), spec.items.end(), (int)Model::kWWeather) != spec.items.end()) model.Prefetch(); // a no-op while the forecast is fresh
     if (std::find(spec.items.begin(), spec.items.end(), (int)Model::kDVolume) != spec.items.end()) model.ReadAudio();
+    if (std::find(spec.items.begin(), spec.items.end(), (int)Model::kDBtBattery) != spec.items.end()) model.PollBtCharges(); // a minute apart, off the ui thread
     static int inkTick = 0;
     constexpr int kInkEvery = 2; // seconds: a page scrolls, a slideshow moves on; a thin band is a cheap read
     if (FillNow() == kFillClear && ++inkTick % kInkEvery == 0) SampleInk();

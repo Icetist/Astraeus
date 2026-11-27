@@ -1,3 +1,4 @@
+#include <ctime>
 #include <cwchar>
 #include <d2d1_1helper.h>
 #include <d2d1effects.h>
@@ -635,7 +636,8 @@ void Drawer::DrawBody(float h, float dt, double now) {
     local.pressPos = {input.pressPos.x - org.x, input.pressPos.y - org.y};
     ui.Begin(*canvas, local, dt, now);
     bool touring = tourStep >= 0; // the tour is up: the panel shows, only its card takes a press
-    ui.Block(touring);
+    bool covered = touring || newsView != 0; // the update's screen covers it all: nothing under it takes a press
+    ui.Block(covered);
 
     if (!model.HasPage(page)) { // the page showing was just taken off the rail in settings: the first one stands in, no slide
         page = prevPage = model.pages.front();
@@ -665,7 +667,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
         DrawRail(shellNow);
     }
     bool fieldFocus = model.Typing() || Entry::Get().focus || StagePrefs::Get().capture || model.clipKeyWhich || ui.Captured(); // a text field, a key being picked or a slider held keeps its arrows
-    railHot = opened && !fieldFocus && Inside(RailBox(), local.mouse);
+    railHot = opened && !fieldFocus && !newsView && Inside(RailBox(), local.mouse);
     D2D1_RECT_F area = Tall() ? D2D1_RECT_F{14, kTopRail + 10, panelW - 14, panelH - 14} : D2D1_RECT_F{kRailW + 14, 18, panelW - 20, H - 20};
     if (const Alarm* ring = model.alarms.Ringing()) {
         D2D1_RECT_F bar = {area.left, area.top, area.right, area.top + 36};
@@ -688,28 +690,6 @@ void Drawer::DrawBody(float h, float dt, double now) {
         canvas->Fill(dismissR, Height(dismissR) / 2, shellNow.accent.Mix(shellNow.accentHi, dhov));
         canvas->Text(L"Dismiss", dismissR, Weight::Medium, 11.5f, shellNow.onAccent, Align::Center);
         if (dh.clicked) model.DismissAlarm(), SyncHide();
-    }
-    if (!model.news.empty() && !model.alarms.Ringing()) { // just updated: what's new, at the top until it's put away
-        constexpr float kHead = 34, kRow = 20, kPad = 10, kGotW = 64, kAllW = 84, kChipH = 24;
-        size_t rows = model.news.size();
-        D2D1_RECT_F card = {area.left, area.top, area.right, area.top + kHead + (float)rows * kRow + kPad};
-        area.top = card.bottom + 6;
-        canvas->Fill(card, 12, shellNow.cardHi.Alpha(0.85f));
-        canvas->Stroke(card, 12, shellNow.accent.Alpha(0.35f), 1);
-        float hy = card.top + kHead / 2;
-        canvas->Icon(glyph::Sparkle, {card.left + 18, hy}, 14, shellNow.accentHi, true);
-        D2D1_RECT_F got = {card.right - 8 - kGotW, hy - kChipH / 2, card.right - 8, hy + kChipH / 2}, all = {got.left - 6 - kAllW, got.top, got.left - 6, got.bottom};
-        canvas->Text(L"New in " APP_VER_W, {card.left + 34, card.top, all.left - 8, card.top + kHead}, Weight::Semi, 12.5f, shellNow.text);
-        if (w::Chip(ui, shellNow, Ui::Id("news.all"), all, L"All notes", false)) sys::OpenUri(L"https://github.com/Icetist/Astraeus/releases/tag/v" APP_VER_W);
-        if (w::Chip(ui, shellNow, Ui::Id("news.got"), got, L"Got it", true)) model.DropNews();
-        for (size_t i = 0; i < rows && i < model.news.size(); ++i) {
-            const Model::News& n = model.news[i];
-            float y = card.top + kHead + (float)i * kRow, tx = card.left + 30;
-            canvas->Dot({card.left + 19, y + kRow / 2}, 2, shellNow.accent);
-            float tw = (std::min)(canvas->Measure(n.title, Weight::Medium, 11.5f), card.right - 12 - tx);
-            canvas->Text(n.title, {tx, y, tx + tw + 1, y + kRow}, Weight::Medium, 11.5f, shellNow.text);
-            if (!n.text.empty() && tx + tw + 12 < card.right - 12) canvas->Text(n.text, {tx + tw + 8, y, card.right - 12, y + kRow}, Weight::Regular, 11.5f, shellNow.textDim); // the rest of the line, as much as fits
-        }
     }
 
     if (pageT < 1) pageT = (std::min)(1.0f, pageT + dt / 0.38f); // 380ms page switch
@@ -758,7 +738,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
     if (fading) ctx->PopLayer();
     medAt = page == Model::kPgMedia && under > 0.001f ? pc.lyricsAt : D2D1_RECT_F{};
     ctx->SetTransform(base);
-    ui.Block(touring); // the sheets themselves take input
+    ui.Block(covered); // the sheets themselves take input
     if (page == Model::kPgTools && under > 0.001f) tourSpots[3] = pc.spotSettings; // empty when its tile is taken off
     if (Width(pc.spotTiles) > 0) tourSpots[0] = pc.spotTiles;
     if (Width(pc.spotCover) > 0) tourSpots[1] = pc.spotCover;
@@ -793,7 +773,18 @@ void Drawer::DrawBody(float h, float dt, double now) {
         ui.Block(false);
         DrawTour(shellNow, panelW, panelH);
     }
-    DrawRailTip(shellNow); // over the page and its sheets
+    float newsShow = ui.Smooth(Ui::Id("news.show"), newsView ? 1.0f : 0, 12); // the update's screen fades over the panel and away again
+    if (newsShow > 0.002f && newsLast) {
+        ui.Block(false);
+        DrawNews(shellNow, panelW, panelH, newsShow);
+    } else if (newsLast && !newsView) { // gone: the notes and their layouts are let go
+        newsLast = 0, newsWidth = newsIntroW = 0;
+        std::vector<ComPtr<IDWriteTextLayout>>().swap(newsLays);
+        std::vector<float>().swap(newsHeights);
+        newsIntro.Reset();
+        model.FreeNotes();
+    }
+    if (!newsView) DrawRailTip(shellNow); // over the page and its sheets
     ui.DrawFocus(shellNow.accentHi, shellNow.onAccent.Alpha(1));
 
     ui.End();
@@ -971,8 +962,8 @@ void Drawer::DrawPeek(float h) {
 }
 
 void Drawer::DrawAlarmRing(float h) {
-    const Alarm* ring = drinkAsk ? nullptr : model.alarms.Ringing();
-    if (!ring && !drinkAsk) return;
+    const Alarm* ring = drinkAsk || meetAsk ? nullptr : model.alarms.Ringing();
+    if (!ring && !drinkAsk && !meetAsk) return;
     const Theme& t = shellNow;
     float a = Side() ? anim::Clamp01((h - 190) / 60) : anim::Clamp01((h - 26) / 30);
     if (a <= 0) {
@@ -995,6 +986,15 @@ void Drawer::DrawAlarmRing(float h) {
     int icon = ring ? glyph::Bell : glyph::Coffee; // the water widget's own mark
     const wchar_t* later = ring ? L"Snooze (+5m)" : L"Snooze (+10m)";
     const wchar_t* done = ring ? L"Dismiss" : L"Drink";
+    if (meetAsk) { // a meeting about to start: what, when and where, and the way in
+        int mins = (int)((meetNow.start - std::time(nullptr) + 59) / 60);
+        timeStr = meetNow.title.empty() ? L"Meeting" : meetNow.title;
+        sub = mins <= 0 ? L"Starting now" : mins == 1 ? L"In 1 minute" : L"In " + std::to_wstring(mins) + L" minutes";
+        if (!meetNow.where.empty() && meetNow.where.find(L"://") == std::wstring::npos) sub += L"  \u00B7  " + meetNow.where; // a place, not the link again
+        icon = meetNow.link.empty() ? glyph::Calendar : glyph::Meeting;
+        later = L"Dismiss";
+        done = meetNow.link.empty() ? L"Got it" : L"Join";
+    }
     hand = alarmHot != 0;
 
     if (Side()) {
@@ -1080,6 +1080,11 @@ bool Drawer::DrawIsland(float h, float dt, double now) {
 
     float hw = islandHot ? 26.0f : 16.0f; // handle bar: the "pull me down" hint, wider and brighter on hover
     if (still) canvas->Line({cx - hw / 2, h - 3.5f}, {cx + hw / 2, h - 3.5f}, t.text.Alpha((islandHot ? 0.75f : 0.30f) * a), 2.5f);
+    if (still && model.inusePill && !inuseWas.empty()) { // an app has the camera (green) or only the mic (orange): a dot in the corner while it lasts
+        constexpr float kDotR = 3, kDotIn = 9, kDotUp = 8;
+        bool cam = std::any_of(inuseWas.begin(), inuseWas.end(), [](const sys::inuse::User& u) { return u.cam; });
+        canvas->Dot({x0 + inner + kDotIn, cy - kDotUp}, kDotR, cam ? Color{0.20f, 0.82f, 0.36f, a} : Color{1.0f, 0.62f, 0.10f, a});
+    }
 
     if (!music) { // nothing playing: time and date, or the clock between two widgets
         if (still) IdleLine(*canvas, model, t, mt, x0, inner, cy, a);
@@ -1140,6 +1145,8 @@ uint64_t Drawer::PillKey(float h) const {
     }
     void* art = cover.Get();
     mix(&art, sizeof(art));
+    int inuseKey = model.inusePill ? (int)inuseWas.size() * 2 + (std::any_of(inuseWas.begin(), inuseWas.end(), [](const sys::inuse::User& u) { return u.cam; }) ? 1 : 0) : 0;
+    mix(&inuseKey, sizeof(inuseKey)); // the in-use dot
     float f[] = {h, W, winW, winH, glassShadeNow, clearInk, Clear() ? 1.0f : 0.0f, (float)edgeNow, islandHot ? 1.0f : 0.0f, track ? 1.0f : 0.0f, (float)model.BgOpacity(), Bubble() ? model.ActivityFrac() : -1};
     mix(f, sizeof(f));
     for (const Color* c : {&shellNow.bg, &shellNow.text, &shellNow.textDim, &shellNow.sheen, &mediaNow.cardHi, &mediaNow.accentHi}) mix(c, sizeof(Color));

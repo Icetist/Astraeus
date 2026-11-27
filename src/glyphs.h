@@ -35,5 +35,6 @@ constexpr int Schedule = 0xE8B5, Calendar = 0xEBCC, Lyrics = 0xEC0B, Dashboard =
 constexpr int Trophy = 0xEA23; // a sport with no mark of its own
 constexpr int Bars = 0xE1B8, Trend = 0xE8E5; // the long pill's widget tiles: visualizer, markets
 inline constexpr int kSportIcons[15] = {0xEA2F, 0xEA26, 0xEA29, 0xEA2B, 0xEA51, 0xEA2D, 0xEA32, 0xEA2A, 0xEA2C, 0xEA27, 0xEA2E, 0xEA2E, 0xEA31, Trophy, 0xF3B6}; // by sports::Sport: ball, ball, ball, stick, ball, helmet, racket, tee, glove, bat, ball, ball, ball, trophy, pawn
+constexpr int Camera = 0xE04B, DownloadDone = 0xF091, Meeting = 0xE070, NightLight = 0xF03D, HdrOn = 0xE3EE, Hotspot = 0xE1E2, Share = 0xE80D, Search = 0xE8B6; // the live pills, the newer tiles, settings search
 constexpr int Shelf = 0xE1A1, File = 0xE873, Note = 0xF1FC, Image = 0xE3F4, Folder = 0xE2C7, Drop = 0xF090; // the shelf
 }

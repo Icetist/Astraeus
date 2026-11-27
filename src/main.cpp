@@ -709,7 +709,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     bool updated = sys::FinishUpdate();
     state.model->LoadNews(updated); // what's new: a card in the panel until it's put away
     if (updated) { // first run after a swap
-        if (!state.model->quiet) state.drawer->Peek(L"Astraeus updated", L"Now on version " APP_VER_W, glyph::Sparkle); // do not disturb: the tray still says so
+        if (!state.model->quiet) state.drawer->SayUpdated(); // do not disturb: the tray still says so
         tray::SetUpdate(tray::Upd::Updated); // the tray says so too until the next check
     }
     gfx::GiveBack(); // trim startup memory

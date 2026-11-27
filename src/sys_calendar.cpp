@@ -173,13 +173,30 @@ std::wstring Unescape(const std::wstring& v) {
 }
 
 struct Raw {
-    std::wstring uid, title, where, rrule;
+    std::wstring uid, title, where, rrule, link;
     Stamp start, endAt;
     int64_t duration = -1;
     std::vector<Stamp> exdates;
     Stamp recurrenceId;
     bool cancelled = false;
 };
+
+std::wstring Meeting(const std::wstring& text) { // the first link in it that joins a call, else nothing
+    static const wchar_t* const kHosts[] = {L"teams.microsoft.com", L"teams.live.com", L"zoom.us", L"meet.google.com", L"webex.com", L"whereby.com",
+                                            L"gotomeeting.com", L"meet.goto.com", L"chime.aws", L"bluejeans.com", L"meet.jit.si", L"discord.gg"};
+    for (size_t at = text.find(L"https://"); at != std::wstring::npos; at = text.find(L"https://", at + 8)) {
+        size_t end = text.find_first_of(L" \t\r\n\"'<>()[]{}|\\", at);
+        std::wstring url = text.substr(at, end == std::wstring::npos ? std::wstring::npos : end - at);
+        size_t hostEnd = url.find(L'/', 8);
+        std::wstring host = url.substr(8, hostEnd == std::wstring::npos ? std::wstring::npos : hostEnd - 8);
+        for (wchar_t& c : host) c = (wchar_t)towlower(c);
+        for (const wchar_t* h : kHosts) {
+            size_t n = wcslen(h);
+            if (host == h || (host.size() > n && host.compare(host.size() - n, n, h) == 0 && host[host.size() - n - 1] == L'.')) return url; // the host or a part of it, like us02web.zoom.us
+        }
+    }
+    return {};
+}
 
 std::wstring Widen(const std::string& s) {
     int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
@@ -253,7 +270,12 @@ std::vector<Raw> ParseIcs(const std::string& body) {
         else if (name == L"DTEND") cur.endAt = ParseStamp(value, tz, dateParam);
         else if (name == L"DURATION") cur.duration = ParseDuration(value);
         else if (name == L"SUMMARY") cur.title = Unescape(value);
-        else if (name == L"LOCATION") cur.where = Unescape(value);
+        else if (name == L"LOCATION") {
+            cur.where = Unescape(value);
+            if (cur.link.empty()) cur.link = Meeting(cur.where);
+        } else if (name == L"X-GOOGLE-CONFERENCE" || name == L"URL" || name == L"DESCRIPTION") {
+            if (cur.link.empty()) cur.link = Meeting(Unescape(value)); // only a call's link: an event's own web page isn't one
+        }
         else if (name == L"UID") cur.uid = value;
         else if (name == L"RRULE") cur.rrule = value;
         else if (name == L"STATUS") cur.cancelled = value == L"CANCELLED";
@@ -353,7 +375,7 @@ void Expand(const Raw& ev, const std::unordered_set<std::wstring>& overridden, Z
         for (const auto& x : ev.exdates)
             if (std::llabs(ToUnix(z, x) - s) < 60) return; // taken out of the series
         if (!ev.uid.empty() && overridden.count(ev.uid + L"@" + std::to_wstring(s))) return; // moved or edited: that copy is its own event
-        out.push_back({s, s + length, ev.start.date, ev.title, ev.where});
+        out.push_back({s, s + length, ev.start.date, ev.title, ev.where, ev.link});
     };
     if (ev.rrule.empty() || ev.recurrenceId.ok) return emit(first);
     Rule r = ParseRule(ev.rrule, z);
@@ -677,6 +699,21 @@ std::vector<Event> Calendars::Day(int y, int m, int d) const {
     }
     for (Event& ev : MineIn(s, e)) out.push_back(std::move(ev)); // your own, beside them
     std::stable_sort(out.begin(), out.end(), [](const Event& a, const Event& b) { return a.allDay != b.allDay ? a.allDay > b.allDay : a.start < b.start; });
+    return out;
+}
+
+std::vector<Event> Calendars::Upcoming(int64_t from, int64_t to) const {
+    std::vector<Event> out;
+    {
+        std::lock_guard g(impl->lock);
+        for (const auto& ev : impl->events) {
+            if (ev.start >= to) break;
+            if (!ev.allDay && ev.start >= from) out.push_back(ev);
+        }
+    }
+    for (Event& ev : MineIn(from, to))
+        if (!ev.allDay && ev.start >= from) out.push_back(std::move(ev));
+    std::stable_sort(out.begin(), out.end(), [](const Event& a, const Event& b) { return a.start < b.start; });
     return out;
 }
 

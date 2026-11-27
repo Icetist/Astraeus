@@ -28,6 +28,9 @@
 #include "alarms.h"
 #include "gamelog.h"
 #include "sys_clip.h"
+#include "sys_phrase.h"
+#include "sys_inuse.h"
+#include "sys_downloads.h"
 
 
 enum : UINT { // posted to ui thread by services/worker
@@ -60,6 +63,9 @@ enum : UINT { // posted to ui thread by services/worker
     WM_APP_GAMEPICK, // the games page asked for a program to add: the file picker opens after the frame
     WM_APP_CLIP, // a clip: wparam 2 being saved (no lparam), 1 written, 0 not, lparam then a new std::wstring* with its path or why not
     WM_APP_CLIPS, // the games page's clip pictures or list came in off the ui thread
+    WM_APP_PHRASE, // the clip phrase was heard
+    WM_APP_INUSE, // an app started or stopped using the microphone or camera
+    WM_APP_DOWNLOADS, // a download grew (wparam 0) or finished (1)
 };
 
 class Hist { // fixed-size rolling graph history
@@ -176,7 +182,7 @@ public:
     bool TodoDueOn(int y, int mo, int d) const; // anything not done due that day: the calendar marks it
     std::vector<Todo> todos; // the tools page's to-do list, kept in the registry
     std::vector<std::wstring> hosts; // the servers it watches
-    enum Field { kFieldNone, kFieldTodo, kFieldHost, kFieldTimer, kFieldAlarmLabel, kFieldGameName, kFieldClipName };
+    enum Field { kFieldNone, kFieldTodo, kFieldHost, kFieldTimer, kFieldAlarmLabel, kFieldGameName, kFieldClipName, kFieldClipPhrase };
     std::wstring gameNaming; // the game whose name is being typed
     int field = kFieldNone; // the list field taking keystrokes
     std::wstring fieldEdit;
@@ -234,11 +240,17 @@ public:
     void StopTimer();
     void TimerPause(bool on);
     int TimerSeconds() const { return (int)(timerTotal / 1000); } // the last timer's length, for its notification's "start again"
-    struct News {
-        std::wstring title, text; // a release note's headline and the rest of its line
+    struct Note {
+        enum Kind : uint8_t { kHead, kGroup, kItem, kPara, kAside } kind; // a section, a group's name, a note, words between, a boxed aside
+        std::wstring text; // its **bold** marks kept: the screen sets them in a heavier weight
     };
-    std::vector<News> news; // what this version brought: a card in the panel after an update, until it's put away
-    void LoadNews(bool justUpdated); // from the notes built into the exe
+    bool newsDue = false; // just updated and not yet seen: the panel opens on its screen
+    bool notesAsk = false; // settings asked for the notes: they show after the frame
+    std::wstring notesName; // the update's own name, "The Games Update"
+    std::vector<Note> notes; // read when the screen shows, let go when it's gone
+    void LoadNews(bool justUpdated); // whether this version's screen is still to be seen
+    bool LoadNotes(); // the notes built into the exe; false: there are none
+    void FreeNotes();
     void DropNews(); // seen: not again for this version
     bool timerPaused = false;
     ULONGLONG timerHeld = 0; // what's left while paused
@@ -346,7 +358,7 @@ public:
     bool passFocus = false, passShow = false, passWrong = false; // the wi-fi password field: taking keystrokes, shown in clear, last try failed
     std::string passFor; // raw ssid of the network being joined
     std::wstring passEdit; // what's typed so far, wiped once used
-    bool Typing() const { return hexFocus || passFocus || cityFocus || faceKeys || faceSearch || nameFor >= 0 || field != kFieldNone || shelfField != kShelfNone; } // the panel holds the keyboard
+    bool Typing() const { return hexFocus || passFocus || cityFocus || faceKeys || faceSearch || setSearch || nameFor >= 0 || field != kFieldNone || shelfField != kShelfNone; } // the panel holds the keyboard
     void AskPass(const sys::WifiNet& n); // a new secured network: type its password in the panel
     void SubmitPass();
     void CancelPass();
@@ -402,6 +414,15 @@ public:
     int gameDetect = 1; // games are noticed as they come to the front
     int gamePill = 1; // a pill with the game's picture when one starts
     int gameSummary = 1; // and one with how long it ran when it closes
+    int meetPill = 1, inusePill = 1, downloadPill = 1; // live pills: a meeting about to start, an app with the mic or camera, a download as it comes
+    sys::inuse::Watch inuse;
+    std::vector<sys::BtCharge> btCharges; // for the long pill: read on a worker, a minute apart, only while it shows them
+    mutable std::mutex btChargeLock;
+    ULONGLONG btChargesAt = 0;
+    std::atomic<bool> btChargeBusy{false};
+    void PollBtCharges();
+    sys::downloads::Watch downloads;
+    void SyncLive(); // the watchers run only while their pills are on
     int gameQuiet = 0; // do not disturb while a game plays
     bool quietByGame = false; // do not disturb was switched on by a game, and goes off with it
     int cueStyle = 0, cueVol = 60; // the games page's sounds: chime, glass or pulse, and how loud
@@ -429,6 +450,11 @@ public:
     std::wstring clipWhy, lastClip; // why recording couldn't start; the newest clip saved
     ULONGLONG clipSavedAt = 0; // when the newest clip was kept: the long pill says so for a moment
     void ClipSync(); // once a second and after a change: recording follows the switch, the session and the game's window
+    int clipVoice = 0; // a spoken phrase saves a clip too
+    std::wstring clipPhrase; // what's said: "Astra clip that" until changed
+    std::unique_ptr<sys::phrase::Listener> phrase; // listening only while a game records and the phrase is on
+    void PhraseSync();
+    std::wstring PhraseWhy() const { return phrase ? phrase->Why() : L""; }
     void ClipSave(bool longer = false);
     void ClipKeys(bool on);
     std::wstring ClipFolder() const; // videos\astraeus
@@ -439,6 +465,10 @@ public:
     void PlaceFaces(const std::vector<int>& order); // the same widgets, in a new order
     void SetFaces(const std::vector<int>& on, const std::map<int, int>& sizes);
     bool faceSearch = false; // the widget gallery's search is taking the keyboard
+    bool setSearch = false, setPick = false; // settings' search has the keyboard; enter picked the lit result
+    std::wstring setQuery; // what's typed in it: results show in place of the cards while it isn't empty
+    int setSel = 0; // the result lit for enter, moved by the arrows
+    static constexpr size_t kSetQueryMax = 40;
     std::wstring faceQuery; // and what's typed there
     static constexpr size_t kFaceQueryMax = 40;
     int pageVisit = 0; // bumps as the page changes or the panel closes: what a page had open over itself goes then. not a timer: an idle panel draws no frames
@@ -460,9 +490,19 @@ public:
     static const wchar_t* PageName(int id);
     static const wchar_t* PageAbout(int id);
     static int PageGlyph(int id);
-    enum ToolTile { kTlSnip, kTlColor, kTlAwake, kTlAlerts, kTlDnd, kTlSaver, kTlAir, kTlSettings, kTlWork, kTlLang, kTlBin, kTlUpdates, kToolTiles }; // new ones go last: saved lists keep their meaning // the tools page's quick tiles
+    enum ToolTile { kTlSnip, kTlColor, kTlAwake, kTlAlerts, kTlDnd, kTlSaver, kTlAir, kTlSettings, kTlWork, kTlLang, kTlBin, kTlUpdates, kTlNight, kTlHdr, kTlHotspot, kTlNearby, kToolTiles }; // new ones go last: saved lists keep their meaning // the tools page's quick tiles
     std::vector<int> tiles; // the ones shown, in order, may be empty
-    bool TileHere(int id) const { return id == kTlWork ? tiler != sys::Tiler::kNone : id != kTlAwake || portable; } // keeping the screen awake is for laptops, workspaces for a pc with a tiling manager
+    bool TileHere(int id) const { // keeping the screen awake is for laptops, workspaces for a pc with a tiling manager, hdr for a screen that has it, the hotspot for a pc that can share
+        return id == kTlWork ? tiler != sys::Tiler::kNone : id == kTlAwake ? portable : id == kTlHdr ? toggles.hdrCan : id == kTlHotspot ? toggles.spot.load() != kSpotNone : true;
+    }
+    enum : int { kSpotOff, kSpotOn, kSpotBusy, kSpotNone };
+    struct Toggles { // windows switches the newer tiles show, read now and then rather than every frame
+        bool night = false, hdr = false, hdrCan = false, nearby = false;
+        std::atomic<int> spot{kSpotNone}; // the hotspot: asked on a worker, it's slow
+    } toggles;
+    ULONGLONG togglesAt = 0;
+    void ReadToggles(bool now = false); // at most every few seconds unless now
+    void FlipHotspot();
     void CheckTiler(); // installed or removed since the last look: the tile, pill word and dashboard tile come and go with it
     ULONGLONG tilerAt = 0;
     void SetTiles(const std::vector<int>& order);
@@ -536,7 +576,7 @@ public:
     float faceAreaW = 0, faceAreaH = 0, tileAreaW = 0, tileAreaH = 0; // the room they have on their pages: their editors show them at just this size
     int deskEdge = 0, deskPos = 500, deskLen = 560, deskThick = 30, deskGap = 10, deskFloat = 1, deskFill = 0; // its edge, place along it in thousandths, size, gap, stuck or floating, body
     int deskApps = 0; // it also stands in for the small pill over maximized apps, on the same rules
-    enum DeskItem { kDClock = 20, kDDate, kDVolume, kDWifi, kDMusic, kDTimer, kDCover, kDBars, kDScore, kDLyrics, kDRecord }; // beyond the widgets above; new ones go last
+    enum DeskItem { kDClock = 20, kDDate, kDVolume, kDWifi, kDMusic, kDTimer, kDCover, kDBars, kDScore, kDLyrics, kDRecord, kDBtBattery }; // beyond the widgets above; new ones go last
     bool PillLyrics() const; // the long pill shows the sung line somewhere: the song's lyrics are looked up for it
     double LyricWait() const; // seconds until its line changes; -1: nothing coming while it plays
     int scoreAt = 0; // the long pill's score: which of the followed leagues' games it shows; the wheel over it steps on
@@ -572,7 +612,7 @@ public:
     int appKeyOnly = 0; // an app window under the edge: hovering opens nothing, only the shortcut does
     static constexpr int kAppHoverMs = 500, kAppHoverMax = 1000, kAppHoverStep = 50; // the dwell over an app window: default, most, slider step
     int appHoverMs = kAppHoverMs; // how long the mouse rests at the edge over an app before the pill drops
-    int hud = 0; // astraeus' own volume and brightness pill, experimental, off by default
+    int hud = 0; // astraeus' own volume and brightness pill, off by default
     static constexpr int kLookGlow = 1, kLookBars = 2, kLookRim = 4, kLookAll = 7; // the fullscreen visualizer's looks, any of them together
     int vizLooks = kLookGlow; // fullscreen draws the soft glow, a waveform across behind the art, light round the screen's edge, or a mix. the dashboard's player has no edge: bars if they're on, else the glow
     int mediaWave = 0; // the media page's one visualizer, whatever fullscreen wears: 0 the soft glow, 1 the waveform, 2 the edge glow (rim::kMedia*)

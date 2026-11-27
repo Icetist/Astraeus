@@ -9,6 +9,7 @@
 #include "glyphs.h"
 #include "chrome.h"
 #include "starfall.h"
+#include "version.h"
 
 #include <dwmapi.h>
 #include <shellapi.h>
@@ -18,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <ctime>
 
 #pragma comment(lib, "shcore.lib")
 #pragma comment(lib, "wtsapi32.lib")
@@ -317,7 +319,7 @@ void Drawer::Open() {
     KillTimer(hwnd, kCloseTimer);
     KillTimer(hwnd, kPeekTimer);
     peeking = false; // peek upgrades to full open
-    alarmBanner = drinkAsk = false;
+    alarmBanner = drinkAsk = meetAsk = false;
     alarmHot = 0;
     for (sys::Toast t; model.notifyWatch.Pop(t);) {} // the rest of a notification queue would only show stale once it closes
     if (!opened) {
@@ -327,8 +329,9 @@ void Drawer::Open() {
         if (Clear()) SyncWallTone();
         model.OnOpen();
         model.SetLive(true, page == Model::kPgSystem, page == Model::kPgNetwork); // fast polling only while visible, the process list only on the system page, latency only on the network page
+        if (model.newsDue && !newsView) NewsShow(1); // the first open after an update: its screen, over everything
     }
-    else if (!tourSeen && model.tourNext && tourStep < 0) TourStart(); // the first time the panel opens this launch, while its switch is on
+    else if (!tourSeen && model.tourNext && tourStep < 0 && !newsView) TourStart(); // the first time the panel opens this launch, while its switch is on
     Resize(Depth() + overshoot, true); // grow first so bounce isn't clipped
     spring.target = Depth();
     spring.damp = model.reduceMotion ? 1.0f : 0.62f; // underdamped, drips open with a bounce; calm: it just arrives
@@ -410,12 +413,12 @@ void Drawer::Close() {
     KillTimer(hwnd, kCloseTimer);
     KillTimer(hwnd, kPeekTimer);
     peeking = false;
-    alarmBanner = drinkAsk = false;
+    alarmBanner = drinkAsk = meetAsk = false;
     alarmHot = 0;
     alarmSnoozeR = alarmDismissR = {};
     opened = false;
     island = false; // the island retracts with the same spring, its shape stays until it's gone
-    model.hexFocus = model.cityFocus = model.faceSearch = false;
+    model.hexFocus = model.cityFocus = model.faceSearch = model.setSearch = false;
     ++model.pageVisit;
     model.nameFor = -1;
     model.field = Model::kFieldNone;
@@ -485,16 +488,28 @@ void Drawer::Answer() {
 
 void Drawer::OnSecond() {
     if (!eco && wantH <= kStrip + 0.01f && GetTickCount64() - bornAt >= kWarmMs) sys::SetEco(eco = true); // the launch rush is over: closed, it goes back to the efficient cores
-    if (alarmBanner && drinkAsk) {
+    if (alarmBanner && (drinkAsk || meetAsk)) {
+        constexpr int64_t kMeetAfterSec = 120; // a meeting's banner goes this long after it started
         if (model.alarms.Ringing()) RingAlarm(); // an alarm outranks it, in the same banner
-        else if (GetTickCount64() - drinkAt > kDrinkShowMs) EndAlarmBanner();
+        else if (drinkAsk && GetTickCount64() - drinkAt > kDrinkShowMs) EndAlarmBanner();
+        else if (meetAsk && std::time(nullptr) > meetNow.start + kMeetAfterSec) EndAlarmBanner();
+        else if (meetAsk) { // its minutes count down
+            int mins = (int)((meetNow.start - std::time(nullptr) + 59) / 60);
+            if (mins != meetShown) meetShown = mins, Redraw();
+        }
     } else if (alarmBanner && !model.alarms.Ringing()) EndAlarmBanner();
     else if (!opened && !alarmBanner && model.alarms.Ringing()) RingAlarm();
+    MeetCheck();
     if (model.facesDue) {
         model.facesDue = false; // set again only if the page draws again
         Redraw();
     }
     SyncBoard();
+    if (updatedDue && !opened && !peeking && !alarmBanner && !dragging && !stage && !studio && !greeting && !UnderFullscreen() && !Unseen() && !model.alarms.Ringing()) {
+        constexpr DWORD kHereMs = 2000; // touched the mouse or keys this recently: someone's there to see it
+        LASTINPUTINFO li = {sizeof(li)};
+        if (GetLastInputInfo(&li) && GetTickCount() - li.dwTime < kHereMs && Peek(L"Astraeus updated", L"Now on version " APP_VER_W, glyph::Sparkle)) updatedDue = false;
+    }
     if (Pinned() && !overFull && !opened && !hidden && !stage && !studio && !dragging && !peeking && !alarmBanner && !PlaceStale() && spring.value <= 0.5f) Open(); // pinned: back open after fullscreen, a re-dock or the player
     if (fullApp && !FullOn(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY))) fullApp = false; // the shell's "it's over" can go missing: never stay hidden on its word alone
     SyncHide(); // a fullscreen app on the panel's screen, or gone from it
@@ -542,7 +557,7 @@ void Drawer::SetPage(int p) {
     model.CloseSettings();
     model.CloseCal();
     model.alarmEditId = -1;
-    if (model.field == Model::kFieldAlarmLabel || model.field == Model::kFieldGameName || model.field == Model::kFieldClipName) { // its field is on the page being left
+    if (model.field == Model::kFieldAlarmLabel || model.field == Model::kFieldGameName || model.field == Model::kFieldClipName || model.field == Model::kFieldClipPhrase) { // its field is on the page being left
         model.field = Model::kFieldNone;
         model.fieldEdit.clear();
     }
@@ -572,6 +587,7 @@ bool Drawer::Peek(const std::wstring& title, const std::wstring& detail, int ico
         SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
     peekLevel = -1; // a notice, not the hud's bar
+    peekLive = false, peekFile.clear(); // a download's pill says so after
     peekIcon = icon;
     peekTitle = title;
     peekDetail = detail;
@@ -634,8 +650,75 @@ void Drawer::RingAlarm() {
         return;
     }
     if (!EnsureDev()) return;
-    drinkAsk = false;
+    drinkAsk = meetAsk = false;
     BannerDown();
+}
+
+namespace {
+std::wstring Bytes(double b) { // 845 KB, 12.4 MB, 1.21 GB
+    constexpr double kK = 1024;
+    wchar_t s[32];
+    if (b < kK * kK) swprintf_s(s, L"%.0f KB", b / kK);
+    else if (b < kK * kK * kK) swprintf_s(s, b < 10 * kK * kK ? L"%.1f MB" : L"%.0f MB", b / (kK * kK));
+    else swprintf_s(s, L"%.2f GB", b / (kK * kK * kK));
+    return s;
+}
+}
+
+void Drawer::DownloadNews(bool finished) {
+    constexpr UINT kLiveMs = 2500; // its pill stays while the download keeps coming, and goes this long after it stops
+    if (!model.downloadPill || model.quiet || opened) return; // open, the panel isn't pulled to another page for it
+    sys::downloads::Done d;
+    if (finished && model.downloads.TakeDone(d)) {
+        if (Peek(L"Downloaded", d.name, glyph::DownloadDone)) peekFile = d.path; // a tap shows it in its folder
+        return;
+    }
+    std::vector<sys::downloads::Going> going = model.downloads.Now();
+    if (going.empty()) return;
+    const sys::downloads::Going& g = *std::max_element(going.begin(), going.end(), [](const auto& a, const auto& b) { return a.perSec < b.perSec; }); // the one coming fastest
+    std::wstring detail = Bytes((double)g.bytes);
+    if (g.perSec > 0) detail += L"  ·  " + Bytes(g.perSec) + L"/s";
+    if (going.size() > 1) detail += L"  ·  " + std::to_wstring(going.size()) + L" downloads";
+    if (peeking && peekLive) { // already up: it follows along
+        peekTitle = g.name, peekDetail = detail;
+        SetTimer(hwnd, kPeekTimer, kLiveMs, nullptr);
+        Redraw();
+    } else if (g.name != dlLast && Peek(g.name, detail, glyph::Drop)) { // once per download: put away, it doesn't come back
+        dlLast = g.name, peekLive = true;
+        SetTimer(hwnd, kPeekTimer, kLiveMs, nullptr);
+    }
+}
+
+bool Drawer::AskMeet(const sys::cal::Event& ev) {
+    if (alarmBanner || opened || peeking || dragging || stage || studio || UnderFullscreen() || Unseen() || model.alarms.Ringing() || !EnsureDev()) return false; // busy, away, or something else has the screen: asked again shortly
+    drinkAsk = false, meetAsk = true;
+    meetNow = ev;
+    meetShown = -1;
+    BannerDown();
+    return true;
+}
+
+void Drawer::MeetCheck() {
+    constexpr int64_t kLeadSec = 5 * 60, kLateSec = 60; // told this long before it starts, and still told if it began a moment ago
+    constexpr int kLookEvery = 10; // seconds between looks
+    constexpr size_t kSaidMost = 64;
+    if (!model.meetPill) return;
+    ULONGLONG tick = GetTickCount64();
+    if (model.cals.Linked() && tick - meetSynced > (ULONGLONG)sys::cal::Calendars::kEvery * 1000) { // kept fresh in the background while reminders are on
+        meetSynced = tick;
+        model.cals.Sync(hwnd, WM_APP_CAL, sys::cal::Calendars::kEvery);
+    }
+    if (++meetTick < kLookEvery) return;
+    meetTick = 0;
+    int64_t now = std::time(nullptr);
+    for (const sys::cal::Event& ev : model.cals.Upcoming(now - kLateSec, now + kLeadSec)) {
+        std::pair<int64_t, std::wstring> key{ev.start, ev.title};
+        if (std::find(meetSaid.begin(), meetSaid.end(), key) != meetSaid.end()) continue;
+        if (!model.quiet && !AskMeet(ev)) break; // can't show now: the next look tries again; do not disturb lets it pass
+        meetSaid.push_back(std::move(key));
+        if (meetSaid.size() > kSaidMost) meetSaid.erase(meetSaid.begin());
+        break;
+    }
 }
 
 bool Drawer::AskDrink() {
@@ -666,7 +749,7 @@ void Drawer::BannerDown() {
 }
 
 void Drawer::EndAlarmBanner() {
-    alarmBanner = drinkAsk = false;
+    alarmBanner = drinkAsk = meetAsk = false;
     alarmHot = 0;
     alarmSnoozeR = alarmDismissR = {};
     Close();
@@ -963,7 +1046,13 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONDOWN: {
         if (alarmBanner && !opened) { // ringing alarm banner buttons always work, even with keyOnly active
             D2D1_POINT_2F p = ToDip(lp);
-            if (drinkAsk) {
+            if (meetAsk) {
+                if (Inside(alarmSnoozeR, p)) EndAlarmBanner();
+                else if (Inside(alarmDismissR, p)) {
+                    if (!meetNow.link.empty()) sys::OpenUri(meetNow.link.c_str());// the call opens in its own app or the browser
+                    EndAlarmBanner();
+                }
+            } else if (drinkAsk) {
                 if (Inside(alarmSnoozeR, p)) faces::state::WaterLater(kDrinkSnoozeSec), EndAlarmBanner();
                 else if (Inside(alarmDismissR, p)) faces::state::WaterAdd(1), EndAlarmBanner();
             } else if (Inside(alarmSnoozeR, p) && model.SnoozeAlarm()) EndAlarmBanner();
@@ -971,6 +1060,12 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         if (!opened && model.keyOnly) return 0; // only the shortcut opens it: a click on the strip, the pill or a notification does nothing
+        if (peeking && !opened && !peekFile.empty()) { // a finished download's pill: its file, picked out in its folder
+            std::wstring arg = L"/select,\"" + peekFile + L"\"";
+            ShellExecuteW(nullptr, L"open", L"explorer.exe", arg.c_str(), nullptr, SW_SHOWNORMAL);
+            Close();
+            return 0;
+        }
         if ((island || peeking) && !opened) { // tap a pill: the full panel grows out of it
             if (island && Bubble() && Inside(BubbleBox(), ToDip(lp))) { // the bubble: straight to the tool that runs
                 int act = model.Activity();
@@ -1120,6 +1215,23 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         ClipDone(wp == 1, text ? *text : std::wstring());
         return 0;
     }
+    case WM_APP_PHRASE: // the phrase was heard: as the shortcut does, with its sound and pill
+        if (model.clip && !model.clip->Paused()) model.ClipSave();
+        return 0;
+    case WM_APP_INUSE: { // an app took the mic or the camera: a pill as it starts, a dot on the pill while it lasts
+        std::vector<sys::inuse::User> now = model.inuse.Now();
+        for (const sys::inuse::User& u : now) {
+            auto was = std::find_if(inuseWas.begin(), inuseWas.end(), [&](const sys::inuse::User& w) { return w.name == u.name; });
+            bool fresh = (u.mic && (was == inuseWas.end() || !was->mic)) || (u.cam && (was == inuseWas.end() || !was->cam));
+            if (!fresh || !model.inusePill || model.quiet || opened) continue; // open, the panel isn't pulled to another page for it
+            Peek(u.name, u.cam && u.mic ? L"Using your camera and microphone" : u.cam ? L"Using your camera" : L"Using your microphone", u.cam ? glyph::Camera : glyph::Mic);
+            break; // one at a time
+        }
+        inuseWas = std::move(now);
+        Redraw();
+        return 0;
+    }
+    case WM_APP_DOWNLOADS: DownloadNews(wp == 1); return 0;
     case WM_APP_GAMEPICK: { // after the frame: the picker is modal
         std::wstring exe = GameLog::PickProgram(hwnd);
         if (!exe.empty()) model.games.Mark(exe);
@@ -1223,6 +1335,25 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_CHAR: // only reaches us while a field holds the keyboard
         typedAt = Seconds();
+        if (model.setSearch) { // settings' search
+            wchar_t ch = (wchar_t)wp;
+            constexpr wchar_t kCtrlBack = 0x7F;
+            if (ch == VK_ESCAPE) {
+                if (model.setQuery.empty()) model.setSearch = false;
+                else model.setQuery.clear();
+            } else if (ch == VK_RETURN) {
+                model.setPick = !model.setQuery.empty();
+            } else if (ch == VK_BACK) {
+                if (!model.setQuery.empty()) model.setQuery.pop_back();
+            } else if (ch == kCtrlBack) { // the last word
+                while (!model.setQuery.empty() && model.setQuery.back() == L' ') model.setQuery.pop_back();
+                while (!model.setQuery.empty() && model.setQuery.back() != L' ') model.setQuery.pop_back();
+            } else if (ch >= 32 && model.setQuery.size() < Model::kSetQueryMax) {
+                model.setQuery += ch;
+            }
+            Redraw();
+            return 0;
+        }
         if (model.faceSearch) { // the widget gallery's search
             wchar_t ch = (wchar_t)wp;
             if (ch == VK_ESCAPE) {
@@ -1271,7 +1402,10 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (model.field != Model::kFieldNone) { // a to-do, server, or alarm label being typed
             wchar_t ch = (wchar_t)wp;
-            size_t maxLen = model.field == Model::kFieldAlarmLabel ? AlarmStore::kMaxLabelLen : Model::kFieldMax;
+            constexpr size_t kPhraseLen = 21; // two short words after astra
+            bool phrase = model.field == Model::kFieldClipPhrase;
+            size_t maxLen = model.field == Model::kFieldAlarmLabel ? AlarmStore::kMaxLabelLen : phrase ? kPhraseLen : Model::kFieldMax;
+            if (phrase && ch >= 32 && ch != 127 && !iswalpha(ch) && ch != L' ' && ch != L'\'') return 0; // words only: what can be said
             if (ch == 22) { // ctrl+v, the first line
                 for (wchar_t c : sys::ClipText()) {
                     if (c == L'\r' || c == L'\n') break;
@@ -1402,7 +1536,18 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             Redraw();
             return 0;
         }
-        if (model.faceKeys || model.faceSearch) return 0; // their enter and esc arrive as characters
+        if (model.setSearch && (wp == VK_UP || wp == VK_DOWN)) { // through the results
+            model.setSel += wp == VK_DOWN ? 1 : -1;
+            Redraw();
+            return 0;
+        }
+        if (model.settingsOpen && !model.Typing() && wp == 'F' && GetKeyState(VK_CONTROL) < 0) { // ctrl+f: into the search
+            model.setSearch = true;
+            SyncTyping();
+            Redraw();
+            return 0;
+        }
+        if (model.faceKeys || model.faceSearch || model.setSearch) return 0; // their enter and esc arrive as characters
         if (model.field != Model::kFieldNone) {
             if (wp == VK_RETURN) model.CommitField();
             else if (wp == VK_ESCAPE) model.field = Model::kFieldNone, model.fieldEdit.clear();
@@ -1756,6 +1901,7 @@ void Drawer::Frame() {
     if (PlaceStale() && !opened && !dragging && !peeking && !alarmBanner && (spring.value <= 0.5f || island)) ApplyPlace(); // a pill that always stays would otherwise keep the old edge forever
     if (model.deskEditAsk) model.deskEditAsk = false, PostMessageW(hwnd, kDeskEditMsg, 0, 0); // never inside a frame: it takes the panel away
     if (model.tourAsk) model.tourAsk = false, TourStart(); // asked for in settings: they close for it
+    if (model.notesAsk) model.notesAsk = false, NewsShow(2); // asked for in settings: over them, and back to them after
     if (model.studioAsk) PostMessageW(hwnd, kDeskEditMsg, model.studioAsk, 0), model.studioAsk = Model::kStudioNone;
     if (model.shelfDrag) PostMessageW(hwnd, kShelfMsg, 0, 0); // the drag runs its own loop: never inside a frame
     if (model.shelfPaste) PostMessageW(hwnd, kShelfMsg, 1, 0); // nor a paste: it hands the keyboard around

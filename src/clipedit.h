@@ -32,6 +32,7 @@ struct Edit {
     int shape = kWide;
     float frameX = 0.5f, frameY = 0.5f; // a tall or square frame's middle across the picture, 0..1
     bool fit = false; // the whole picture inside the frame, black above and below, instead of a crop
+    float zoom = 1, angle = 0; // the picture made bigger or smaller, and turned by this many degrees, inside the frame
     bool moving = false; // the frame follows spots set along the clip
     std::vector<Spot> spots; // by time
     bool clean = false, even = false; // less background noise; one steady loudness
@@ -55,7 +56,9 @@ bool Kept(const Edit& e, double src); // inside the trim and not removed
 double NextKept(const Edit& e, double src); // the first kept moment at or after src; to when there's none
 float Aspect(int shape, float srcAspect); // width over height of the finished picture
 void OutSize(int shape, int w, int h, int& ow, int& oh); // even sizes for the encoder
-void Crop(const Edit& e, double src, int w, int h, float& x, float& y, float& cw, float& ch); // the source pixels the frame takes at that moment
+constexpr float kMinZoom = 0.25f, kMaxZoom = 4;
+void Place(const Edit& e, double src, int w, int h, int ow, int oh, float m[6]); // where each pixel of the finished frame comes from in the picture: sx = m0 u + m1 v + m2, sy = m3 u + m4 v + m5
+bool Transformed(const Edit& e); // the picture is moved, scaled, turned or framed differently from how it was recorded
 void FrameAt(const Edit& e, double src, float& x, float& y); // the frame's middle then: eased between spots
 void SetSpot(Edit& e, double src, float x, float y); // a spot there, or the one already near it moved
 int SpotNear(const Edit& e, double src); // -1: none close

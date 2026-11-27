@@ -179,6 +179,49 @@ std::map<std::wstring, int> ReadCharges() { // battery by address, from the blue
     return out;
 }
 
+std::wstring NodeName(DEVINST node) {
+    DEVPROPTYPE type = 0;
+    wchar_t name[256] = {};
+    ULONG size = sizeof(name);
+    static const DEVPROPKEY kName = {{0xB725F130, 0x47EF, 0x101A, {0xA5, 0xF1, 0x02, 0x60, 0x8C, 0x9E, 0xEB, 0xAC}}, 10}; // the name settings shows for it
+    return CM_Get_DevNode_PropertyW(node, &kName, &type, (PBYTE)name, &size, 0) == CR_SUCCESS && type == DEVPROP_TYPE_STRING ? name : L"";
+}
+
+}
+
+std::vector<BtCharge> BtCharges() {
+    std::vector<BtCharge> out;
+    std::vector<std::wstring> macs;
+    for (const wchar_t* bus : {L"BTHENUM", L"BTHLE"}) {
+        ULONG len = 0;
+        const ULONG flags = CM_GETIDLIST_FILTER_ENUMERATOR | CM_GETIDLIST_FILTER_PRESENT;
+        if (CM_Get_Device_ID_List_SizeW(&len, bus, flags) != CR_SUCCESS || len < 2) continue;
+        std::vector<wchar_t> ids(len);
+        if (CM_Get_Device_ID_ListW(bus, ids.data(), len, flags) != CR_SUCCESS) continue;
+        for (const wchar_t* id = ids.data(); *id; id += std::wcslen(id) + 1) {
+            DEVINST node = 0;
+            if (CM_Locate_DevNodeW(&node, const_cast<DEVINSTID_W>(id), CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS) continue;
+            DEVPROPTYPE type = 0;
+            BYTE pct = 0;
+            ULONG size = sizeof(pct);
+            if (CM_Get_DevNode_PropertyW(node, &kBattery, &type, &pct, &size, 0) != CR_SUCCESS || type != DEVPROP_TYPE_BYTE || pct > 100) continue;
+            std::wstring mac = MacIn(id);
+            if (mac.empty() || std::find(macs.begin(), macs.end(), mac) != macs.end()) continue; // a device's services each carry its charge: once
+            std::wstring sid = Lower(id);
+            DEVINST parent = 0;
+            bool device = sid.rfind(L"bthenum\\dev_", 0) == 0 || sid.rfind(L"bthle\\dev_", 0) == 0; // the device's own node, else one of its services under it
+            std::wstring name = device ? NodeName(node) : CM_Get_Parent(&parent, node, 0) == CR_SUCCESS ? NodeName(parent) : L"";
+            if (name.empty()) continue;
+            macs.push_back(mac);
+            out.push_back({name, (int)pct});
+        }
+    }
+    std::sort(out.begin(), out.end(), [](const BtCharge& a, const BtCharge& b) { return a.pct < b.pct; });
+    return out;
+}
+
+namespace {
+
 BtDev FromInfo(const DE::DeviceInformation& di, bool paired) {
     BtDev d;
     d.id = std::wstring(di.Id()); // aep id, used for every later call

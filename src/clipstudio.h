@@ -42,8 +42,8 @@ private:
     using Cut = clipedit::Edit;
     struct Work { // what the worker threads hand back, under mu
         std::mutex mu;
-        std::vector<sys::clips::Picture> strip;
-        bool stripReady = false;
+        std::vector<std::pair<size_t, sys::clips::Picture>> strip; // timeline pictures made since the last frame took them, by slot
+        int stripGen = 0; // which strip they're for: one started again leaves the old one's behind
         bool done = false, ok = false; // a save or rename finished
         int kind = 0; // 1 saved over, 2 saved a copy, 3 renamed, 4 copied small
         std::wstring text, newPath;
@@ -70,7 +70,8 @@ private:
     void Poke() { dirty = true; }
 
     void DrawTop(const Theme& t, float a);
-    void DrawVideo(const D2D1_RECT_F& r, float a);
+    void DrawVideo(const Theme& t, const D2D1_RECT_F& r, float a);
+    void DrawFraming(const Theme& t, const D2D1_RECT_F& frame, const float m[6], float k, float a); // the frame's guides and handles, and the picture moved, sized and turned in it
     void DrawBar(const Theme& t, float a);
     void Timeline(const Theme& t, const D2D1_RECT_F& r);
     void Ruler(const Theme& t, const D2D1_RECT_F& r); // the times along the top of the timeline
@@ -100,7 +101,9 @@ private:
     void VoiceToggle();
     void SplitHere();
     void RemoveHere();
-    bool Framing() const { return tab == kTabFrame && clipedit::Cropping(cut); } // the whole picture shows, with the frame to drag
+    bool Framing() const { return tab == kTabFrame; } // the picture can be moved, sized and turned in the frame, with what's left out showing faintly
+    int frameKind = 0; // dragging: 1 the picture, 2 its size, 3 its turn
+    float grabZoom = 1, grabAngle = 0, grabDist = 1, grabTurn = 0;
     float quietAmt = 0.5f; // how readily a stretch counts as silent
 
     enum Tab : int { kTabSpeed, kTabFrame, kTabSound, kTabMusic };
@@ -179,8 +182,7 @@ private:
     double mixDue = 0;
     float rateNow = 1; // the speed the clip plays at, for the part it's in
     ComPtr<ID2D1BitmapBrush> videoBrush; // the picture, cropped for a tall or square frame
-    D2D1_RECT_F videoRect{}, frameRect{}; // where the picture and its frame were drawn
-    bool frameDrag = false;
+    D2D1_RECT_F videoRect{}; // where the finished frame was drawn
     D2D1_POINT_2F frameGrab{};
     float grabX = 0.5f, grabY = 0.5f;
     std::unique_ptr<sys::voice::Take> take;

@@ -21,6 +21,12 @@ struct BtDev {
     int battery = -1; // percent as windows reports it, -1 unknown
 };
 
+struct BtCharge {
+    std::wstring name;
+    int pct = -1;
+};
+std::vector<BtCharge> BtCharges(); // connected devices that report a battery, lowest first: device properties only, a few milliseconds, no radio work
+
 class Bt { // lazy: holds nothing until Open, frees all on Close
 public:
     Bt();

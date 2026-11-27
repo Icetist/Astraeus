@@ -52,7 +52,7 @@ public:
     const Game* GameOf(const std::wstring& id) const { auto it = libAt.find(id); return it == libAt.end() ? nullptr : &lib[it->second]; }
     int ArtEpoch() const { return artEpoch; } // goes up when a cover arrives: pictures drawn from the old file are dropped
 
-    void Mark(const std::wstring& exe); // a program counted as a game from now on, whatever it is
+    void Mark(const std::wstring& exe, const std::wstring& name = L""); // a program counted as a game from now on, whatever it is; name: what its window is called
     static std::wstring PickProgram(HWND owner); // windows' file picker for a program; empty when cancelled
     void Forget(const Game& g); // not a game: one added by hand is unmarked, any other hidden
     void Unhide(); // every hidden one comes back

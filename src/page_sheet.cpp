@@ -184,8 +184,17 @@ constexpr float kCardLift = 0.25f; // toward the track: about 1.12:1 on the shee
 
 Color CardFill(const Theme& t) { return t.glass ? t.cardHi.Alpha(0.55f) : t.cardHi.Mix(t.track, kCardLift); } // glass already reads, and a brighter pane would cost its text
 
+std::vector<BoxSeen>* boxesSeen = nullptr;
+const wchar_t* glowTitle = nullptr;
+float glowA = 0;
+
 D2D1_RECT_F Box(Canvas& c, const Theme& t, const D2D1_RECT_F& r, const wchar_t* title) { // a settings card, returns its inner area
+    if (boxesSeen) boxesSeen->push_back({title, r});
     c.Fill(r, 16, CardFill(t));
+    if (glowA > 0.002f && glowTitle && !wcscmp(glowTitle, title)) { // found by search: a ring that breathes out
+        c.Fill(r, 16, t.accent.Alpha(0.10f * glowA));
+        c.Stroke(r, 16, t.accent.Alpha(0.85f * glowA), 1.5f);
+    }
     if (theme::Contrast()) c.StrokeV(r, 16, t.hairTop, t.hairBot, 1); // card and sheet are one color there: only an edge shows it
     c.Text(title, Rect(r.left + 14, r.top + 9, Width(r) - 28, 16), Weight::Medium, 12, t.text);
     return {r.left + 12, r.top + 30, r.right - 12, r.bottom - 10};

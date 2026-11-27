@@ -46,22 +46,25 @@ struct Plane {
     int stride, w, h;
 };
 
-void ScalePlane(const Plane& s, float cx, float cy, float cw, float ch, BYTE* dst, int dstride, int ow, int oh, int comps) { // bilinear; comps 2 for the interleaved colour plane
+void Affine(const Plane& s, const float m[6], int sub, BYTE* dst, int dstride, int ow, int oh, int comps, BYTE black) { // each output pixel from where m says, bilinear; sub 2: the half-size colour plane
     std::vector<int> bands(kBands);
     std::iota(bands.begin(), bands.end(), 0);
-    float sx = cw / ow, sy = ch / oh;
     std::for_each(std::execution::par, bands.begin(), bands.end(), [&](int b) {
         int y0 = oh * b / kBands, y1 = oh * (b + 1) / kBands;
         for (int y = y0; y < y1; ++y) {
-            float fy = (std::clamp)(cy + (y + 0.5f) * sy - 0.5f, 0.0f, (float)(s.h - 1));
-            int iy = (int)fy, iy2 = (std::min)(iy + 1, s.h - 1);
-            float wy = fy - iy;
-            const BYTE *r0 = s.px + (size_t)iy * s.stride, *r1 = s.px + (size_t)iy2 * s.stride;
             BYTE* out = dst + (size_t)y * dstride;
+            float v = sub * (y + 0.5f);
             for (int x = 0; x < ow; ++x) {
-                float fx = (std::clamp)(cx + (x + 0.5f) * sx - 0.5f, 0.0f, (float)(s.w - 1));
-                int ix = (int)fx, ix2 = (std::min)(ix + 1, s.w - 1);
-                float wx = fx - ix;
+                float u = sub * (x + 0.5f);
+                float fx = (m[0] * u + m[1] * v + m[2]) / sub - 0.5f, fy = (m[3] * u + m[4] * v + m[5]) / sub - 0.5f;
+                if (fx < -1 || fy < -1 || fx > s.w || fy > s.h) { // outside the picture: black
+                    for (int c = 0; c < comps; ++c) out[x * comps + c] = black;
+                    continue;
+                }
+                fx = (std::clamp)(fx, 0.0f, (float)(s.w - 1)), fy = (std::clamp)(fy, 0.0f, (float)(s.h - 1));
+                int ix = (int)fx, iy = (int)fy, ix2 = (std::min)(ix + 1, s.w - 1), iy2 = (std::min)(iy + 1, s.h - 1);
+                float wx = fx - ix, wy = fy - iy;
+                const BYTE *r0 = s.px + (size_t)iy * s.stride, *r1 = s.px + (size_t)iy2 * s.stride;
                 for (int c = 0; c < comps; ++c) {
                     float top = r0[ix * comps + c] * (1 - wx) + r0[ix2 * comps + c] * wx, bot = r1[ix * comps + c] * (1 - wx) + r1[ix2 * comps + c] * wx;
                     out[x * comps + c] = (BYTE)(top * (1 - wy) + bot * wy + 0.5f);
@@ -71,7 +74,7 @@ void ScalePlane(const Plane& s, float cx, float cy, float cw, float ch, BYTE* ds
     });
 }
 
-bool Picture(IMFSample* sample, int w, int h, int stride, float cx, float cy, float cw, float ch, int ow, int oh, bool boxed, std::vector<BYTE>& out) {
+bool Picture(IMFSample* sample, int w, int h, int stride, const float m[6], int ow, int oh, std::vector<BYTE>& out) {
     ComPtr<IMFMediaBuffer> b;
     if (FAILED(sample->ConvertToContiguousBuffer(&b))) return false;
     BYTE* data = nullptr;
@@ -83,21 +86,14 @@ bool Picture(IMFSample* sample, int w, int h, int stride, float cx, float cy, fl
     }
     int rows = (std::max)(h, (int)(len / (DWORD)stride * 2 / 3)); // a decoder may pad the height: the colour plane starts after the padding
     out.resize((size_t)ow * oh * 3 / 2);
-    bool same = cx == 0 && cy == 0 && (int)cw == w && (int)ch == h && ow == w && oh == h;
-    if (boxed) { // the whole picture, as big as it fits, on black
-        float k = (std::min)((float)ow / w, (float)oh / h);
-        int dw = (std::min)(ow, (int)(w * k) & ~1), dh = (std::min)(oh, (int)(h * k) & ~1);
-        int dx = ((ow - dw) / 2) & ~1, dy = ((oh - dh) / 2) & ~1;
-        std::memset(out.data(), kBlackY, (size_t)ow * oh);
-        std::memset(out.data() + (size_t)ow * oh, kBlackUV, (size_t)ow * oh / 2);
-        ScalePlane({data, stride, w, h}, 0, 0, (float)w, (float)h, out.data() + (size_t)dy * ow + dx, ow, dw, dh, 1);
-        ScalePlane({data + (size_t)stride * rows, stride, w / 2, h / 2}, 0, 0, (float)w / 2, (float)h / 2, out.data() + (size_t)ow * oh + (size_t)(dy / 2) * ow + dx, ow, dw / 2, dh / 2, 2);
-    } else if (same) { // nothing to frame: rows copied as they are
+    constexpr float kEps = 1e-4f;
+    bool same = ow == w && oh == h && std::fabs(m[0] - 1) < kEps && std::fabs(m[4] - 1) < kEps && std::fabs(m[1]) < kEps && std::fabs(m[3]) < kEps && std::fabs(m[2]) < kEps && std::fabs(m[5]) < kEps;
+    if (same) { // as recorded: rows copied as they are
         for (int y = 0; y < h; ++y) std::memcpy(&out[(size_t)y * ow], data + (size_t)y * stride, (size_t)w);
         for (int y = 0; y < h / 2; ++y) std::memcpy(&out[(size_t)ow * oh + (size_t)y * ow], data + (size_t)stride * rows + (size_t)y * stride, (size_t)w);
-    } else {
-        ScalePlane({data, stride, w, h}, cx, cy, cw, ch, out.data(), ow, ow, oh, 1);
-        ScalePlane({data + (size_t)stride * rows, stride, w / 2, h / 2}, cx / 2, cy / 2, cw / 2, ch / 2, out.data() + (size_t)ow * oh, ow, ow / 2, oh / 2, 2);
+    } else { // moved, scaled, turned or framed: every pixel from where it now comes from
+        Affine({data, stride, w, h}, m, 1, out.data(), ow, ow, oh, 1, kBlackY);
+        Affine({data + (size_t)stride * rows, stride, w / 2, h / 2}, m, 2, out.data() + (size_t)ow * oh, ow, ow / 2, oh / 2, 2, kBlackUV);
     }
     b->Unlock();
     return true;
@@ -143,8 +139,7 @@ bool Render(const std::wstring& src, const clipedit::Edit& e, const audiofx::Pcm
     int stride = (int)strideU > 0 ? (int)strideU : (int)w;
     int ow = 0, oh = 0;
     clipedit::OutSize(e.shape, (int)w, (int)h, ow, oh);
-    float cx = 0, cy = 0, cw = (float)w, ch = (float)h;
-    bool boxed = clipedit::Boxed(e);
+    float place[6];
     double fps = (double)fn / fd;
     LONGLONG frameDur = (LONGLONG)(kSec * (double)fd / fn);
     ComPtr<IMFAttributes> wa;
@@ -232,8 +227,8 @@ bool Render(const std::wstring& src, const clipedit::Edit& e, const audiofx::Pcm
             break;
         }
         if (!cur) break;
-        clipedit::Crop(e, s, (int)w, (int)h, cx, cy, cw, ch); // a moving frame is where it is at this moment
-        if (!Picture(cur.Get(), (int)w, (int)h, stride, cx, cy, cw, ch, ow, oh, boxed, frame)) return why = L"A picture in the clip couldn't be read", false;
+        clipedit::Place(e, s, (int)w, (int)h, ow, oh, place); // a moving frame is where it is at this moment
+        if (!Picture(cur.Get(), (int)w, (int)h, stride, place, ow, oh, frame)) return why = L"A picture in the clip couldn't be read", false;
         LONGLONG at = (LONGLONG)k * frameDur;
         if (!WriteBytes(sw.Get(), vs, frame.data(), frame.size(), at, frameDur)) return why = L"The disk is full or the clip couldn't be written", false;
         size_t soundTo = (std::min)(soundFrames, (size_t)((double)(k + 1) / fps * audiofx::kRate));

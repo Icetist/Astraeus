@@ -26,7 +26,7 @@ template <class F> void EachKept(const Edit& e, F f) { // every kept stretch ins
 bool Edit::operator==(const Edit& o) const {
     if (!Near(from, o.from) || !Near(to, o.to) || shape != o.shape || frameX != o.frameX || frameY != o.frameY || clean != o.clean || even != o.even || game != o.game ||
         voice != o.voice || music != o.music || song != o.song || !Near(songAt, o.songAt) || pieces.size() != o.pieces.size() || voices.size() != o.voices.size() ||
-        fit != o.fit || moving != o.moving || spots.size() != o.spots.size() || cleanAmt != o.cleanAmt)
+        fit != o.fit || moving != o.moving || spots.size() != o.spots.size() || cleanAmt != o.cleanAmt || zoom != o.zoom || angle != o.angle)
         return false;
     for (size_t i = 0; i < spots.size(); ++i)
         if (!Near(spots[i].at, o.spots[i].at) || spots[i].x != o.spots[i].x || spots[i].y != o.spots[i].y) return false;
@@ -138,7 +138,8 @@ void FrameAt(const Edit& e, double src, float& x, float& y) {
         if (src > s[i + 1].at) continue;
         double span = s[i + 1].at - s[i].at;
         float k = span > kSame ? (float)((src - s[i].at) / span) : 1.0f;
-        k = k * k * (3 - 2 * k); // eased: it sets off and arrives gently, as a camera operator would
+        constexpr double kDense = 0.5; // spots this close are a path, a tracker's: followed evenly, not eased to a stop at each
+        if (span > kDense) k = k * k * (3 - 2 * k); // eased: it sets off and arrives gently, as a camera operator would
         x = s[i].x + (s[i + 1].x - s[i].x) * k, y = s[i].y + (s[i + 1].y - s[i].y) * k;
         return;
     }
@@ -164,24 +165,30 @@ void SetSpot(Edit& e, double src, float x, float y) {
 bool Cropping(const Edit& e) { return e.shape != kWide && !e.fit; }
 bool Boxed(const Edit& e) { return e.shape != kWide && e.fit; }
 
-void Crop(const Edit& e, double src, int w, int h, float& x, float& y, float& cw, float& ch) {
-    if (!Cropping(e)) { // the whole picture
-        x = y = 0, cw = (float)w, ch = (float)h;
-        return;
-    }
-    int ow = 0, oh = 0;
-    OutSize(e.shape, w, h, ow, oh);
-    cw = (float)ow, ch = (float)oh;
-    float fx = 0.5f, fy = 0.5f;
+void Place(const Edit& e, double src, int w, int h, int ow, int oh, float m[6]) {
+    constexpr float kDeg = 3.14159265f / 180;
+    float base = e.fit ? (std::min)((float)ow / w, (float)oh / h) : (std::max)((float)ow / w, (float)oh / h); // filled: no edge shows; fitted: all of it shows
+    float s = base * (std::clamp)(e.zoom, kMinZoom, kMaxZoom);
+    float fx = 0.5f, fy = 0.5f; // the point of the picture at the frame's middle
     FrameAt(e, src, fx, fy);
-    x = (std::clamp)(fx * w - cw / 2, 0.0f, w - cw);
-    y = (std::clamp)(fy * h - ch / 2, 0.0f, h - ch);
+    float px = fx * w, py = fy * h;
+    if (!e.fit && e.angle == 0 && e.zoom >= 1) { // filled and square on: the picture's edge never comes into the frame
+        float hx = ow / 2.0f / s, hy = oh / 2.0f / s;
+        px = hx * 2 <= w ? (std::clamp)(px, hx, w - hx) : w / 2.0f;
+        py = hy * 2 <= h ? (std::clamp)(py, hy, h - hy) : h / 2.0f;
+    }
+    float c = std::cos(e.angle * kDeg) / s, sn = std::sin(e.angle * kDeg) / s;
+    m[0] = c, m[1] = sn, m[3] = -sn, m[4] = c; // the frame turned back by the angle, and shrunk back by the scale
+    m[2] = px - (c * ow / 2 + sn * oh / 2);
+    m[5] = py - (-sn * ow / 2 + c * oh / 2);
 }
+
+bool Transformed(const Edit& e) { return e.shape != kWide || e.zoom != 1 || e.angle != 0; }
 
 bool SoundWork(const Edit& e) { return e.clean || e.even || e.game != 1 || !e.song.empty() || !e.voices.empty(); }
 
 bool Reworked(const Edit& e) {
-    if (e.shape != kWide || SoundWork(e)) return true;
+    if (Transformed(e) || SoundWork(e)) return true;
     bool more = false;
     EachKept(e, [&](double, double, float s) { return !(more = s != 1); });
     for (const Piece& p : e.pieces)

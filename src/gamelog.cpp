@@ -381,6 +381,14 @@ void GameLog::Begin(const Game& g, const std::wstring& exe, HWND w) {
     now.id = g.id, now.name = g.name, now.exe = exe, now.cover = g.cover, now.source = g.source;
     now.start = (int64_t)time(nullptr);
     playing = true, gone = 0, otherFor = 0, nowWin = w;
+    if (g.source == sys::games::kMarked && w) { // picked from its file: the first time it runs, it's called what its window is called
+        auto named = art.find(g.id);
+        wchar_t title[256] = {};
+        if ((named == art.end() || named->second.name.empty()) && GetWindowTextW(w, title, (int)std::size(title)) > 0) {
+            now.name = title;
+            Rename(g.id, title);
+        }
+    }
 }
 
 void GameLog::End() {
@@ -473,14 +481,15 @@ void GameLog::SaveLists() const {
     sys::SaveText(kIgnoredVal, Join(std::vector<std::wstring>(ignored.begin(), ignored.end())));
 }
 
-void GameLog::Mark(const std::wstring& exe) {
+void GameLog::Mark(const std::wstring& exe, const std::wstring& name) {
     std::wstring low = sys::games::Lower(exe);
     std::replace(low.begin(), low.end(), L'/', L'\\');
     if (low.empty()) return;
     ignored.erase(L"exe:" + low); // hidden once, added back by hand: it counts
     if (std::find(marked.begin(), marked.end(), low) == marked.end()) marked.push_back(low);
     SaveLists();
-    Compose();
+    if (!name.empty()) Rename(L"exe:" + low, name); // its window's name, not its file's; composes too
+    else Compose();
 }
 
 std::wstring GameLog::PickProgram(HWND owner) {

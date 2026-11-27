@@ -49,6 +49,7 @@ public:
     void ShowSettings(); // the tray's settings item: the panel opens with its settings sheet up
     void Wake(); // launched again while running: whatever kept it hidden is dropped and it shows itself
     void Greet(); // at sign-in: the home page drops down and stays until the mouse moves
+    void SayUpdated() { updatedDue = true; } // just updated: the pill says so once someone's at the pc to see it
     void PlayFull(); // the fullscreen player for the playing song, asked for from outside (halobar's cover), panel open or not
     void Reconfig(); // astraeus.ini changed on disk: sizes and corners follow without a restart
 
@@ -329,6 +330,11 @@ private:
     void StageFrame(); // both halves: the second draws when its own screen is ready for it
     bool stageBack = false; // the panel already reopened under a leaving stage
     bool greeting = false; // the sign-in greeting is up: the first move of the mouse puts it away
+    void DownloadNews(bool finished); // a download grew or finished: its pill follows it
+    std::vector<sys::inuse::User> inuseWas; // who had the mic or camera last time: a pill only for who's new
+    bool peekLive = false; // the pill showing is a download as it comes: it follows it
+    std::wstring peekFile, dlLast; // a finished download's file, opened in its folder from the pill; the download last given a pill
+    bool updatedDue = false; // the update's pill, still to be seen: an automatic one restarts while nobody's looking
     int greetTries = 0;
     POINT greetAt{};
     bool stageHalo = false; // opened from halobar's cover: leaving it opens halobar's own player again
@@ -372,6 +378,13 @@ private:
     anim::Spring spring;
     bool opened = false, dragging = false, peeking = false, alarmBanner = false;
     int alarmHot = 0; // 0 none, 1 snooze button, 2 dismiss button
+    bool meetAsk = false; // that banner is a meeting about to start: dismiss, and join in the other's place when it has a link
+    sys::cal::Event meetNow; // the meeting it's about
+    std::vector<std::pair<int64_t, std::wstring>> meetSaid; // told already, by start and title: once each
+    ULONGLONG meetSynced = 0;
+    int meetTick = 0, meetShown = -1; // seconds to the next look; the minutes the banner says, redrawn as they change
+    bool AskMeet(const sys::cal::Event& ev);
+    void MeetCheck(); // each second: the calendar kept fresh, and a meeting about to start told
     bool drinkAsk = false; // that banner is the water reminder's: snooze, and drink in dismiss's place
     ULONGLONG drinkAt = 0; // when it came down: unanswered, it goes up by itself
     void BannerDown(); // the alarm's banner drops, for whichever is asking
@@ -441,6 +454,19 @@ private:
     int tourStep = -1, tourNth = 0, tourRun = 0; // the step showing, -1 none; each step and each run fades in afresh
     bool tourAgain = false, tourSeen = false; // the last card's switch; shown once this launch already
     D2D1_RECT_F tourSpots[4]{}; // where the pages last drew the quick tiles, the cover, add widgets and the settings tile
+    void NewsShow(int view); // the update's screen over the whole panel: 1 its hello, 2 the notes
+    void NewsEnd(); // carry on: the panel comes back
+    void DrawNews(const Theme& t, float panelW, float panelH, float show); // drawer_news.cpp
+    void NewsHello(const Theme& t, float panelW, float panelH);
+    void NewsNotes(const Theme& t, float panelW, float panelH);
+    float NewsPart(int i) const; // how far the screen's i-th part has risen into place
+    int newsView = 0, newsLast = 0, newsFrom = 0; // showing: 0 none, 1 hello, 2 notes; the one fading out; where the notes were opened from
+    double newsAt = -1; // when the view changed, -1 at the next frame: its parts rise in one after another
+    float newsScroll = 0, newsWidth = 0;
+    std::vector<ComPtr<IDWriteTextLayout>> newsLays; // the notes, wrapped for newsWidth
+    std::vector<float> newsHeights;
+    ComPtr<IDWriteTextLayout> newsIntro; // the hello's few words
+    float newsIntroW = 0;
     int devTries = 0; // failed device builds in a row, retried on a short timer
     int bgNow = 0; // custom look background the themes were built with
     int pageDrawn = -1; // the page the last frame showed

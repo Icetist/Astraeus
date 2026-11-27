@@ -3,6 +3,8 @@
 #include <iphlpapi.h>
 #include <icmpapi.h>
 #include "cues.h"
+#include "sys_toggles.h"
+#include <winrt/base.h>
 #include "sys_clips.h"
 #include "faces.h"
 #include "feeds.h"
@@ -29,6 +31,26 @@ unsigned long long Ticks(const FILETIME& f) { // filetime -> 100ns count
 }
 
 constexpr double kHour = 3600;
+constexpr wchar_t kPhraseWake[] = L"Astra"; // always first: a made-up word talk doesn't say, now that a low match counts
+constexpr wchar_t kPhraseTail[] = L"clip that"; // what follows it until changed
+constexpr size_t kTailWords = 2, kTailWordMax = 10; // short words: a long phrase is heard less surely
+
+static std::wstring PhraseFrom(const std::wstring& typed) { // "Astra" and the first two short words of what was typed
+    std::wstring tail, word;
+    size_t words = 0;
+    auto flush = [&] {
+        bool wake = words == 0 && tail.empty() && _wcsicmp(word.c_str(), kPhraseWake) == 0; // typed it themselves: it's there already
+        if (!word.empty() && !wake && words < kTailWords) tail += (tail.empty() ? L"" : L" ") + word.substr(0, kTailWordMax), ++words;
+        word.clear();
+    };
+    for (wchar_t ch : typed) {
+        if (iswalpha(ch) || ch == L'\'') word += (wchar_t)towlower(ch);
+        else flush();
+    }
+    flush();
+    return std::wstring(kPhraseWake) + L" " + (tail.empty() ? kPhraseTail : tail);
+}
+
 constexpr double kRecentFor = 2 * kHour; // a game over this long ago still counts as on, for the pill's score
 constexpr size_t kSeenCap = 2000;
 
@@ -69,7 +91,7 @@ std::vector<std::wstring> SplitLines(const std::wstring& s) {
 }
 
 const wchar_t* const kPageKeys[Model::kPageIds] = {L"home", L"media", L"system", L"network", L"tools", L"shelf", L"widgets", L"games"};
-const wchar_t* const kTileKeys[Model::kToolTiles] = {L"screenshot", L"color", L"awake", L"notifications", L"dnd", L"saver", L"airplane", L"settings", L"workspaces", L"language", L"bin", L"updates"};
+const wchar_t* const kTileKeys[Model::kToolTiles] = {L"screenshot", L"color", L"awake", L"notifications", L"dnd", L"saver", L"airplane", L"settings", L"workspaces", L"language", L"bin", L"updates", L"nightlight", L"hdr", L"hotspot", L"nearby"};
 constexpr wchar_t kNoneVal[] = L"none"; // every tile taken off: an empty text would read as never set
 
 std::vector<int> ParseList(const std::wstring& s, const wchar_t* const* keys, int n) { // comma separated names; unknown and repeated ones dropped
@@ -195,6 +217,8 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     clipHeight = sys::ReadNum(L"ClipHeight", 0);
     if (std::find(std::begin(kClipHeights), std::end(kClipHeights), clipHeight) == std::end(kClipHeights)) clipHeight = 0;
     clipMic = flag(L"ClipMic", 0);
+    clipVoice = flag(L"ClipVoice", 0);
+    clipPhrase = PhraseFrom(sys::ReadText(L"ClipPhrase")); // an older free phrase keeps its first two words, after astra
     {
         std::wstring off = sys::ReadText(L"ClipsOff");
         for (size_t at = 0; at <= off.size();) {
@@ -246,7 +270,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
             size_t end = saved.find(L',', at);
             if (end == std::wstring::npos) end = saved.size();
             int v = _wtoi(saved.substr(at, end - at).c_str());
-            if (((v > kWNone && v < kWidgets) || (v >= kDClock && v <= kDRecord)) && std::find(out.begin(), out.end(), v) == out.end()) out.push_back(v);
+            if (((v > kWNone && v < kWidgets) || (v >= kDClock && v <= kDBtBattery)) && std::find(out.begin(), out.end(), v) == out.end()) out.push_back(v);
             at = end + 1;
         }
     };
@@ -282,7 +306,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     keyOnly = flag(L"KeyOnly", 0);
     appKeyOnly = flag(L"AppKeyOnly", 0);
     appHoverMs = (std::clamp)(sys::ReadNum(L"AppHoverMs", kAppHoverMs), 0, kAppHoverMax);
-    hud = flag(L"Hud", 0); // experimental: off unless asked for
+    hud = flag(L"Hud", 0); // off unless asked for: it takes the volume keys from windows
     vizLooks = sys::ReadNum(L"VizLooks", -1);
     if (vizLooks < 0) { // saved before looks could be mixed: the one picked then. 0 glow, 1 waveform, 2 edge
         static constexpr int kWas[3] = {kLookGlow, kLookBars, kLookRim};
@@ -300,10 +324,21 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     shelfHistory = (std::clamp)(sys::ReadNum(L"ShelfHistory", sys::Shelf::kHistDef), sys::Shelf::kHistMin, sys::Shelf::kHistMax);
     shelfExpire = (std::clamp)(sys::ReadNum(L"ShelfExpire", sys::Shelf::kExpireNever), 0, sys::Shelf::kExpireNever);
     shelfClearStart = flag(L"ShelfClearStart", 0);
+    meetPill = flag(L"MeetPill", 1);
+    inusePill = flag(L"InUsePill", 1);
+    downloadPill = flag(L"DownloadPill", 1);
     SyncShelf(); // before Start: a clear at launch needs to know
 }
 
 void Model::SyncShelf() { shelf.Configure({shelfCapture != 0, shelfHistory, shelfExpire, shelfClearStart != 0}); }
+
+void Model::SyncLive() {
+    if (!notify) return; // before Start: it starts them
+    if (inusePill && !inuse.On()) inuse.Start(notify, WM_APP_INUSE);
+    else if (!inusePill && inuse.On()) inuse.Stop();
+    if (downloadPill && !downloads.On()) downloads.Start(notify, WM_APP_DOWNLOADS);
+    else if (!downloadPill && downloads.On()) downloads.Stop();
+}
 
 void Model::CommitShelfNote() {
     if (shelfField == kShelfNote && shelfNoteFor) shelf.SetNote(shelfNoteFor, shelfEdit);
@@ -332,6 +367,7 @@ void Model::Start(HWND hwnd) {
     radios.Start(hwnd, WM_APP_RADIOS);
     cals.Sync(hwnd, WM_APP_CAL, 0); // the month's dots are ready by the time the calendar first opens
     shelf.Start(hwnd, WM_APP_SHELF); // a kept shelf comes back
+    SyncLive();
     if (accentMode == kAccentWindows) winAccent.Watch(hwnd, WM_APP_ACCENT);
     if (portable) ReadBattery();
     CheckTiler(); // a tiling manager here: its workspaces tile comes on, unless taken off since
@@ -472,6 +508,9 @@ void Model::OnStats() {
 }
 
 void Model::Tick() {
+    constexpr int kTogglesAfter = 6; // seconds after launch: which of the newer tiles this pc has, out of the startup rush
+    static int ticks = 0;
+    if (!togglesAt && ++ticks >= kTogglesAfter) ReadToggles(true);
     if (timerOn && !timerPaused && GetTickCount64() >= timerEnd) { // timer checked at tick granularity
         timerOn = false;
         timerDone = true; // ui consumes via TimerDone()
@@ -484,6 +523,7 @@ void Model::Tick() {
     }
     if (quietByGame && !games.Playing()) SetQuiet(false), quietByGame = false; // however the session ended, even one too short to keep
     ClipSync();
+    PhraseSync();
     if ((fullLyrics || mediaLyrics || PillLyrics()) && hasTrack && track.music && track.duration > 0) // the song's lyrics, fetched while it plays: ready long before fullscreen opens; a cache check once known
         lyrics.Want(track.title, track.artist, track.album, track.duration / 1e7);
     if (focusOn && !focusPaused && GetTickCount64() >= focusEnd) { // a block ends: focus hands over to a break, a break to the next round
@@ -688,8 +728,8 @@ void Model::SetAwake(bool on) {
     sys::SetAwake(on);
 }
 
-void Model::SetPref(int& field, const wchar_t* key, int value) {
-    field = value;
+void Model::SetPref(int& slot, const wchar_t* key, int value) {
+    slot = value;
     sys::SaveNum(ThemeKey(key).c_str(), value);
     if (&field == &pillLeft || &field == &pillRight || &field == &deskPill || &field == &pillDesk || &field == &deskApps) SyncFaces(); // a pill may show the market now: it's fetched, or let go
 }
@@ -759,17 +799,17 @@ int Model::PageGlyph(int id) {
 }
 
 const wchar_t* Model::TileName(int id) {
-    static const wchar_t* const kNames[kToolTiles] = {L"Screenshot", L"Color picker", L"Awake", L"Notifications", L"Do not disturb", L"Energy saver", L"Airplane", L"Settings", L"Workspaces", L"Keyboard language", L"Recycle bin", L"Updates"};
+    static const wchar_t* const kNames[kToolTiles] = {L"Screenshot", L"Color picker", L"Awake", L"Notifications", L"Do not disturb", L"Energy saver", L"Airplane", L"Settings", L"Workspaces", L"Keyboard language", L"Recycle bin", L"Updates", L"Night light", L"HDR", L"Mobile hotspot", L"Nearby sharing"};
     return kNames[(std::clamp)(id, 0, kToolTiles - 1)];
 }
 
 const wchar_t* Model::TileAbout(int id) {
-    static const wchar_t* const kAbout[kToolTiles] = {L"Pick a region of the screen", L"Pick a color from the screen", L"Keep the screen on", L"Open the notification list", L"Silence notifications", L"Turn energy saver on or off", L"Turn every radio off", L"Astraeus' settings", L"Switch between workspaces", L"Switch keyboard language", L"See and empty the bin", L"Check for updates"};
+    static const wchar_t* const kAbout[kToolTiles] = {L"Pick a region of the screen", L"Pick a color from the screen", L"Keep the screen on", L"Open the notification list", L"Silence notifications", L"Turn energy saver on or off", L"Turn every radio off", L"Astraeus' settings", L"Switch between workspaces", L"Switch keyboard language", L"See and empty the bin", L"Check for updates", L"Warmer colors after dark", L"Brighter, richer color on HDR screens", L"Share this PC's connection", L"Send files to nearby PCs"};
     return kAbout[(std::clamp)(id, 0, kToolTiles - 1)];
 }
 
 int Model::TileGlyph(int id) {
-    static const int kGlyphs[kToolTiles] = {glyph::Snip, glyph::Edit, glyph::Coffee, glyph::Bell, glyph::Dnd, glyph::Saver, glyph::Airplane, glyph::Settings, glyph::Workspaces, glyph::Translate, glyph::Delete, glyph::Update};
+    static const int kGlyphs[kToolTiles] = {glyph::Snip, glyph::Edit, glyph::Coffee, glyph::Bell, glyph::Dnd, glyph::Saver, glyph::Airplane, glyph::Settings, glyph::Workspaces, glyph::Translate, glyph::Delete, glyph::Update, glyph::NightLight, glyph::HdrOn, glyph::Hotspot, glyph::Share};
     return kGlyphs[(std::clamp)(id, 0, kToolTiles - 1)];
 }
 
@@ -1101,6 +1141,14 @@ void Model::CommitField() {
         fieldEdit.clear();
         return;
     }
+    if (field == kFieldClipPhrase) { // the words after astra: empty goes back to the first ones
+        clipPhrase = PhraseFrom(fieldEdit);
+        sys::SaveText(L"ClipPhrase", clipPhrase);
+        field = kFieldNone;
+        fieldEdit.clear();
+        PhraseSync(); // listened for at once
+        return;
+    }
     if (field == kFieldGameName) {
         games.Rename(gameNaming, fieldEdit);
         field = kFieldNone;
@@ -1163,6 +1211,9 @@ bool Model::OnClipboard() {
 
 void Model::CloseSettings() {
     settingsOpen = false;
+    setSearch = setPick = false; // a search goes with the sheet
+    setQuery.clear();
+    setSel = 0;
     setTab = -1; // back to whichever applies
     hexFocus = false;
 }
@@ -1209,6 +1260,16 @@ void Model::ClipSync() {
     followed = w;
     recording = games.Now().id;
     if (clip) ClipKeys(true);
+}
+
+void Model::PhraseSync() { // the microphone is listened to only while a game records and the phrase is on: otherwise it's let go
+    bool want = clip && clipOn && clipVoice;
+    if (!want) {
+        if (phrase) phrase.reset();
+        return;
+    }
+    if (!phrase) phrase = std::make_unique<sys::phrase::Listener>();
+    phrase->Start(clipPhrase, notify, WM_APP_PHRASE); // the same phrase already heard: nothing
 }
 
 void Model::ClipKeys(bool on) {
@@ -1700,6 +1761,7 @@ const wchar_t* Model::DeskItemName(int k) {
     case kDScore: return L"Score";
     case kDLyrics: return L"Lyrics";
     case kDRecord: return L"Recording";
+    case kDBtBattery: return L"Bluetooth battery";
     default: return L"";
     }
 }
@@ -1782,6 +1844,14 @@ std::wstring Model::DeskItemText(int k, int& icon) const {
         if (clipSavedAt && GetTickCount64() - clipSavedAt < kSavedShowMs) return L"Clip saved";
         if (clip->Paused()) return L"Paused";
         return clipSecs < 60 ? L"Recording · last " + std::to_wstring(clipSecs) + L" s" : L"Recording · last " + std::to_wstring(clipSecs / 60) + L" min";
+    }
+    case kDBtBattery: { // the lowest first, and a second if there is one
+        std::lock_guard<std::mutex> g(btChargeLock);
+        if (btCharges.empty()) return L"";
+        icon = glyph::Bluetooth;
+        std::wstring s;
+        for (size_t i = 0; i < btCharges.size() && i < 2; ++i) s += (i ? L"  \u00B7  " : L"") + btCharges[i].name + L" " + std::to_wstring(btCharges[i].pct) + L"%";
+        return s;
     }
     case kDTimer:
         if (Activity() == kActNone) return L"";
@@ -1884,49 +1954,101 @@ std::wstring Model::PillWidget(int which, int& icon) const {
 
 namespace {
 constexpr int kNotesRes = 209; // the release notes, built into the exe
-constexpr size_t kNewsMost = 4; // the card names this many; the rest are a click away
-constexpr wchar_t kNewsFor[] = L"NewsFor"; // the version whose notes are still unread
+constexpr wchar_t kNewsFor[] = L"NewsFor"; // the version whose notes are still unseen
 }
 
 void Model::LoadNews(bool justUpdated) {
-    news.clear();
     if (justUpdated) sys::SaveText(kNewsFor, APP_VER_W); // shown until it's put away, a restart or two included
-    if (sys::ReadText(kNewsFor) != APP_VER_W) return;
+    newsDue = sys::ReadText(kNewsFor) == APP_VER_W;
+}
+
+bool Model::LoadNotes() {
+    if (!notes.empty()) return true;
     HMODULE self = GetModuleHandleW(nullptr);
     HRSRC res = FindResourceW(self, MAKEINTRESOURCEW(kNotesRes), RT_RCDATA);
     HGLOBAL data = res ? LoadResource(self, res) : nullptr;
     const char* text = data ? static_cast<const char*>(LockResource(data)) : nullptr;
-    if (!text) return;
+    if (!text) return false;
     int n = MultiByteToWideChar(CP_UTF8, 0, text, (int)SizeofResource(self, res), nullptr, 0);
     std::wstring all(n, L'\0');
     MultiByteToWideChar(CP_UTF8, 0, text, (int)SizeofResource(self, res), all.data(), n);
-    auto plain = [](std::wstring s) { // the notes are markdown: bold and code marks go, the words stay
-        for (const wchar_t* mark : {L"**", L"`"})
-            for (size_t at; (at = s.find(mark)) != std::wstring::npos;) s.erase(at, wcslen(mark));
-        return s;
-    };
-    for (size_t at = 0; at < all.size() && news.size() < kNewsMost;) {
+    auto starts = [](const std::wstring& s, const wchar_t* with) { return s.rfind(with, 0) == 0; };
+    for (size_t at = 0; at < all.size();) {
         size_t end = all.find(L'\n', at);
         std::wstring line = all.substr(at, end == std::wstring::npos ? std::wstring::npos : end - at);
         at = end == std::wstring::npos ? all.size() : end + 1;
-        if (!line.empty() && line.back() == L'\r') line.pop_back();
-        if (line.rfind(L"- ", 0) != 0) continue; // only the notes themselves, not the headings
-        News item;
-        if (line.rfind(L"- **", 0) == 0) { // "- **Headline.** the rest"
-            size_t close = line.find(L"**", 4);
-            if (close == std::wstring::npos) continue;
-            item.title = plain(line.substr(4, close - 4));
-            item.text = plain(line.substr(close + 2));
-            while (!item.text.empty() && item.text.front() == L' ') item.text.erase(0, 1);
-        } else {
-            item.title = plain(line.substr(2));
+        while (!line.empty() && (line.back() == L'\r' || line.back() == L' ')) line.pop_back();
+        if (line.empty() || starts(line, L"> [!")) continue; // a callout's kind: the box says it
+        if (starts(line, L"## ")) { // "## Astraeus 2.9.0: The Games Update": the name is after the colon
+            size_t colon = line.find(L": ");
+            notesName = colon == std::wstring::npos ? line.substr(3) : line.substr(colon + 2);
+        } else if (starts(line, L"### ")) {
+            notes.push_back({Note::kHead, line.substr(4)});
+        } else if (starts(line, L"- ")) {
+            notes.push_back({Note::kItem, line.substr(2)});
+        } else if (starts(line, L"> ")) {
+            notes.push_back({Note::kAside, line.substr(2)});
+        } else if (line.size() > 4 && starts(line, L"**") && line.compare(line.size() - 2, 2, L"**") == 0 && line.find(L"**", 2) == line.size() - 2) {
+            notes.push_back({Note::kGroup, line.substr(2, line.size() - 4)}); // a line all in bold names a group
+        } else if (!starts(line, L"#")) {
+            notes.push_back({Note::kPara, line});
         }
-        while (!item.title.empty() && (item.title.back() == L'.' || item.title.back() == L' ')) item.title.pop_back();
-        news.push_back(std::move(item));
     }
+    return !notes.empty();
+}
+
+void Model::FreeNotes() {
+    std::vector<Note>().swap(notes);
+    notesName.clear();
 }
 
 void Model::DropNews() {
-    news.clear();
+    newsDue = false;
     sys::SaveText(kNewsFor, L"");
+}
+
+void Model::ReadToggles(bool now) {
+    constexpr ULONGLONG kEveryMs = 3000; // shown while the tools page is up: windows' own settings may change them too
+    ULONGLONG tick = GetTickCount64();
+    if (!now && tick - togglesAt < kEveryMs) return;
+    bool first = togglesAt == 0;
+    togglesAt = tick;
+    toggles.night = sys::toggles::NightLight();
+    toggles.hdrCan = sys::toggles::HdrCan();
+    toggles.hdr = toggles.hdrCan && sys::toggles::Hdr();
+    toggles.nearby = sys::toggles::Nearby();
+    if (first || toggles.spot.load() != kSpotBusy)
+        std::thread([this] {
+            winrt::init_apartment(winrt::apartment_type::multi_threaded);
+            toggles.spot = (int)sys::toggles::Hotspot();
+            winrt::uninit_apartment();
+        }).detach();
+}
+
+void Model::FlipHotspot() {
+    int was = toggles.spot.load();
+    if (was != kSpotOn && was != kSpotOff) return;
+    toggles.spot = kSpotBusy;
+    std::thread([this, on = was == kSpotOff] {
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        sys::toggles::SetHotspot(on);
+        toggles.spot = (int)sys::toggles::Hotspot();
+        winrt::uninit_apartment();
+        if (notify) PostMessageW(notify, WM_APP_RADIOS, 0, 0); // a redraw with the new state
+    }).detach();
+}
+
+void Model::PollBtCharges() {
+    constexpr ULONGLONG kEveryMs = 60000; // batteries drain slowly
+    ULONGLONG tick = GetTickCount64();
+    if ((btChargesAt && tick - btChargesAt < kEveryMs) || btChargeBusy.exchange(true)) return;
+    btChargesAt = tick;
+    std::thread([this] {
+        std::vector<sys::BtCharge> got = sys::BtCharges();
+        {
+            std::lock_guard<std::mutex> g(btChargeLock);
+            btCharges = std::move(got);
+        }
+        btChargeBusy = false;
+    }).detach();
 }

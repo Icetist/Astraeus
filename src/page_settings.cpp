@@ -11,6 +11,7 @@
 #include "chrome.h"
 #include "starfall.h"
 #include "version.h"
+#include "settings_search.h"
 
 using namespace sheet;
 
@@ -732,6 +733,113 @@ void Island(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the pill over a ma
 
 }
 
+namespace {
+
+constexpr float kFindH = 28, kFindW = 132, kFindWOpen = 232, kFindIcon = 15, kFindPad = 12, kFindText = 12.5f, kFindX = 26; // quiet until used, wider once it is
+constexpr float kFindTallTop = 122, kFindTallGap = 10; // in the sidebar's header, under the orb
+constexpr float kHitH = 52, kHitGap = 4, kHitR = 14, kHitPad = 16, kHitBar = 3, kHitSide = 96; // a result: its title, the line that matched, where it lives
+constexpr float kJumpPad = 10; // a found card lands this far under the top
+constexpr double kGlowSec = 1.6, kJumpWait = 0.45, kJumpGiveUp = 1.5; // how long a found card glows; advanced unfolding first; a card that never showed
+const wchar_t* jumpTo = nullptr; // a card search picked: gone to once it's been laid out
+bool jumpAdv = false;
+double jumpAt = 0, glowAt = -10;
+D2D1_POINT_2F hitMouse{-1, -1}; // the mouse picks a result only when it moves: the arrows keep theirs under a resting one
+
+void Lit(Canvas& c, const std::wstring& s, size_t at, size_t len, const D2D1_RECT_F& r, Weight w, float size, Color base, Color lit) { // the match picked out in the accent
+    if (at == std::wstring::npos || at >= s.size() || !len) {
+        c.Text(s, r, w, size, base);
+        return;
+    }
+    len = (std::min)(len, s.size() - at);
+    std::wstring a = s.substr(0, at), b = s.substr(at, len), z = s.substr(at + len);
+    float x = r.left;
+    if (!a.empty()) c.Text(a, Rect(x, r.top, r.right - x, Height(r)), w, size, base), x += c.Measure(a, w, size);
+    if (x < r.right) c.Text(b, Rect(x, r.top, r.right - x, Height(r)), w, size, lit), x += c.Measure(b, w, size);
+    if (!z.empty() && x < r.right) c.Text(z, Rect(x, r.top, r.right - x, Height(r)), w, size, base);
+}
+
+void FindField(PageCtx& p, const D2D1_RECT_F& r, bool live) { // no box until it's used: a glass and a word
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    bool typed = !m.setQuery.empty();
+    float mid = (r.top + r.bottom) / 2;
+    if (typed && w::IconBtn(ui, t, Ui::Id("set.find.x"), {r.right - kFindH / 2, mid}, kFindH - 6, glyph::Close, 13)) m.setQuery.clear(), m.setSearch = true;
+    uint32_t id = Ui::Id("set.find");
+    Ui::Hit h = live ? ui.Button(id, typed ? Rect(r.left, r.top, Width(r) - kFindX, Height(r)) : r) : Ui::Hit{};
+    ui.Name(L"Search settings", m.setQuery);
+    if (h.clicked) m.setSearch = true;
+    else if (m.setSearch && !typed && ui.In().pressed && !Inside(r, ui.In().mouse)) m.setSearch = false; // a click elsewhere puts an empty search away
+    float hov = ui.Smooth(id + 1, h.hover ? 1.0f : 0, 16), on = ui.Smooth(id + 2, m.setSearch ? 1.0f : 0, 18);
+    float rad = Height(r) / 2, fill = (std::max)(hov * 0.5f, on);
+    if (fill > 0.002f) c.Fill(r, rad, t.track.Alpha(0.75f * fill));
+    if (on > 0.002f) c.Stroke(r, rad, t.accent.Alpha(0.5f * on), 1);
+    D2D1_POINT_2F ic = {r.left + kFindPad + kFindIcon / 2 - 2, mid};
+    c.Icon(glyph::Search, ic, kFindIcon + 2, t.textLow.Mix(t.accentHi, on), false);
+    float tx = ic.x + kFindIcon / 2 + 8, tw = r.right - tx - (typed ? kFindX : 10);
+    D2D1_RECT_F tr = Rect(tx, mid - 8, tw, 16);
+    if (typed) c.Text(m.setQuery, tr, Weight::Regular, kFindText, t.text);
+    else c.Text(on > 0.5f ? L"Search settings" : L"Search", tr, Weight::Regular, kFindText, t.textLow);
+    if (m.setSearch) { // a steady caret: nothing has to redraw while it waits
+        float cx = tx + (typed ? (std::min)(c.Measure(m.setQuery, Weight::Regular, kFindText), tw) : 0) + 1;
+        c.Line({cx, mid - 7}, {cx, mid + 7}, t.accentHi.Alpha(on), 1.5f);
+    }
+}
+
+void Results(PageCtx& p, const D2D1_RECT_F& area, bool live) { // in place of the cards while something's typed: best first, the match lit
+    Ui& ui = p.ui;
+    Canvas& c = ui.C();
+    const Theme& t = p.shell;
+    Model& m = p.m;
+    static std::vector<setsearch::Hit> hits;
+    static std::wstring hitsFor;
+    if (hitsFor != m.setQuery) setsearch::Find(m.setQuery, hits), hitsFor = m.setQuery, m.setSel = 0; // only when the words change
+    int fit = (std::max)(1, (int)((Height(area) + kHitGap) / (kHitH + kHitGap)));
+    int n = (std::min)((int)hits.size(), fit);
+    if (n == 0) {
+        c.Text(L"Nothing in settings matches \u201C" + m.setQuery + L"\u201D", Rect(area.left, area.top + 36, Width(area), 20), Weight::Light, 13, t.textDim, Align::Center);
+        m.setPick = false;
+        return;
+    }
+    m.setSel = (std::clamp)(m.setSel, 0, n - 1);
+    bool moved = ui.In().mouse.x != hitMouse.x || ui.In().mouse.y != hitMouse.y;
+    hitMouse = ui.In().mouse;
+    int pick = -1;
+    for (int i = 0; i < n; ++i) {
+        const setsearch::Hit& hh = hits[(size_t)i];
+        const setsearch::Card& card = setsearch::At(hh.card);
+        D2D1_RECT_F row = Rect(area.left, area.top + i * (kHitH + kHitGap), Width(area), kHitH);
+        Ui::Hit h = live ? ui.Button(Ui::Id("set.hit", i), row) : Ui::Hit{};
+        ui.Name(card.title, hh.line);
+        if (h.hover && moved) m.setSel = i;
+        if (h.clicked) pick = i;
+        float a = ui.Smooth(Ui::Id("set.hit.on", i), i == m.setSel ? 1.0f : 0, 26);
+        if (a > 0.002f) {
+            c.Fill(row, kHitR, CardFill(t).Alpha(a));
+            c.Fill(Rect(row.left + 7, row.top + 15, kHitBar, kHitH - 30), kHitBar / 2, t.accent.Alpha(a));
+        }
+        float tx = row.left + kHitPad + 4, tw = Width(row) - 2 * kHitPad - kHitSide;
+        Lit(c, card.title, hh.inTitle ? hh.at : std::wstring::npos, hh.len, Rect(tx, row.top + 9, tw, 19), Weight::Medium, 13.5f, t.text, t.accentHi);
+        Lit(c, hh.line, hh.inTitle ? std::wstring::npos : hh.at, hh.len, Rect(tx, row.top + 29, tw, 16), Weight::Regular, 11.5f, t.textDim, t.accentHi);
+        float cy = (row.top + row.bottom) / 2, chev = row.right - kHitPad - 2;
+        if (card.advanced) c.Text(L"Advanced", Rect(chev - kHitSide, cy - 8, kHitSide - 14, 16), Weight::Regular, 11, t.textLow, Align::Right);
+        Color ink = t.textLow.Mix(t.accentHi, a);
+        c.Line({chev - 3, cy - 5}, {chev + 2, cy}, ink, 1.6f);
+        c.Line({chev + 2, cy}, {chev - 3, cy + 5}, ink, 1.6f);
+    }
+    if (m.setPick) m.setPick = false, pick = m.setSel;
+    if (pick >= 0) { // the cards come back, gone to that one, lit for a moment
+        const setsearch::Card& card = setsearch::At(hits[(size_t)pick].card);
+        jumpTo = card.title, jumpAdv = card.advanced, jumpAt = ui.Now();
+        if (jumpAdv) UnfoldAdvanced();
+        m.setQuery.clear(), m.setSearch = false;
+        hitsFor.clear();
+    }
+}
+
+}
+
 void DrawSettings(PageCtx& p, float k) {
     Ui& ui = p.ui;
     Canvas& c = ui.C();
@@ -766,6 +874,8 @@ void DrawSettings(PageCtx& p, float k) {
         D2D1_RECT_F list = frame.list;
         c.Text(L"Settings", Rect(list.left + 4, list.top + 5, 200, 20), Weight::Medium, 15, t.text);
         if (w::IconBtn(ui, t, Ui::Id("set.close"), {list.right - 14, list.top + 14}, 30, glyph::Close, 18)) m.CloseSettings();
+        float fw = ui.Smooth(Ui::Id("set.find.w"), m.setSearch || !m.setQuery.empty() ? kFindWOpen : kFindW, 18); // it widens as it's used
+        FindField(p, Rect(list.right - 34 - fw, list.top, fw, kFindH), live);
         grid = {list.left, list.top + 34, list.right, list.bottom};
     } else { // sidebar header: orb on the left, source switch and presets beside it
         float x0 = s.left + 130, w0 = (std::min)(Width(s) - 176, 190.0f);
@@ -787,9 +897,13 @@ void DrawSettings(PageCtx& p, float k) {
             p.wantClose = true;
             sys::OpenUri(L"ms-settings:");
         }
-        grid = {s.left + 10, s.top + 136, s.right - 10, s.bottom - 54};
+        FindField(p, Rect(s.left + 10, s.top + kFindTallTop, Width(s) - 20, kFindH), live);
+        grid = {s.left + 10, s.top + kFindTallTop + kFindH + kFindTallGap, s.right - 10, s.bottom - 54};
     }
 
+    if (!m.setQuery.empty()) { // searching: the results in the cards' place
+        Results(p, grid, live && Inside(grid, ui.In().mouse));
+    } else {
     int rows = frame.tall ? 3 : 2;
     float ch = (std::max)(kMinRow, (Height(grid) - rows * kGap - kLyricsRow) / rows); // short page: cards keep their size and the page scrolls
     static float prefsH = 0; // the newer cards' height, as they measured last frame
@@ -801,6 +915,11 @@ void DrawSettings(PageCtx& p, float k) {
     float scroll = Scroll(ui, "set.scroll", settingsScroll, grid, content, pageWheel);
     D2D1_RECT_F view = grid;
     live = live && (Inside(view, ui.In().mouse) || ui.Captured() || ui.Keyed()); // cards scrolled out of view can't be hit through the header; a slider being dragged keeps following past it; the keyboard's reach has nothing to do with the mouse
+    std::vector<sheet::BoxSeen> seen; // where each card lands, while search is taking the page to one
+    if (jumpTo) sheet::boxesSeen = &seen;
+    float glow = (float)(1 - (ui.Now() - glowAt) / kGlowSec);
+    sheet::glowA = glow > 0 ? glow * glow : 0; // bright, then easing away
+    if (sheet::glowA > 0) ui.KeepAlive();
     c.PushClip(view);
     grid.top -= scroll;
     float tabsH = TabsH(p.m, Width(grid));
@@ -832,7 +951,23 @@ void DrawSettings(PageCtx& p, float k) {
         prefsH = DrawPrefs(p, {grid.left, grid.top + 3 * (ch + kGap) + glassH + kLyricsRow + kGap, grid.right, grid.bottom}, live, true);
     }
     c.PopClip();
+    sheet::boxesSeen = nullptr;
+    if (jumpTo) {
+        ui.KeepAlive();
+        auto it = std::find_if(seen.begin(), seen.end(), [](const sheet::BoxSeen& b) { return !wcscmp(b.title, jumpTo); });
+        if (!wcscmp(jumpTo, L"Theme")) { // the tabs at the very top
+            settingsScroll = 0;
+            jumpTo = nullptr;
+        } else if (it != seen.end() && (!jumpAdv || ui.Now() - jumpAt > kJumpWait)) {
+            settingsScroll = (std::max)(0.0f, it->r.top + scroll - view.top - kJumpPad); // eased there by the scroll
+            sheet::glowTitle = jumpTo, glowAt = ui.Now();
+            jumpTo = nullptr;
+        } else if (ui.Now() - jumpAt > kJumpGiveUp) {
+            jumpTo = nullptr; // a card this look doesn't have
+        }
+    }
     Fades(c, t, view, scroll, content);
+    }
 
     if (ui.RClick(s)) m.CloseSettings(); // right click closes, like the other sheets
     preview::Draw(ui, t, s); // last, over everything in the sheet

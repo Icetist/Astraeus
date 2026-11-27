@@ -47,6 +47,10 @@ constexpr float kToastH = 36, kToastPad = 18, kToastGap = 12;
 constexpr float kStroke = 1.8f; // the drawn icons, as heavy as the font's
 constexpr float kPi = 3.14159265f;
 constexpr float kVideoR = 18, kPlayBig = 72;
+constexpr float kFramingRoom = 0.8f, kGhost = 0.22f; // framing: the frame smaller, with what's left out showing this faintly around it
+constexpr float kTurnGap = 28, kTurnR = 8, kHandleHit = 16, kGrip = 16; // the turn and size handles
+constexpr float kDegPerRad = 57.2957795f, kSnapEvery = 45, kSnapDeg = 3; // turning settles on straight angles when close
+constexpr float kWheelTurn = 5, kWheelGrow = 1.08f; // a notch of the wheel
 constexpr double kNudge = 1, kNudgeBig = 5, kMinKeep = 1;
 enum Drawn : int { kDrawBack = -1, kDrawUndo = -2, kDrawRedo = -3, kDrawSkipBack = -4, kDrawSkipFwd = -5 }; // icons the font hasn't got: drawn as strokes
 constexpr float kHoldSec = 0.9f;
@@ -342,23 +346,29 @@ void ClipStudio::Strip() { // pictures along the timeline, decoded off the ui th
     float bw = (std::min)(kBarW, W - 2 * kSide) - 2 * kBarPad;
     double aspect = vh ? (double)vw / vh : 16.0 / 9;
     stripCount = (std::max)(4, (int)std::lround(bw / (kTimelineH * aspect)));
-    strip.clear();
+    strip.assign((size_t)stripCount, nullptr);
     auto w = work;
     std::wstring file = path;
-    double length = len;
-    int count = stripCount;
+    std::vector<double> when((size_t)stripCount);
+    for (int i = 0; i < stripCount; ++i) when[(size_t)i] = len * (i + 0.5) / stripCount;
+    int gen;
+    {
+        std::lock_guard<std::mutex> lock(w->mu);
+        gen = ++w->stripGen;
+        w->strip.clear();
+    }
     HWND to = hwnd;
-    std::thread([w, file, length, count, to] {
+    std::thread([w, file, when, gen, to] {
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        std::vector<clips::Picture> got((size_t)count);
-        for (int i = 0; i < count; ++i) clips::Frame(file, length * (i + 0.5) / count, kStripPx, got[(size_t)i]);
+        clips::Frames(file, when, kStripPx, [&](size_t i, clips::Picture&& p) { // one opening of the clip for all of them, each shown as it's ready
+            {
+                std::lock_guard<std::mutex> lock(w->mu);
+                if (w->stripGen != gen) return; // a newer strip is on its way: this one's done with
+                w->strip.emplace_back(i, std::move(p));
+            }
+            PostMessageW(to, kWorkMsg, 0, 0);
+        });
         CoUninitialize();
-        {
-            std::lock_guard<std::mutex> lock(w->mu);
-            w->strip = std::move(got);
-            w->stripReady = true;
-        }
-        PostMessageW(to, kWorkMsg, 0, 0);
     }).detach();
 }
 
@@ -696,7 +706,7 @@ LRESULT ClipStudio::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_SETCURSOR:
         if (LOWORD(lp) == HTCLIENT) {
-            bool grab = Framing() && (frameDrag || Inside(frameRect, input.mouse)); // the frame moves under the hand
+            bool grab = Framing() && (frameKind == 1 || (!frameKind && Inside(videoRect, input.mouse))); // the picture moves under the hand
             SetCursor(LoadCursorW(nullptr, grab ? IDC_SIZEALL : ui.Hand() ? IDC_HAND : IDC_ARROW));
             return TRUE;
         }
@@ -823,85 +833,114 @@ void ClipStudio::DrawTop(const Theme& t, float a) {
     if (Tool(t, "cs.done", doneBtn, L"Done", L"Back to the games page  ·  Esc", true, true)) AskLeave(L"Your trim isn't saved. Press Done again to leave without it");
 }
 
-void ClipStudio::DrawVideo(const D2D1_RECT_F& box, float a) {
+namespace {
+
+bool Close(D2D1_POINT_2F p, D2D1_POINT_2F q, float d) { return (p.x - q.x) * (p.x - q.x) + (p.y - q.y) * (p.y - q.y) <= d * d; }
+
+float Wrap(float deg) { // into -180..180
+    while (deg > 180) deg -= 360;
+    while (deg <= -180) deg += 360;
+    return deg;
+}
+
+}
+
+void ClipStudio::DrawFraming(const Theme& t, const D2D1_RECT_F& r, const float m[6], float k, float a) {
     Canvas& c = *canvas;
-    double aspect = vh ? (double)vw / vh : 16.0 / 9;
-    float w = Width(box), h = (float)(w / aspect);
-    if (h > Height(box)) h = Height(box), w = (float)(h * aspect);
-    float fx = 0, fy = 0, fw = (float)vw, fh = (float)vh; // the frame a tall or square clip keeps, in the picture's pixels
-    if (vw && vh) clipedit::Crop(cut, at, (int)vw, (int)vh, fx, fy, fw, fh);
-    bool cropped = clipedit::Cropping(cut) && vw && vh, boxed = clipedit::Boxed(cut) && vw && vh;
-    if (boxed) { // the finished picture: the whole of it inside the tall or square frame, black above and below
-        int ow = 0, oh = 0;
-        clipedit::OutSize(cut.shape, (int)vw, (int)vh, ow, oh);
-        double oa = (double)ow / oh;
-        float bw = Width(box), bh = (float)(bw / oa);
-        if (bh > Height(box)) bh = Height(box), bw = (float)(bh * oa);
-        D2D1_RECT_F outer = Rect((box.left + box.right - bw) / 2, (box.top + box.bottom - bh) / 2, bw, bh);
-        float k = (std::min)(bw / vw, bh / vh);
-        w = vw * k, h = vh * k;
-        c.Fill(Rect(outer.left, outer.top + 10, bw, bh), kVideoR + 4, Color{0, 0, 0, 0.38f * a});
-        c.Fill(outer, kVideoR, Color{0, 0, 0, a});
-        D2D1_RECT_F inner = Rect((outer.left + outer.right - w) / 2, (outer.top + outer.bottom - h) / 2, w, h);
-        if (videoBmp && haveFrame) c.Image(videoBmp.Get(), inner, 0, a);
-        videoRect = outer;
-        Ui::Hit hb = ui.Button(Ui::Id("cs.video"), outer);
-        ui.Name(playing ? L"Pause" : L"Play");
-        if (hb.clicked) Toggle();
-        return;
+    D2D1_POINT_2F mid = {(r.left + r.right) / 2, (r.top + r.bottom) / 2}, ms = input.mouse;
+    c.Stroke(r, kVideoR, Color{1, 1, 1, 0.9f * a}, 2);
+    for (int i = 1; i < 3; ++i) { // thirds, as a camera's guide has them
+        float gx = r.left + Width(r) * i / 3, gy = r.top + Height(r) * i / 3;
+        c.Line({gx, r.top}, {gx, r.bottom}, Color{1, 1, 1, 0.22f * a}, 1, false);
+        c.Line({r.left, gy}, {r.right, gy}, Color{1, 1, 1, 0.22f * a}, 1, false);
     }
-    if (cropped && !Framing()) { // the finished picture: just the frame, as big as the room takes it
-        double fa = fw / fh;
-        w = Width(box), h = (float)(w / fa);
-        if (h > Height(box)) h = Height(box), w = (float)(h * fa);
-    }
-    D2D1_RECT_F r = Rect((box.left + box.right - w) / 2, (box.top + box.bottom - h) / 2, w, h);
-    videoRect = r;
-    c.Fill(Rect(r.left, r.top + 10, w, h), kVideoR + 4, Color{0, 0, 0, 0.38f * a}); // it sits on the room, a little lifted
-    if (cropped && !Framing() && videoBrush && haveFrame) {
-        float k = w / fw;
-        videoBrush->SetTransform(D2D1::Matrix3x2F::Translation(-fx, -fy) * D2D1::Matrix3x2F::Scale(k, k) * D2D1::Matrix3x2F::Translation(r.left, r.top));
-        videoBrush->SetOpacity(a);
-        ctx->FillRoundedRectangle(D2D1::RoundedRect(r, kVideoR, kVideoR), videoBrush.Get());
-    } else if (videoBmp && haveFrame) {
-        c.Image(videoBmp.Get(), r, kVideoR, a);
-    } else {
-        c.Fill(r, kVideoR, Color{0, 0, 0, a});
-    }
-    if (Framing()) { // the whole picture, darkened outside the frame, which is dragged to where the action is
-        float k = w / vw;
-        frameRect = Rect(r.left + fx * k, r.top + fy * k, fw * k, fh * k);
-        c.PushClip(r);
-        c.Fill(Rect(r.left, r.top, frameRect.left - r.left, h), 0, Color{0, 0, 0, 0.6f * a});
-        c.Fill(Rect(frameRect.right, r.top, r.right - frameRect.right, h), 0, Color{0, 0, 0, 0.6f * a});
-        c.Fill(Rect(frameRect.left, r.top, Width(frameRect), frameRect.top - r.top), 0, Color{0, 0, 0, 0.6f * a});
-        c.Fill(Rect(frameRect.left, frameRect.bottom, Width(frameRect), r.bottom - frameRect.bottom), 0, Color{0, 0, 0, 0.6f * a});
-        c.PopClip();
-        c.Stroke(frameRect, 4, Color{1, 1, 1, 0.95f * a}, 2);
-        for (int i = 1; i < 3; ++i) { // thirds, as a camera's guide has them
-            float gx = frameRect.left + Width(frameRect) * i / 3, gy = frameRect.top + Height(frameRect) * i / 3;
-            c.Line({gx, frameRect.top}, {gx, frameRect.bottom}, Color{1, 1, 1, 0.25f * a}, 1, false);
-            c.Line({frameRect.left, gy}, {frameRect.right, gy}, Color{1, 1, 1, 0.25f * a}, 1, false);
-        }
-        Tip(frameRect, cut.moving ? L"Drag the frame here, then at other moments: it glides between them" : L"Drag the frame to keep what matters in view");
-        if (input.pressed && Inside(frameRect, input.mouse)) {
-            frameDrag = true, frameGrab = input.mouse;
+    D2D1_POINT_2F turn = {mid.x, r.top - kTurnGap}, grow = {r.right, r.bottom};
+    bool onTurn = frameKind == 3 || (!frameKind && Close(ms, turn, kHandleHit)), onGrow = frameKind == 2 || (!frameKind && Close(ms, grow, kHandleHit));
+    c.Line({mid.x, r.top}, turn, Color{1, 1, 1, 0.7f * a}, 1.5f);
+    c.Dot(turn, kTurnR + (onTurn ? 2.0f : 0.0f), Color{1, 1, 1, a}); // turns it
+    c.Dot(turn, kTurnR - 2.5f, t.accent.Alpha(a));
+    D2D1_RECT_F grip = Rect(grow.x - kGrip / 2, grow.y - kGrip / 2, kGrip, kGrip); // sizes it
+    c.Fill(Inset(grip, onGrow ? -2.0f : 0.0f, onGrow ? -2.0f : 0.0f), 4, Color{1, 1, 1, a});
+    c.Fill(Inset(grip, 3, 3), 2, t.accent.Alpha(a));
+    Tip(Rect(turn.x - kHandleHit, turn.y - kHandleHit, 2 * kHandleHit, 2 * kHandleHit), L"Drag to turn the picture. It settles on straight angles");
+    Tip(Rect(grow.x - kHandleHit, grow.y - kHandleHit, 2 * kHandleHit, 2 * kHandleHit), L"Drag to make the picture bigger or smaller");
+    if (!onTurn && !onGrow) Tip(r, L"Drag to move the picture. Scroll to resize it, Shift+scroll to turn it");
+    if (input.pressed) {
+        if (Close(ms, turn, kHandleHit)) {
+            frameKind = 3, grabAngle = cut.angle, grabTurn = std::atan2(ms.y - mid.y, ms.x - mid.x);
+        } else if (Close(ms, grow, kHandleHit)) {
+            frameKind = 2, grabZoom = cut.zoom, grabDist = (std::max)(std::hypot(ms.x - mid.x, ms.y - mid.y), 1.0f);
+        } else if (Inside(r, ms)) {
+            frameKind = 1, frameGrab = ms;
             clipedit::FrameAt(cut, at, grabX, grabY);
             if (cut.moving && engine && !engine->IsPaused()) engine->Pause(); // a spot is set at a moment: the clip holds still for it
         }
-        if (frameDrag) {
-            if (input.down) {
-                float hx = fw / vw / 2, hy = fh / vh / 2; // the middle can't go where the frame would leave the picture
-                float nx = (std::clamp)(grabX + (input.mouse.x - frameGrab.x) / w, hx, 1 - hx), ny = (std::clamp)(grabY + (input.mouse.y - frameGrab.y) / h, hy, 1 - hy);
+    }
+    if (frameKind) {
+        if (input.down) {
+            if (frameKind == 1) { // the hand's move, in the frame's pixels, back into the picture's: the picture follows the hand
+                float du = (ms.x - frameGrab.x) / k, dv = (ms.y - frameGrab.y) / k;
+                float nx = (std::clamp)(grabX - (m[0] * du + m[1] * dv) / vw, 0.0f, 1.0f), ny = (std::clamp)(grabY - (m[3] * du + m[4] * dv) / vh, 0.0f, 1.0f);
                 if (cut.moving) clipedit::SetSpot(cut, at, nx, ny);
                 else cut.frameX = nx, cut.frameY = ny;
-                ui.Wake();
+            } else if (frameKind == 2) {
+                cut.zoom = (std::clamp)(grabZoom * std::hypot(ms.x - mid.x, ms.y - mid.y) / grabDist, clipedit::kMinZoom, clipedit::kMaxZoom);
             } else {
-                frameDrag = false;
-                Commit();
+                float deg = Wrap(grabAngle + (std::atan2(ms.y - mid.y, ms.x - mid.x) - grabTurn) * kDegPerRad);
+                float straight = std::round(deg / kSnapEvery) * kSnapEvery;
+                cut.angle = std::fabs(deg - straight) < kSnapDeg ? Wrap(straight) : deg;
             }
+            ui.Wake();
+        } else {
+            frameKind = 0;
+            Commit();
         }
-        return; // the picture is for framing here: no click-to-play under the hand
+    }
+    if (!frameKind && Inside(Inset(r, -kHandleHit, -kHandleHit), ms) && input.wheel != 0) {
+        if (GetKeyState(VK_SHIFT) < 0) cut.angle = Wrap(cut.angle + input.wheel * kWheelTurn);
+        else cut.zoom = (std::clamp)(cut.zoom * std::pow(kWheelGrow, input.wheel), clipedit::kMinZoom, clipedit::kMaxZoom);
+        input.wheel = 0;
+        Commit();
+    }
+}
+
+void ClipStudio::DrawVideo(const Theme& t, const D2D1_RECT_F& box, float a) {
+    Canvas& c = *canvas;
+    int ow = (int)vw, oh = (int)vh;
+    if (vw && vh) clipedit::OutSize(cut.shape, (int)vw, (int)vh, ow, oh);
+    double oa = vw && vh ? (double)ow / oh : 16.0 / 9;
+    bool framing = Framing() && vw && vh;
+    float room = framing ? kFramingRoom : 1; // framing: space around the frame for what's left out and the handles
+    float w = Width(box) * room, h = (float)(w / oa);
+    if (h > Height(box) * room) h = Height(box) * room, w = (float)(h * oa);
+    D2D1_RECT_F r = Rect((box.left + box.right - w) / 2, (box.top + box.bottom - h) / 2, w, h); // the finished frame
+    videoRect = r;
+    float m[6] = {1, 0, 0, 0, 1, 0};
+    if (vw && vh) clipedit::Place(cut, at, (int)vw, (int)vh, ow, oh, m);
+    float k = vw ? w / ow : 1, det = m[0] * m[4] - m[1] * m[3];
+    D2D1_MATRIX_3X2_F base;
+    ctx->GetTransform(&base);
+    D2D1_MATRIX_3X2_F fwd = D2D1::Matrix3x2F(m[4] / det, -m[3] / det, -m[1] / det, m[0] / det, (m[1] * m[5] - m[4] * m[2]) / det, (m[3] * m[2] - m[0] * m[5]) / det) *
+                            D2D1::Matrix3x2F::Scale(k, k) * D2D1::Matrix3x2F::Translation(r.left, r.top) * base; // the picture's pixels onto the screen, as it's placed in the frame
+    bool shown = videoBmp && haveFrame && std::fabs(det) > 1e-12f;
+    auto picture = [&](float opacity) {
+        ctx->SetTransform(fwd);
+        ctx->DrawBitmap(videoBmp.Get(), D2D1::RectF(0, 0, (float)vw, (float)vh), opacity, D2D1_INTERPOLATION_MODE_LINEAR);
+        ctx->SetTransform(base);
+    };
+    if (framing && shown) picture(kGhost * a); // what falls outside the frame, faintly: what moving it would bring in
+    c.Fill(r, kVideoR, Color{0, 0, 0, a});
+    if (shown) { // the picture as it'll be saved, inside the frame's rounded corners
+        ComPtr<ID2D1RoundedRectangleGeometry> corners;
+        if (SUCCEEDED(gfx::D2D()->CreateRoundedRectangleGeometry(D2D1::RoundedRect(r, kVideoR, kVideoR), &corners))) {
+            ctx->PushLayer(D2D1::LayerParameters1(r, corners.Get()), nullptr);
+            picture(a);
+            ctx->PopLayer();
+        }
+    }
+    if (framing) {
+        DrawFraming(t, r, m, k, a);
+        return; // the picture is for placing here: no click-to-play under the hand
     }
     Ui::Hit h2 = ui.Button(Ui::Id("cs.video"), r);
     ui.Name(playing ? L"Pause" : L"Play");
@@ -989,7 +1028,7 @@ void ClipStudio::Timeline(const Theme& t, const D2D1_RECT_F& bar) {
         if (i > 0) c.Fill(Rect(pa - 1, bar.top, 2, h), 0, Color{1, 1, 1, 0.9f}); // where it was split
         if ((int)i == here && cut.pieces.size() > 1) c.Stroke(Inset(pr, 1, 1), 3, t.accentHi.Alpha(0.9f), 1.5f); // the part the speed panel changes
     }
-    if (cut.moving && clipedit::Cropping(cut)) { // the moving frame's spots: a click jumps to one
+    if (cut.moving) { // the moving frame's spots: a click jumps to one
         for (size_t i = 0; i < cut.spots.size(); ++i) {
             float sx = xOf(cut.spots[i].at);
             if (sx < bar.left - 1 || sx > bar.right + 1) continue;
@@ -1184,19 +1223,13 @@ void ClipStudio::Frame(const Theme& t) {
     lastFrame = now;
     {
         std::lock_guard<std::mutex> lock(work->mu);
-        if (work->stripReady) { // the timeline's pictures, made into bitmaps here on the ui thread
-            work->stripReady = false;
-            strip.clear();
-            for (const auto& pic : work->strip) {
-                ComPtr<ID2D1Bitmap> bmp;
-                if (!pic.px.empty()) {
-                    D2D1_BITMAP_PROPERTIES bp = D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-                    ctx->CreateBitmap({pic.w, pic.h}, pic.px.data(), pic.w * 4, bp, &bmp);
-                }
-                strip.push_back(bmp);
-            }
-            work->strip.clear();
+        for (auto& [slot, pic] : work->strip) { // the timeline's pictures as they come, made into bitmaps here on the ui thread
+            if (slot >= strip.size() || pic.px.empty()) continue;
+            D2D1_BITMAP_PROPERTIES bp = D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+            ComPtr<ID2D1Bitmap> bmp;
+            if (SUCCEEDED(ctx->CreateBitmap({pic.w, pic.h}, pic.px.data(), pic.w * 4, bp, &bmp))) strip[slot] = bmp;
         }
+        work->strip.clear();
     }
     TakeFrame();
     if (engine) {
@@ -1241,7 +1274,7 @@ void ClipStudio::Frame(const Theme& t) {
     float stageBottom = H - kBarBottom - kBarH - 28;
     D2D1_RECT_F panel = {W - kSide - kPanelW, kTopH + 16, W - kSide, stageBottom};
     D2D1_RECT_F stage = {kSide, kTopH + 16, panel.left - kPanelGap, stageBottom};
-    DrawVideo(stage, a);
+    DrawVideo(t, stage, a);
     DrawTop(t, a);
     DrawPanel(t, panel, a);
     DrawBar(t, a);
@@ -1255,6 +1288,6 @@ void ClipStudio::Frame(const Theme& t) {
     input.wheel = 0;
     if (poll > 0) --poll;
     bool saying = !said.empty() && GetTickCount64() - saidAt < kSaidMs;
-    dirty = ui.Busy() || ui.Captured() || dragging || frameDrag || poll > 0 || naming || saying || busy || mixDue > 0 || (take && take->Live()); // otherwise it sleeps until a key, the mouse or the engine wakes it
+    dirty = ui.Busy() || ui.Captured() || dragging || frameKind || poll > 0 || naming || saying || busy || mixDue > 0 || (take && take->Live()); // otherwise it sleeps until a key, the mouse or the engine wakes it
     if (FAILED(hr) || FAILED(swap->Present(1, 0))) done = true; // device lost: leave, the clip is safe on disk
 }

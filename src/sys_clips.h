@@ -2,6 +2,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,7 @@ std::wstring FolderOf(const std::wstring& game); // root\<game>
 std::vector<Clip> List(const std::wstring& game, size_t max); // newest first; game empty: every game's
 bool Thumb(const std::wstring& path, UINT px, Picture& out); // windows' own thumbnail of the clip
 bool Frame(const std::wstring& path, double at, UINT maxW, Picture& out); // the picture at that second, decoded
+void Frames(const std::wstring& path, const std::vector<double>& at, UINT maxW, const std::function<void(size_t, Picture&&)>& got); // several, from one opening, each handed over as soon as it's made
 double Length(const std::wstring& path); // seconds, read from the file
 bool Trim(const std::wstring& path, double from, double to, const std::wstring& out, std::wstring& why); // copies that stretch, nothing encoded again: it starts on the keyframe at or before from
 bool Rename(const std::wstring& path, const std::wstring& name, std::wstring& newPath, std::wstring& why);

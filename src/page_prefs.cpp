@@ -498,11 +498,10 @@ void Hud(PageCtx& p, const D2D1_RECT_F& r, bool live) { // astraeus' own volume 
     D2D1_RECT_F row = Rect(in.left, in.top, Width(in), 2 * kNoteH);
     Ui::Hit h = live ? ui.Button(Ui::Id("set.hud", 1), {row.left, row.top, row.right - 52, row.bottom}) : Ui::Hit{}; // the words flip it too
     if (live) ui.NoStop();
-    c.Text(L"Replace Windows volume popup", Rect(row.left, row.top, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, t.text); // two lines: the whole name, nothing cut
-    c.Text(L"(experimental)", Rect(row.left, row.top + kNoteH, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, t.textDim);
+    c.Text(L"Replace Windows volume popup", Rect(row.left, row.top + kNoteH / 2, Width(row) - 56, kNoteH), Weight::Regular, 11.5f, t.text); // level with the switch
     bool hudFlip = w::Switch(ui, t, Ui::Id("set.hud"), {row.right - 24, (row.top + row.bottom) / 2}, m.hud != 0, live);
     preview::Want(ui, preview::kHud, live && Inside(row, ui.In().mouse));
-    if (live) ui.Name(L"Replace Windows volume popup, experimental");
+    if (live) ui.Name(L"Replace Windows volume popup");
     if (hudFlip || h.clicked) Flip(m, m.hud, L"Hud");
     Note(c, t, in, row.bottom + 4, L"Takes the volume keys from Windows");
     Note(c, t, in, row.bottom + 20, L"Brightness keeps its own popup");
@@ -659,6 +658,7 @@ constexpr float kAdvRow = 150; // its cards: room for a slider and its notes
 constexpr float kCodeRow = 76;
 bool advOpen = false; // folded each launch: the everyday settings come first
 constexpr float kUpdBtnH = 30, kUpdBtnW = 170; // the update card under advanced, and its button
+constexpr float kNotesBtnW = 112; // what's new, at the card's other end
 constexpr float kUpdAutoH = 24, kUpdAutoGap = 4; // the small automatic switch beneath the button
 constexpr float kUpdH = kBoxChrome + kUpdBtnH + kUpdAutoGap + kUpdAutoH;
 
@@ -678,7 +678,8 @@ void Updates(PageCtx& p, const D2D1_RECT_F& r, bool live) { // the version, and 
     if (busy) ui.KeepAlive(); // the words follow the check as it goes
     std::wstring state = tray::UpdateText(), note = L"v" APP_VER_W;
     if (state != L"Check for updates") note += L"  ·  " + state; // idle: just the version
-    c.Text(note, Rect(in.left + kUpdBtnW + 14, in.top, Width(in) - kUpdBtnW - 14, kUpdBtnH), Weight::Regular, 11.5f, t.textDim);
+    if (Act(ui, t, Ui::Id("set.notes"), Rect(in.right - kNotesBtnW, in.top, kNotesBtnW, kUpdBtnH), L"What's new", false, false, live)) m.notesAsk = true; // this version's notes, over the whole panel
+    c.Text(note, Rect(in.left + kUpdBtnW + 14, in.top, Width(in) - kUpdBtnW - kNotesBtnW - 28, kUpdBtnH), Weight::Regular, 11.5f, t.textDim);
     if (SwitchRow(ui, t, "set.update.auto", Rect(in.left, in.top + kUpdBtnH + kUpdAutoGap, kUpdBtnW, kUpdAutoH), L"Automatic updates", m.autoUpdate != 0, live)) Flip(m, m.autoUpdate, L"AutoUpdate"); // off: only the button above checks
 }
 
@@ -738,6 +739,36 @@ float Advanced(PageCtx& p, const D2D1_RECT_F& area, bool live, int cols) { // po
 
 }
 
+namespace {
+constexpr float kLiveGap = 16; // between the switches when they sit side by side
+
+float LivePillsH(bool tall) { return kBoxChrome + (tall ? 3 : 1) * kRowH; }
+
+void LivePills(PageCtx& p, const D2D1_RECT_F& r, bool live, bool tall) { // pills that follow what's happening: a meeting, the mic and camera, a download
+    Model& m = p.m;
+    D2D1_RECT_F in = Box(p.ui.C(), p.shell, r, L"Live pills");
+    struct Row {
+        const char* id;
+        const wchar_t* label;
+        int* field;
+        const wchar_t* key;
+    };
+    const Row rows[] = {{"set.live.meet", L"Meeting reminders", &m.meetPill, L"MeetPill"},
+                        {"set.live.inuse", L"Mic and camera in use", &m.inusePill, L"InUsePill"},
+                        {"set.live.dl", L"Downloads as they come", &m.downloadPill, L"DownloadPill"}};
+    float cw = (Width(in) - 2 * kLiveGap) / 3;
+    for (int i = 0; i < 3; ++i) {
+        D2D1_RECT_F row = tall ? Rect(in.left, in.top + i * kRowH, Width(in), kRowH) : Rect(in.left + i * (cw + kLiveGap), in.top, cw, kRowH);
+        if (SwitchRow(p.ui, p.shell, rows[i].id, row, rows[i].label, *rows[i].field != 0, live)) {
+            Flip(m, *rows[i].field, rows[i].key);
+            m.SyncLive(); // a watcher starts or stops with its switch
+        }
+    }
+}
+}
+
+void UnfoldAdvanced() { advOpen = true; }
+
 float DrawPrefs(PageCtx& p, const D2D1_RECT_F& area, bool live, bool tall) {
     int cols = tall ? 1 : 2;
     float cw = (Width(area) - (cols - 1) * kPrefGap) / cols, y = area.top;
@@ -753,6 +784,8 @@ float DrawPrefs(PageCtx& p, const D2D1_RECT_F& area, bool live, bool tall) {
     n = 0;
     Edited(p, Rect(area.left, y, Width(area), kEditedCardH));
     y += kEditedCardH + kPrefGap;
+    LivePills(p, Rect(area.left, y, Width(area), LivePillsH(tall)), live, tall);
+    y += LivePillsH(tall) + kPrefGap;
     Layout(p, next(), live); // how the panel shows, and the dashboard beside it
     Dashboard(p, next(), live);
     Media(p, next(), live);

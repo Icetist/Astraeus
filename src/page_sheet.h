@@ -49,6 +49,13 @@ constexpr float kPickH = 60, kPickGap = 8; // a card in an editor's gallery
 bool PickCard(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& card, int icon, const wchar_t* name, const wchar_t* about, bool on); // icon, name, a line about it, and a tick when it's on; true when tapped
 Color CardFill(const Theme& t); // what a settings card is filled with
 D2D1_RECT_F Box(Canvas& c, const Theme& t, const D2D1_RECT_F& r, const wchar_t* title); // a settings card, returns its inner area
+struct BoxSeen {
+    const wchar_t* title;
+    D2D1_RECT_F r;
+};
+extern std::vector<BoxSeen>* boxesSeen; // set while settings wants to know where its cards landed
+extern const wchar_t* glowTitle; // a card search led to, lit for a moment
+extern float glowA;
 int Segmented(Ui& ui, const Theme& t, const char* id, const D2D1_RECT_F& r, const wchar_t* const* labels, int n, int cur, bool live); // picked index, -1 none
 constexpr float kPrefRow = 132, kPrefGap = 10; // the newer settings cards
 

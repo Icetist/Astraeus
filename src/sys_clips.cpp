@@ -145,23 +145,62 @@ bool Thumb(const std::wstring& path, UINT px, Picture& out) {
     return ok;
 }
 
-bool Frame(const std::wstring& path, double at, UINT maxW, Picture& out) {
-    StartMf();
+namespace {
+
+ComPtr<IMFSourceReader> RgbReader(const std::wstring& path, UINT maxW, UINT32& w, UINT32& h) { // decoded and turned into rgb for us, made small by windows when it can
     ComPtr<IMFAttributes> attr;
     MFCreateAttributes(&attr, 1);
-    attr->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE); // decoded and turned into rgb for us
+    attr->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
     ComPtr<IMFSourceReader> r;
-    if (FAILED(MFCreateSourceReaderFromURL(path.c_str(), attr.Get(), &r))) return false;
+    if (FAILED(MFCreateSourceReaderFromURL(path.c_str(), attr.Get(), &r))) return nullptr;
     r->SetStreamSelection((DWORD)MF_SOURCE_READER_ALL_STREAMS, FALSE);
     r->SetStreamSelection((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);
-    ComPtr<IMFMediaType> want;
+    ComPtr<IMFMediaType> native, want, got;
+    UINT32 nw = 0, nh = 0;
+    if (SUCCEEDED(r->GetNativeMediaType((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, &native))) MFGetAttributeSize(native.Get(), MF_MT_FRAME_SIZE, &nw, &nh);
     MFCreateMediaType(&want);
     want->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
     want->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
-    if (FAILED(r->SetCurrentMediaType((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, want.Get()))) return false;
-    ComPtr<IMFMediaType> got;
+    bool scaled = false;
+    if (nw && nh && nw > maxW) { // scaled as it's converted: far less to copy and read
+        UINT32 sw = maxW & ~1u, sh = (UINT32)((double)nh * sw / nw) & ~1u;
+        MFSetAttributeSize(want.Get(), MF_MT_FRAME_SIZE, sw, (std::max)(sh, 2u));
+        scaled = SUCCEEDED(r->SetCurrentMediaType((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, want.Get()));
+        if (!scaled) want->DeleteItem(MF_MT_FRAME_SIZE);
+    }
+    if (!scaled && FAILED(r->SetCurrentMediaType((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, want.Get()))) return nullptr;
+    if (FAILED(r->GetCurrentMediaType((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, &got)) || FAILED(MFGetAttributeSize(got.Get(), MF_MT_FRAME_SIZE, &w, &h)) || !w || !h) return nullptr;
+    return r;
+}
+
+bool Grab(IMFSourceReader* r, UINT32 w, UINT32 h, double at, UINT maxW, Picture& out);
+
+}
+
+void Frames(const std::wstring& path, const std::vector<double>& at, UINT maxW, const std::function<void(size_t, Picture&&)>& got) {
+    StartMf();
     UINT32 w = 0, h = 0;
-    if (FAILED(r->GetCurrentMediaType((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM, &got)) || FAILED(MFGetAttributeSize(got.Get(), MF_MT_FRAME_SIZE, &w, &h)) || !w || !h) return false;
+    ComPtr<IMFSourceReader> r = RgbReader(path, maxW, w, h);
+    for (size_t i = 0; i < at.size(); ++i) {
+        Picture p;
+        if (!r || !Grab(r.Get(), w, h, at[i], maxW, p)) { // a reader that lost its way: a fresh one, once, for this picture
+            r = RgbReader(path, maxW, w, h);
+            if (!r || !Grab(r.Get(), w, h, at[i], maxW, p)) continue;
+        }
+        got(i, std::move(p));
+    }
+}
+
+bool Frame(const std::wstring& path, double at, UINT maxW, Picture& out) {
+    StartMf();
+    UINT32 w = 0, h = 0;
+    ComPtr<IMFSourceReader> r = RgbReader(path, maxW, w, h);
+    return r && Grab(r.Get(), w, h, at, maxW, out);
+}
+
+namespace {
+
+bool Grab(IMFSourceReader* r, UINT32 w, UINT32 h, double at, UINT maxW, Picture& out) {
     LONGLONG target = (LONGLONG)((std::max)(at, 0.0) * kSec);
     PROPVARIANT pos;
     InitPropVariantFromInt64(target, &pos);
@@ -200,6 +239,8 @@ bool Frame(const std::wstring& path, double at, UINT maxW, Picture& out) {
     if (locked2d) b2->Unlock2D();
     else buf->Unlock();
     return true;
+}
+
 }
 
 double Length(const std::wstring& path) {

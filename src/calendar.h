@@ -14,6 +14,7 @@ struct Event {
     int64_t start = 0, end = 0; // unix seconds; an all-day event spans local midnight to midnight
     bool allDay = false;
     std::wstring title, where;
+    std::wstring link; // a meeting to join: teams, zoom, meet and the like, found in the event; empty for anything else
 };
 
 struct Link {
@@ -37,6 +38,7 @@ public:
     std::vector<Link> Links() const;
     std::vector<Event> Day(int y, int m, int d) const; // that local day's events, all-day first, then by start
     bool HasEvents(int y, int m, int d) const;
+    std::vector<Event> Upcoming(int64_t from, int64_t to) const; // timed events starting in [from, to), soonest first
     bool Add(const std::wstring& url, HWND notify, UINT msg); // a link the user copied: saved, encrypted, and fetched
     void Remove(size_t i, HWND notify, UINT msg);
     static bool LooksLikeCalendar(const std::wstring& text, std::wstring* url = nullptr); // a calendar link, cleaned up
