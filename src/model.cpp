@@ -2,6 +2,8 @@
 
 #include <iphlpapi.h>
 #include <icmpapi.h>
+#include "cues.h"
+#include "sys_clips.h"
 #include "faces.h"
 #include "feeds.h"
 #include "glyphs.h"
@@ -11,6 +13,7 @@
 #include "picker.h"
 #include "version.h"
 #include <shellapi.h>
+#include <shlobj.h>
 
 #include <algorithm>
 #include <climits>
@@ -65,7 +68,7 @@ std::vector<std::wstring> SplitLines(const std::wstring& s) {
     return out;
 }
 
-const wchar_t* const kPageKeys[Model::kPageIds] = {L"home", L"media", L"system", L"network", L"tools", L"shelf", L"widgets"};
+const wchar_t* const kPageKeys[Model::kPageIds] = {L"home", L"media", L"system", L"network", L"tools", L"shelf", L"widgets", L"games"};
 const wchar_t* const kTileKeys[Model::kToolTiles] = {L"screenshot", L"color", L"awake", L"notifications", L"dnd", L"saver", L"airplane", L"settings", L"workspaces", L"language", L"bin", L"updates"};
 constexpr wchar_t kNoneVal[] = L"none"; // every tile taken off: an empty text would read as never set
 
@@ -167,6 +170,40 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
     a11yKeys = flag(L"A11yKeys", 1);
     a11yReader = flag(L"A11yReader", 1);
     autoUpdate = flag(L"AutoUpdate", 1);
+    gameDetect = flag(L"GameDetect", 1);
+    gamePill = flag(L"GamePill", 1);
+    gameSummary = flag(L"GameSummary", 1);
+    gameQuiet = flag(L"GameQuiet", 0);
+    cueStyle = (std::clamp)(sys::ReadNum(L"CueStyle", 0), 0, sys::cues::kStyles - 1);
+    cueVol = (std::clamp)(sys::ReadNum(L"CueVolume", sys::cues::kVolDef), sys::cues::kVolMin, sys::cues::kVolMax);
+    cueOn = flag(L"CueGameOn", 1);
+    cueOff = flag(L"CueGameOff", 1);
+    cueAlways = flag(L"CueAlways", 1);
+    gameSort = (std::clamp)(sys::ReadNum(L"GameSort", GameLog::kByName), (int)GameLog::kByName, (int)GameLog::kByTime);
+    clipOn = flag(L"ClipOn", 0);
+    clipSecs = sys::ReadNum(L"ClipSeconds", 30);
+    if (std::find(std::begin(kClipSecs), std::end(kClipSecs), clipSecs) == std::end(kClipSecs)) clipSecs = 30;
+    clipQuality = (std::clamp)(sys::ReadNum(L"ClipQuality", 1), 0, 2);
+    clipAudio = (std::clamp)(sys::ReadNum(L"ClipAudio", 1), 0, 2);
+    clipCursor = flag(L"ClipCursor", 0);
+    clipKey = sys::ReadNum(L"ClipKey", clipKey) & 0x7FF;
+    clipKeyPause = sys::ReadNum(L"ClipKeyPause", 0) & 0x7FF;
+    clipKeyLong = sys::ReadNum(L"ClipKeyLong", 0) & 0x7FF;
+    clipAfter = sys::ReadNum(L"ClipAfter", 0);
+    if (std::find(std::begin(kClipAfters), std::end(kClipAfters), clipAfter) == std::end(kClipAfters)) clipAfter = 0;
+    clipFps = sys::ReadNum(L"ClipFps", 60) == 30 ? 30 : 60;
+    clipHeight = sys::ReadNum(L"ClipHeight", 0);
+    if (std::find(std::begin(kClipHeights), std::end(kClipHeights), clipHeight) == std::end(kClipHeights)) clipHeight = 0;
+    clipMic = flag(L"ClipMic", 0);
+    {
+        std::wstring off = sys::ReadText(L"ClipsOff");
+        for (size_t at = 0; at <= off.size();) {
+            size_t end = off.find(L'\n', at);
+            if (end == std::wstring::npos) end = off.size();
+            if (end > at) clipsOff.insert(off.substr(at, end - at));
+            at = end + 1;
+        }
+    }
     ReadAccess();
     lyricScale = (std::clamp)(sys::ReadNum(L"LyricScale", kLyricDef), kLyricMin, kLyricMax);
     bgOpacity = (std::clamp)(sys::ReadNum(L"BgOpacity", kMaxOpacity), kMinOpacity, kMaxOpacity);
@@ -209,7 +246,7 @@ Model::Model(const Config& c) : cfg(c), portable(sys::IsPortable()), look(sys::R
             size_t end = saved.find(L',', at);
             if (end == std::wstring::npos) end = saved.size();
             int v = _wtoi(saved.substr(at, end - at).c_str());
-            if (((v > kWNone && v < kWidgets) || (v >= kDClock && v <= kDLyrics)) && std::find(out.begin(), out.end(), v) == out.end()) out.push_back(v);
+            if (((v > kWNone && v < kWidgets) || (v >= kDClock && v <= kDRecord)) && std::find(out.begin(), out.end(), v) == out.end()) out.push_back(v);
             at = end + 1;
         }
     };
@@ -288,6 +325,7 @@ Model::~Model() {
 
 void Model::Start(HWND hwnd) {
     notify = hwnd;
+    games.Start(hwnd, WM_APP_GAMES);
     share.Notify(hwnd, WM_APP_SHARE);
     PollShared(); // halobar may already be handing its pills over, and its theme may be ours
     media.Start(hwnd, WM_APP_MEDIA);
@@ -372,22 +410,25 @@ void Model::Worker() {
     THREAD_POWER_THROTTLING_STATE eco{THREAD_POWER_THROTTLING_CURRENT_VERSION, THREAD_POWER_THROTTLING_EXECUTION_SPEED, THREAD_POWER_THROTTLING_EXECUTION_SPEED};
     SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &eco, sizeof(eco)); // walking the process list runs on efficient cores and low clocks
     std::unique_lock<std::mutex> lk(lock);
+    bool slowCores = true;
+    auto next = std::chrono::steady_clock::now();
     while (!quit) {
         wake.wait(lk, [this] { return quit || (pollOn && (wantProcs || wantPing)); }); // asleep unless the system page (gauges, processes) or the network page (latency) shows
         if (quit) break;
         bool procsNow = wantProcs, pingNow = wantPing, listNow = wantList; // snapshot, flags may change while unlocked
         lk.unlock(); // slow sampling runs without lock
-        if (listNow) { // the list first, and sent at once: the gpu counter below can take a while
-            constexpr ULONGLONG kStaleMs = 3000, kPrimeMs = 250; // an old baseline, or none: a quick one, so the shares are real from the start
+        if (slowCores == listNow) { // a list on screen is being watched: full speed for it; otherwise the efficient cores
+            slowCores = !listNow;
+            THREAD_POWER_THROTTLING_STATE state{THREAD_POWER_THROTTLING_CURRENT_VERSION, THREAD_POWER_THROTTLING_EXECUTION_SPEED, slowCores ? (ULONG)THREAD_POWER_THROTTLING_EXECUTION_SPEED : 0u};
+            SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &state, sizeof(state));
+        }
+        std::vector<sys::ProcRow> top;
+        if (listNow) {
+            constexpr ULONGLONG kStaleMs = 3000, kPrimeMs = 120; // an old baseline, or none: a quick one, so the shares are real from the start
             ULONGLONG at = GetTickCount64();
             if (at - listAt > kStaleMs) procSrc.Top(6), Sleep((DWORD)kPrimeMs);
             listAt = GetTickCount64();
-            std::vector<sys::ProcRow> top = procSrc.Top(6); // top 6 procs, only where a list shows them
-            lk.lock();
-            newProcs = std::move(top);
-            ready = true;
-            lk.unlock();
-            PostMessageW(notify, WM_APP_STATS, 0, 0);
+            top = procSrc.Top(6); // top 6 procs, only where a list shows them
         }
         sys::Stats s = procsNow ? statSrc.Sample() : sys::Stats{}; // the gpu counter is costly: only where its gauge is
         float ping = -2;
@@ -403,9 +444,14 @@ void Model::Worker() {
         lk.lock();
         newStats = s;
         newPing = ping;
+        if (listNow) newProcs = std::move(top);
         ready = true;
-        PostMessageW(notify, WM_APP_STATS, 0, 0); // ui thread pulls via OnStats
-        wake.wait_for(lk, std::chrono::seconds(1), [this, procsNow, listNow] { return quit || (wantProcs && !procsNow) || (wantList && !listNow); }); // 1s cadence, early wake if procs or the list newly wanted
+        PostMessageW(notify, WM_APP_STATS, 0, 0); // once a beat: the gauges and the list move together; ui thread pulls via OnStats
+        auto now = std::chrono::steady_clock::now();
+        next += std::chrono::seconds(1);
+        if (next < now) next = now + std::chrono::seconds(1); // fell behind, or slept: a fresh beat, never a burst to catch up
+        wake.wait_until(lk, next, [this, procsNow, listNow] { return quit || (wantProcs && !procsNow) || (wantList && !listNow); }); // a steady 1s beat, however long the sampling took; early wake if procs or the list newly wanted
+        if (!quit && ((wantProcs && !procsNow) || (wantList && !listNow))) next = std::chrono::steady_clock::now(); // woken early: the beat starts again from here
     }
 }
 
@@ -432,6 +478,12 @@ void Model::Tick() {
     }
     DeskTick(1, false); // apps come and go; groups keep their levels
     SyncExtras();
+    if (int ev = games.Tick(clipOn != 0); ev != GameLog::kNone) { // games are only watched for while they're recorded: off, it costs nothing
+        OnGame(ev);
+        PostMessageW(notify, WM_APP_GAME, (WPARAM)ev, 0); // the drawer drops its pill
+    }
+    if (quietByGame && !games.Playing()) SetQuiet(false), quietByGame = false; // however the session ended, even one too short to keep
+    ClipSync();
     if ((fullLyrics || mediaLyrics || PillLyrics()) && hasTrack && track.music && track.duration > 0) // the song's lyrics, fetched while it plays: ready long before fullscreen opens; a cache check once known
         lyrics.Want(track.title, track.artist, track.album, track.duration / 1e7);
     if (focusOn && !focusPaused && GetTickCount64() >= focusEnd) { // a block ends: focus hands over to a break, a break to the next round
@@ -692,17 +744,17 @@ void Model::SetTiles(const std::vector<int>& order) {
 }
 
 const wchar_t* Model::PageName(int id) {
-    static const wchar_t* const kNames[kPageIds] = {L"Home", L"Media", L"System", L"Network", L"Tools", L"Shelf", L"Widgets"};
+    static const wchar_t* const kNames[kPageIds] = {L"Home", L"Media", L"System", L"Network", L"Tools", L"Shelf", L"Widgets", L"Games"};
     return kNames[(std::clamp)(id, 0, kPageIds - 1)];
 }
 
 const wchar_t* Model::PageAbout(int id) {
-    static const wchar_t* const kAbout[kPageIds] = {L"Your overview at a glance", L"What's playing and its controls", L"CPU, memory and what's running", L"Speed and what's connected", L"Power, timers and quick tiles", L"Files kept close at hand", L"Your board of widgets"};
+    static const wchar_t* const kAbout[kPageIds] = {L"Your overview at a glance", L"What's playing and its controls", L"CPU, memory and what's running", L"Speed and what's connected", L"Power, timers and quick tiles", L"Files kept close at hand", L"Your board of widgets", L"What you play and for how long"};
     return kAbout[(std::clamp)(id, 0, kPageIds - 1)];
 }
 
 int Model::PageGlyph(int id) {
-    static const int kGlyphs[kPageIds] = {glyph::Overview, glyph::Music, glyph::System, glyph::Network, glyph::Tools, glyph::Shelf, glyph::Dashboard};
+    static const int kGlyphs[kPageIds] = {glyph::Overview, glyph::Music, glyph::System, glyph::Network, glyph::Tools, glyph::Shelf, glyph::Dashboard, glyph::Pad};
     return kGlyphs[(std::clamp)(id, 0, kPageIds - 1)];
 }
 
@@ -1038,6 +1090,23 @@ void Model::CommitField() {
         fieldEdit.clear();
         return;
     }
+    if (field == kFieldClipName) { // a clip's new name: the file is renamed now
+        std::wstring renamed, why;
+        if (!fieldEdit.empty() && sys::clips::Rename(clipRenaming, fieldEdit, renamed, why)) {
+            if (lastClip == clipRenaming) lastClip = renamed;
+            clipRenaming = renamed;
+            ++clipsEpoch;
+        }
+        field = kFieldNone;
+        fieldEdit.clear();
+        return;
+    }
+    if (field == kFieldGameName) {
+        games.Rename(gameNaming, fieldEdit);
+        field = kFieldNone;
+        fieldEdit.clear(), gameNaming.clear();
+        return;
+    }
     std::wstring s = fieldEdit;
     size_t a = s.find_first_not_of(L" \t"), b = s.find_last_not_of(L" \t");
     s = a == std::wstring::npos ? L"" : s.substr(a, b - a + 1);
@@ -1104,6 +1173,85 @@ void Model::SetNotifyPills(bool on) {
 }
 
 void Model::SetArtBack(bool on) { SetPref(artBack, kArtBackVal, on ? 1 : 0); } // halobar picks it up on its next look
+
+void Model::OnGame(int event) {
+    if (event == GameLog::kStarted) sys::cues::Warm(cueStyle, cueVol); // the clip and game sounds ready before they're wanted
+    if (event == GameLog::kStarted && gameQuiet && !quiet) SetQuiet(true), quietByGame = true; // left on if it was on already: it's theirs, not the game's
+}
+
+void Model::ClipSync() {
+    static int tried = 0; // the settings a failed start was tried with: not tried again every second
+    static HWND followed = nullptr;
+    int sig = clipOn | clipSecs << 1 | clipQuality << 9 | clipAudio << 11 | clipCursor << 13 | (clipFps == 30) << 14 | clipMic << 15 | clipHeight << 16 | ((clipKeyLong & 0xFF) != 0) << 28;
+    bool want = clipOn && games.Playing() && games.Window() && !clipsOff.count(games.Now().id);
+    if (!want) {
+        if (clip) ClipKeys(false), clip.reset();
+        clipWhy.clear(), tried = 0, followed = nullptr;
+        return;
+    }
+    static int running = 0; // the settings the recorder runs with
+    static std::wstring recording; // and the game it records: its sound is that game's process
+    if (clip && running != sig) ClipKeys(false), clip.reset(); // a setting changed: it starts again with it
+    if (clip && recording != games.Now().id) ClipKeys(false), clip.reset(), tried = 0; // another game took over: its own picture and sound from here
+    if (clip) {
+        if (games.Window() != followed) followed = games.Window(), clip->Follow(followed); // the starter gave way to the game's own window
+        return;
+    }
+    if (tried == sig) return;
+    tried = running = sig;
+    HWND w = games.Window();
+    DWORD pid = 0;
+    GetWindowThreadProcessId(w, &pid);
+    sys::clip::Options o;
+    o.keepSecs = ClipKeep(), o.quality = clipQuality, o.audio = clipAudio, o.cursor = clipCursor != 0, o.fps = clipFps, o.height = clipHeight, o.mic = clipMic != 0;
+    clipWhy.clear();
+    clip = sys::clip::Recorder::Start(w, pid, o, clipWhy);
+    followed = w;
+    recording = games.Now().id;
+    if (clip) ClipKeys(true);
+}
+
+void Model::ClipKeys(bool on) {
+    UnregisterHotKey(notify, kClipHotId);
+    UnregisterHotKey(notify, kClipPauseId);
+    clipKeyClash = false;
+    if (!on) return;
+    auto hold = [&](int id, int combo) {
+        if (!(combo & 0xFF)) return;
+        UINT mods = MOD_NOREPEAT | (combo & 0x100 ? MOD_CONTROL : 0) | (combo & 0x200 ? MOD_ALT : 0) | (combo & 0x400 ? MOD_SHIFT : 0);
+        if (!RegisterHotKey(notify, id, mods, combo & 0xFF)) clipKeyClash = true; // another app holds it: the page says so
+    };
+    hold(kClipHotId, clipKey);
+    hold(kClipPauseId, clipKeyPause);
+    hold(kClipLongId, clipKeyLong);
+}
+
+void Model::ClipOff(const std::wstring& id, bool off) {
+    if (off) clipsOff.insert(id);
+    else clipsOff.erase(id);
+    std::wstring all;
+    for (const auto& g : clipsOff) all += (all.empty() ? L"" : L"\n") + g;
+    sys::SaveText(L"ClipsOff", all);
+    ClipSync();
+}
+
+std::wstring Model::ClipFolder() const { return sys::clips::Root(); }
+
+void Model::ClipSave(bool longer) {
+    if (!clip) return;
+    std::wstring name = sys::clips::SafeName(games.Now().name); // a title can hold what a file name can't
+    std::wstring dir = sys::clips::FolderOf(name); // each game's clips in a folder of its own
+    if (dir.empty()) return;
+    SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
+    time_t t = time(nullptr);
+    tm local{};
+    localtime_s(&local, &t);
+    wchar_t stamp[32];
+    wcsftime(stamp, 32, L" %Y-%m-%d %H-%M-%S", &local);
+    int secs = longer ? ClipKeep() : clipSecs;
+    clip->Save(secs, clipAfter, dir + L"\\" + name + stamp + L".mp4", notify, WM_APP_CLIP);
+    PostMessageW(notify, WM_APP_CLIP, 2, (LPARAM)(secs + clipAfter)); // the sound and the pill now, as the key is pressed; writing the file takes a moment more
+}
 
 void Model::SetQuiet(bool on) {
     SetPref(quiet, kQuietVal, on ? 1 : 0); // halobar sees it within a moment, it watches our key
@@ -1551,6 +1699,7 @@ const wchar_t* Model::DeskItemName(int k) {
     case kWMarket: return L"Markets";
     case kDScore: return L"Score";
     case kDLyrics: return L"Lyrics";
+    case kDRecord: return L"Recording";
     default: return L"";
     }
 }
@@ -1624,6 +1773,15 @@ std::wstring Model::DeskItemText(int k, int& icon) const {
         double wait = -1;
         const sys::LyricLine* line = SungLine(*this, hold, wait);
         return line ? line->text : L"";
+    }
+    case kDRecord: { // the game's recorder, only while a game is played with clips on
+        constexpr ULONGLONG kSavedShowMs = 4000;
+        if (!games.Playing() || !clipOn) return L"";
+        icon = glyph::Pad; // drawn as a dot by the pill
+        if (!clip) return clipWhy.empty() ? L"" : L"Can't record this game";
+        if (clipSavedAt && GetTickCount64() - clipSavedAt < kSavedShowMs) return L"Clip saved";
+        if (clip->Paused()) return L"Paused";
+        return clipSecs < 60 ? L"Recording · last " + std::to_wstring(clipSecs) + L" s" : L"Recording · last " + std::to_wstring(clipSecs / 60) + L" min";
     }
     case kDTimer:
         if (Activity() == kActNone) return L"";

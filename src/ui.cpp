@@ -161,6 +161,13 @@ float Ui::Soft(uint32_t id, float target) {
     return it->second;
 }
 
+float Ui::Live(uint32_t id, float target) {
+    auto it = values.find(id);
+    if (it == values.end()) it = values.emplace(id, 0.0f).first;
+    if (anim::Approach(it->second, target, 9, dt, 0.003f)) animating = true; // every frame the screen has, while it moves
+    return it->second;
+}
+
 float Ui::Env(uint32_t id, float target) {
     auto it = values.find(id);
     if (it == values.end()) it = values.emplace(id, 0.0f).first;
@@ -359,8 +366,8 @@ bool Pill(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, 
     return changed;
 }
 
-void Gauge(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, float radius, float thick, float value) {
-    float v = ui.Soft(id, anim::Clamp01(value));
+void Gauge(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, float radius, float thick, float value, bool live) {
+    float v = live ? ui.Live(id, anim::Clamp01(value)) : ui.Soft(id, anim::Clamp01(value));
     Canvas& cv = ui.C();
     const float start = -kPi / 2; // 12 o'clock
     if (v < 0.002f) { // empty: plain track ring

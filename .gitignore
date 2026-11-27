@@ -5,3 +5,4 @@ build.cmd
 *.exe
 *.log
 *.ini
+src/igdb_keys.h

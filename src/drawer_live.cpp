@@ -148,7 +148,7 @@ void Drawer::RetryHud() { // once a second while the hud is on: speakers that we
 }
 
 void Drawer::ShowHud(int icon, float level, const wchar_t* title) {
-    if (hidden || overFull || stage || dragging) return; // never over a drag in progress; over a fullscreen app, only the pill
+    if (hidden || overFull || stage || studio || dragging) return; // never over a drag in progress; over a fullscreen app, only the pill
     bool showing = peeking && peekLevel >= 0;
     peekIcon = icon;
     peekTitle = title;
@@ -180,7 +180,7 @@ void Drawer::FitSize() { // the panel's size: the ini's, or the compact column's
 }
 
 bool Drawer::WantReserve() const {
-    if (hidden || stage || overFull) return false;
+    if (hidden || stage || studio || overFull) return false;
     return Pinned() || model.pillReserve;
 }
 
@@ -323,7 +323,7 @@ void Drawer::SyncDesk() {
     bool mainFull = every ? fullApp || FullOn(prim) : fullApp; // every screen: the main pill stays on the primary, so only that screen's game counts, not the panel's
     bool mainHide = every ? (cfg.hideFull && !model.pillFull && mainFull) || (BoardOn(prim) && !stage) : hidden;
     bool appsLong = model.deskApps && longHeld && !(deskView && !model.LongPill()); // held over an app: back on a desktop that wears the regular pill, it lets go
-    desk->Want(deskOn && (pillView || appsLong) && !mainHide && !stage && !opened && !peeking && !alarmBanner && !dragging && (!mainFull || model.pillFull), deskMon);
+    desk->Want(deskOn && (pillView || appsLong) && !mainHide && !stage && !studio && !opened && !peeking && !alarmBanner && !dragging && (!mainFull || model.pillFull), deskMon);
     if (model.deskEveryScreen) {
         HWND front = GetForegroundWindow();
         bool editing = desk->Editing();
@@ -340,7 +340,7 @@ void Drawer::SyncDesk() {
             bool appsLongE = model.deskApps && longHeld && !(deskViewE && !model.LongPill());
             bool full = FullOn(em);
             bool hide = (cfg.hideFull && !model.pillFull && full) || (BoardOn(em) && !stage) || editing;
-            p->Want(deskOn && (pillViewE || appsLongE) && !hide && !stage && !opened && !peeking && !alarmBanner && !dragging && (!full || model.pillFull), em);
+            p->Want(deskOn && (pillViewE || appsLongE) && !hide && !stage && !studio && !opened && !peeking && !alarmBanner && !dragging && (!full || model.pillFull), em);
         }
     } else if (!extraDesks.empty()) {
         extraDesks.clear();
@@ -348,13 +348,13 @@ void Drawer::SyncDesk() {
 }
 
 void Drawer::DeskEdit(int from) {
-    if (!desk || desk->Editing() || stage) return;
+    if (!desk || desk->Editing() || stage || studio) return;
     desk->Edit(mon, from);
     SyncHide(); // the panel or the island goes, the editor has the screen
 }
 
 void Drawer::WidgetStudio() {
-    if (!desk || desk->Editing() || stage) return;
+    if (!desk || desk->Editing() || stage || studio) return;
     desk->Studio(mon);
     SyncHide(); // the panel goes, the editor has the screen
 }

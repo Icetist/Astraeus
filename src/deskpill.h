@@ -141,6 +141,9 @@ private:
     void FitWindow(); // resting: just big enough; editing: the whole screen
 
     bool EnsureDev();
+    bool MakeDevice(); // the shared d3d and d2d, and composition if there's none yet
+    bool MakeSwap(); // this window's context, swapchain and buffers on that device
+    bool RenewDev(); // a fresh device under the same composition: the editor's full-screen pools go back with the old one
     void FreeDev();
     bool SizeBuffers(UINT w, UINT h);
 
@@ -212,6 +215,8 @@ private:
     Ui ui;
     LPCWSTR cursor = IDC_HAND;
     std::vector<Placed> placed; // this frame's items, for hit tests
+    Pose drawnPose{}; // where this frame drew it: a click is told which item it landed on
+    bool drawnOnce = false;
     int midAt = -1; // which of them holds the middle, where a sung line goes
     Placed midLast{}, midWas{}; // the middle as last drawn; what it was as a fade began, going out
     bool midLastOn = false, midHad = false, midFading = false;
@@ -228,6 +233,8 @@ private:
     bool midSnapped = false; // the middle as it was when this drag began, taken once
     int midAtPick = Model::kMidAuto, holderAtPick = -1; // the saved choice, and the item that held the middle then
     int wallFor = 0; // 0 none, 1 glass only, 2 sharp too
+    bool devWide = false; // the device drew the whole screen (the editor): a fresh one hands the driver's pools back
+    bool trimArmed = false, trimDue = false; // resting: a tidy-up is on its way, or due on the next frame
 
     std::shared_ptr<SharedDev> dev;
     uint32_t devGen = 0;

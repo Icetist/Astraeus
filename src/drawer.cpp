@@ -1,6 +1,7 @@
 #include "drawer.h"
 #include "deskpill.h"
 #include "board.h"
+#include "cues.h"
 #include "entry.h"
 
 #include "faces.h"
@@ -24,6 +25,7 @@
 namespace {
 
 constexpr UINT kGreetDelayMs = 1500, kGreetPollMs = 100; // the desktop settles before the greeting drops; then a cheap look at the cursor while it's up
+constexpr UINT kForcedCheckMs = 600; // how soon a pill brought up over a game is checked for having gone
 constexpr int kGreetTries = 20; // the gpu or the shell not ready yet: a few more seconds of tries
 constexpr LONG kGreetSlack = 2; // pixels the cursor may drift (a touchpad's jitter) before it counts as moving
 constexpr UINT kTrimMs = 3000; // a resting pill this long after its last whole frame: hand back what startup and the drop left behind
@@ -223,6 +225,8 @@ D2D1_MATRIX_3X2_F Drawer::EdgeXform() const {
     return D2D1::Matrix3x2F::Translation(off, 0);
 }
 
+constexpr ULONGLONG kWarmMs = 20000; // no efficiency mode this long after launch: the first frames and sign-in's rush get full cores
+
 void Drawer::ReleaseLater() {
     if (!opened && !peeking && !alarmBanner && spring.value <= 0 && cfg.gpuIdleSec > 0)
         SetTimer(hwnd, kReleaseTimer, (UINT)cfg.gpuIdleSec * 1000, nullptr); // timer handler re-checks state
@@ -231,7 +235,8 @@ void Drawer::ReleaseLater() {
 void Drawer::Resize(float hDip, bool topmost) {
     wantH = hDip;
     bool idle = hDip <= kStrip + 0.01f;
-    if (idle != eco) sys::SetEco(eco = idle); // throttle only while fully closed
+    bool slow = idle && GetTickCount64() - bornAt >= kWarmMs; // just launched: full speed until the first moments are past
+    if (slow != eco) sys::SetEco(eco = slow); // throttle only while fully closed
     // the right edge grows leftwards: each change of depth moves the window's left side, and for a frame the last picture shows shifted with it.
     // so while anything shows it keeps its full depth, nothing drawn ever moves, and a region trims what takes the mouse to the depth in use
     winH = edgeNow == 2 && !idle ? (std::max)(hDip, Depth() + overshoot) : hDip;
@@ -394,6 +399,7 @@ void Drawer::KeyOpen() {
 
 void Drawer::Close() {
     SyncRailKeys(false);
+    if (forcedUp) SetTimer(hwnd, kForcedTimer, kForcedCheckMs, nullptr); // brought up over a game: hidden again once it has gone up
     if (keys) { // the keyboard goes back where it was
         keys = false;
         if (GetForegroundWindow() == hwnd && keysFrom && IsWindow(keysFrom)) SetForegroundWindow(keysFrom);
@@ -421,6 +427,7 @@ void Drawer::Close() {
     ShelfClosed();
     Entry::Get().Drop(); // whatever was typed goes with the panel
     StagePrefs::Get().capture = 0; // a fullscreen key half picked is dropped with the panel
+    model.clipKeyWhich = 0; // and a clip key
     model.CancelPass();
     SyncTyping(); // hand the keyboard back right away
     if (model.rememberPage && !pageAuto && page != model.lastPage) model.SetPref(model.lastPage, L"LastPage", page); // the next launch opens here too
@@ -456,7 +463,7 @@ void Drawer::SyncStay() {
         return;
     }
     bool always = Stays();
-    if (always && !island && !peeking && !alarmBanner && !dragging && !hidden && !stage && spring.value <= 0.5f) ShowIsland(); // the pill comes back by itself
+    if (always && !island && !peeking && !alarmBanner && !dragging && !hidden && !stage && !studio && spring.value <= 0.5f) ShowIsland(); // the pill comes back by itself; not over the clip studio
     else if (!always && stayWasAlways && island && !MouseIn()) Close(); // always was just turned off, or an app came under it
     stayWasAlways = always;
     SyncReserve();
@@ -477,6 +484,7 @@ void Drawer::Answer() {
 }
 
 void Drawer::OnSecond() {
+    if (!eco && wantH <= kStrip + 0.01f && GetTickCount64() - bornAt >= kWarmMs) sys::SetEco(eco = true); // the launch rush is over: closed, it goes back to the efficient cores
     if (alarmBanner && drinkAsk) {
         if (model.alarms.Ringing()) RingAlarm(); // an alarm outranks it, in the same banner
         else if (GetTickCount64() - drinkAt > kDrinkShowMs) EndAlarmBanner();
@@ -487,7 +495,7 @@ void Drawer::OnSecond() {
         Redraw();
     }
     SyncBoard();
-    if (Pinned() && !overFull && !opened && !hidden && !stage && !dragging && !peeking && !alarmBanner && !PlaceStale() && spring.value <= 0.5f) Open(); // pinned: back open after fullscreen, a re-dock or the player
+    if (Pinned() && !overFull && !opened && !hidden && !stage && !studio && !dragging && !peeking && !alarmBanner && !PlaceStale() && spring.value <= 0.5f) Open(); // pinned: back open after fullscreen, a re-dock or the player
     if (fullApp && !FullOn(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY))) fullApp = false; // the shell's "it's over" can go missing: never stay hidden on its word alone
     SyncHide(); // a fullscreen app on the panel's screen, or gone from it
     StayOnTop();
@@ -534,7 +542,7 @@ void Drawer::SetPage(int p) {
     model.CloseSettings();
     model.CloseCal();
     model.alarmEditId = -1;
-    if (model.field == Model::kFieldAlarmLabel) {
+    if (model.field == Model::kFieldAlarmLabel || model.field == Model::kFieldGameName || model.field == Model::kFieldClipName) { // its field is on the page being left
         model.field = Model::kFieldNone;
         model.fieldEdit.clear();
     }
@@ -545,17 +553,34 @@ void Drawer::SetPage(int p) {
     Redraw();
 }
 
-void Drawer::Peek(const std::wstring& title, const std::wstring& detail, int icon) {
-    if (overFull || alarmBanner) return; // over a fullscreen app or active alarm, don't override
+bool Drawer::CanShowOver() const {
+    QUERY_USER_NOTIFICATION_STATE state{};
+    if (FAILED(SHQueryUserNotificationState(&state)) || state != QUNS_RUNNING_D3D_FULL_SCREEN) return true;
+    HWND game = model.games.Window();
+    return game && MonitorFromWindow(game, MONITOR_DEFAULTTONEAREST) != mon; // exclusive fullscreen owns its screen; another screen is free
+}
+
+bool Drawer::Peek(const std::wstring& title, const std::wstring& detail, int icon, int toPage, const std::wstring& art, const std::wstring& exe, bool force) {
+    if ((overFull && !force) || alarmBanner) return false; // over a fullscreen app or active alarm, don't override; a game's own pill may
+    if (force && (overFull || hidden) && !opened) { // a fullscreen app or video has this screen: brought up over it, without taking focus
+        if (!CanShowOver()) return false; // the sound says it instead
+        if (hidden && stage) return false; // the fullscreen player is astraeus' own: never covered
+        if (hidden) {
+            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            forcedUp = true;
+        }
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
     peekLevel = -1; // a notice, not the hud's bar
     peekIcon = icon;
     peekTitle = title;
     peekDetail = detail;
+    peekCover = art, peekExe = exe;
     if (opened) {
-        if (!Pinned()) AutoPage(Model::kPgTools); // already open, jump to notice page; pinned, it would yank the page from under you all day
-        return;
+        if (!Pinned()) AutoPage(toPage); // already open, jump to notice page; pinned, it would yank the page from under you all day
+        return true;
     }
-    if (hidden || !EnsureDev()) return;
+    if ((hidden && !forcedUp) || !EnsureDev()) return false;
     island = islandLook = grow = false; // a notice replaces the island
     peeking = true;
     float reach = Side() ? kPeekSide : kPeekH; // on a side edge the banner needs room for its text
@@ -564,6 +589,40 @@ void Drawer::Peek(const std::wstring& title, const std::wstring& detail, int ico
     spring.damp = model.reduceMotion ? 1.0f : 0.55f; // extra bouncy to catch the eye
     SetTimer(hwnd, kPeekTimer, model.notifyWatch.More() ? 3500 : 6000, nullptr); // auto retract after 6s, quicker when more are waiting
     Redraw();
+    return true;
+}
+
+constexpr int kGameCueDelayMs = 1500; // the start sound waits for the game's own audio to come up
+
+void Drawer::ClipStarted(int secs) {
+    const GameLog::Session& s = model.games.Now();
+    model.clipSavedAt = GetTickCount64();
+    sys::cues::Play(sys::cues::kClipSaved, model.cueStyle, model.cueVol); // always: in a game the pill may not be seen
+    std::wstring span = secs >= 60 && secs % 60 == 0 ? std::to_wstring(secs / 60) + L" min" : std::to_wstring(secs) + L" s";
+    Peek(model.clipAfter ? L"Clip on its way" : L"Clip saved", (model.clipAfter ? L"Recording " + std::to_wstring(model.clipAfter) + L" s more, then " : L"The last ") + span + L" of " + (s.name.empty() ? std::wstring(L"the game") : s.name),
+         glyph::Pad, Model::kPgGames, s.cover, s.exe, true);
+}
+
+void Drawer::ClipDone(bool saved, const std::wstring& text) {
+    if (saved) { // already heard and seen when the key was pressed: the file is just counted now
+        model.games.AddClip();
+        model.lastClip = text;
+        ++model.clipsEpoch;
+    } else {
+        sys::cues::Play(sys::cues::kFailed, model.cueStyle, model.cueVol);
+        Peek(L"Clip not saved", text, glyph::Pad, Model::kPgGames, {}, {}, true);
+    }
+    if (opened && page == Model::kPgGames) Redraw();
+}
+
+void Drawer::GameEvent(int event) {
+    bool started = event == GameLog::kStarted;
+    const GameLog::Session& s = started ? model.games.Now() : model.games.Last();
+    bool seen = false;
+    if (started ? model.gamePill : model.gameSummary) seen = Peek(s.name, started ? L"Game detected" : L"Played " + GameLog::Span(s.secs), glyph::Pad, Model::kPgGames, s.cover, s.exe, true); // over a fullscreen app too: it's the game's own news
+    if ((started ? model.cueOn : model.cueOff) && (model.cueAlways || !seen)) // a game holding the whole screen hides the pill: the sound says it instead
+        sys::cues::Play(started ? sys::cues::kGameOn : sys::cues::kGameOff, model.cueStyle, model.cueVol, started ? kGameCueDelayMs : 0); // a game opening its audio as it starts can cut off a sound already playing: this one waits for it
+    if (opened && page == Model::kPgGames) Redraw();
 }
 
 void Drawer::RingAlarm() {
@@ -580,7 +639,7 @@ void Drawer::RingAlarm() {
 }
 
 bool Drawer::AskDrink() {
-    if (alarmBanner || opened || peeking || dragging || stage || UnderFullscreen() || Unseen() || model.alarms.Ringing() || !EnsureDev()) return false; // busy, away, or something else has the screen
+    if (alarmBanner || opened || peeking || dragging || stage || studio || UnderFullscreen() || Unseen() || model.alarms.Ringing() || !EnsureDev()) return false; // busy, away, or something else has the screen
     drinkAsk = true;
     drinkAt = GetTickCount64();
     BannerDown();
@@ -885,8 +944,19 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         } else if (wp == kReleaseTimer) {
             if (!opened && !peeking && !alarmBanner && spring.value <= 0) FreeDev(); // free gpu after idle
             else if (!opened && !peeking && !alarmBanner && !dragging && !(devWide && RenewDev())) TrimDev(); // the pill keeps drawing on a fresh device; if one can't be made, the old one just drops its caches
+        } else if (wp == kForcedTimer) {
+            if (forcedUp && hidden && !opened && !peeking && spring.value <= 0.02f) { // the game's pill has gone up: the game has its screen back
+                forcedUp = false;
+                ShowWindow(hwnd, SW_HIDE);
+                FreeDev();
+            } else if (forcedUp && hidden) {
+                SetTimer(hwnd, kForcedTimer, kForcedCheckMs, nullptr); // still showing: looked at again shortly
+            } else {
+                forcedUp = false;
+            }
         } else if (wp == kPeekTimer) {
             if (peeking) Close();
+            if (forcedUp) SetTimer(hwnd, kForcedTimer, kForcedCheckMs, nullptr);
             if (model.notifyWatch.More()) PostMessageW(hwnd, WM_APP_NOTIFY, 0, 0); // next in line
         }
         return 0;
@@ -1030,6 +1100,32 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP_FEEDS:
         if (opened && page == Model::kPgWidgets) Redraw();
         return 0;
+    case WM_APP_GAMES:
+        model.games.OnLibrary();
+        if (opened && page == Model::kPgGames) Redraw();
+        return 0;
+    case WM_APP_GAME:
+        GameEvent((int)wp);
+        return 0;
+    case WM_APP_CLIPS: // a clip's picture is ready, the list was read again, or (wparam 1) the clips folder changed outside
+        if (wp == 1) ++model.clipsEpoch;
+        if (opened && page == Model::kPgGames) Redraw();
+        return 0;
+    case WM_APP_CLIP: {
+        if (wp == 2) { // the shortcut was just pressed: heard and seen at once
+            ClipStarted((int)lp);
+            return 0;
+        }
+        std::unique_ptr<std::wstring> text(reinterpret_cast<std::wstring*>(lp)); // ours to free
+        ClipDone(wp == 1, text ? *text : std::wstring());
+        return 0;
+    }
+    case WM_APP_GAMEPICK: { // after the frame: the picker is modal
+        std::wstring exe = GameLog::PickProgram(hwnd);
+        if (!exe.empty()) model.games.Mark(exe);
+        Redraw();
+        return 0;
+    }
     case WM_APP_BRIGHT:
         model.OnBright(wp);
         Redraw();
@@ -1238,10 +1334,23 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             if (!Pinned()) Close(); // pinned: only the keyboard goes back
         }
         return 0;
-    case WM_SYSKEYDOWN: // alt held: only a fullscreen key being picked in settings wants it
-        if (!StagePrefs::Get().capture) break;
+    case WM_SYSKEYDOWN: // alt held: only a key being picked wants it
+        if (!StagePrefs::Get().capture && !model.clipKeyWhich) break;
         [[fallthrough]];
     case WM_KEYDOWN:
+        if (model.clipKeyWhich) { // the games page waits for a clip key: any key, alone or with modifiers; esc keeps the old one, backspace clears pause's
+            if (wp == VK_SHIFT || wp == VK_CONTROL || wp == VK_MENU || wp == VK_LWIN || wp == VK_RWIN) return 0;
+            int combo = wp == VK_BACK && model.clipKeyWhich >= 2 ? 0 : (int)StagePrefs::Combo((UINT)wp);
+            if (wp != VK_ESCAPE) {
+                if (model.clipKeyWhich == 1) model.SetPref(model.clipKey, L"ClipKey", combo);
+                else if (model.clipKeyWhich == 2) model.SetPref(model.clipKeyPause, L"ClipKeyPause", combo);
+                else model.SetPref(model.clipKeyLong, L"ClipKeyLong", combo); // set or cleared, memory follows: the recorder starts again with it
+                if (model.clip) model.ClipKeys(true);
+            }
+            model.clipKeyWhich = 0;
+            Redraw();
+            return 0;
+        }
         if (int which = StagePrefs::Get().capture) { // settings is waiting for a fullscreen key: the next real key is it, esc keeps the old one
             StagePrefs& sp = StagePrefs::Get();
             if (wp == VK_SHIFT || wp == VK_CONTROL || wp == VK_MENU || wp == VK_LWIN || wp == VK_RWIN) return 0; // a modifier alone: wait for the key with it
@@ -1322,6 +1431,19 @@ LRESULT Drawer::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_HOTKEY: // the arrows, held only while the mouse rests on the rail: the next or previous page, scrolled into view
         if ((int)wp == kBoardKey) { // ctrl+alt+d: the screen under the mouse, dashboard or desktop
             BoardKey();
+            return 0;
+        }
+        if ((int)wp == Model::kClipHotId) { // the clip shortcut, held only while recording
+            model.ClipSave();
+            return 0;
+        }
+        if ((int)wp == Model::kClipLongId) { // the long clip shortcut: two minutes, whatever the usual length
+            model.ClipSave(true);
+            return 0;
+        }
+        if ((int)wp == Model::kClipPauseId) { // pause or go on recording
+            if (model.clip) model.clip->Pause(!model.clip->Paused());
+            Redraw();
             return 0;
         }
         if ((int)wp == kBoardFocusKey) {

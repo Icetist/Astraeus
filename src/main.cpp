@@ -554,6 +554,7 @@ bool CreateHost(HINSTANCE instance) {
     AddAppbar();
     if (!app->trayOn || !app->appbar) Log(L"Shell not ready at start, retrying");
     SetCoalescableTimer(app->host, kSecTimer, 1000, nullptr, 250); // 1s tick drives model
+    PostMessageW(app->host, WM_TIMER, kSecTimer, 0); // the first tick now, not a second from now: the pill shows the moment the loop runs
     if (app->cfg.hotKey && !RegisterHotKey(app->host, kHotId, app->cfg.hotMods | MOD_NOREPEAT, app->cfg.hotKey)) // windows tells us when it's pressed, nothing polls
         Log(L"The shortcut is taken by another app");
     return true;
@@ -607,7 +608,8 @@ void Run() {
     for (;;) {
         Drawer& d = *app->drawer;
         if (d.NeedsFrame() && !d.FrameWait()) d.Frame(); // no waitable yet, draw once to create it
-        HANDLE waits[4];
+        HANDLE waits[5];
+        if (d.StudioNeeds() && !d.StudioWait()) d.StudioFrame();
         if (d.DeskNeeds() && !d.DeskWait()) d.DeskFrame(); // no waitable yet, draw once to create it
         DWORD n = 0;
         HANDLE frame = d.NeedsFrame() ? d.FrameWait() : nullptr; // only wait on vsync while animating
@@ -616,6 +618,8 @@ void Run() {
         if (dash) waits[n++] = dash;
         HANDLE pill = d.DeskNeeds() ? d.DeskWait() : nullptr; // the desktop pill, only while it has something to draw
         if (pill) waits[n++] = pill;
+        HANDLE studio = d.StudioNeeds() ? d.StudioWait() : nullptr; // the clip studio, only while it has something to draw
+        if (studio) waits[n++] = studio;
         if (app->iniWatch != INVALID_HANDLE_VALUE) waits[n++] = app->iniWatch; // a write to astraeus.ini wakes us, nothing polls it
         constexpr DWORD kPillPatienceMs = 250; // the pill's editor covers the screen: a signal that never comes must not leave it frozen there
         DWORD r = MsgWaitForMultipleObjectsEx(n, n ? waits : nullptr, pill ? kPillPatienceMs : INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE); // sleep until vsync or input, 0 cpu idle
@@ -626,6 +630,7 @@ void Run() {
         if (frame && r == WAIT_OBJECT_0) d.Frame(); // then fall through: glass commits its blur outline from queued messages, it must not wait a frame
         if (dash && r < WAIT_OBJECT_0 + n && waits[r - WAIT_OBJECT_0] == dash) d.BoardFrame();
         if (pill && (r == WAIT_TIMEOUT || (r < WAIT_OBJECT_0 + n && waits[r - WAIT_OBJECT_0] == pill))) d.DeskFrame();
+        if (studio && r < WAIT_OBJECT_0 + n && waits[r - WAIT_OBJECT_0] == studio) d.StudioFrame();
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) { // drain all queued input
             if (msg.message == WM_QUIT) return;
             TranslateMessage(&msg);

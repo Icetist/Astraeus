@@ -17,7 +17,7 @@ namespace {
 
 constexpr wchar_t kKey[] = L"Software\\Astraeus";
 constexpr wchar_t kSettings[] = L"[Settings]", kConfig[] = L"[Config]";
-constexpr const wchar_t* kSkip[] = {L"UpdatedTo", L"WxPlace", L"WxCityPlace"}; // the updater's own state and where you are: not settings, never exported
+constexpr const wchar_t* kSkip[] = {L"UpdatedTo", L"WxPlace", L"WxCityPlace", L"GamesMarked", L"GamesIgnored", L"ClipsOff"}; // the updater's own state, where you are, and paths on this pc: not settings, never exported
 constexpr DWORD kTextMax = 1024; // longer text values aren't settings
 constexpr LONGLONG kFileMax = 256 << 10;
 

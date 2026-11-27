@@ -82,6 +82,7 @@ public:
     float Smooth(uint32_t id, float target, float rate = 16); // exp ease toward target, snaps on first use
     float SmoothFrom(uint32_t id, float target, float initial, float rate = 16);
     float Soft(uint32_t id, float target); // starts at 0, flags ambient not busy
+    float Live(uint32_t id, float target); // as Soft, at full frame rate: a reading being watched, not a glow
     float Env(uint32_t id, float target); // fast attack, slow decay (audio levels)
     Hit Button(uint32_t id, const D2D1_RECT_F& r);
     bool Slider(uint32_t id, const D2D1_RECT_F& r, float& value, bool vertical);
@@ -128,7 +129,7 @@ bool PlayBtn(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, float size, b
 bool Tile(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, const wchar_t* label,
           const std::wstring& detail, bool on, bool enabled = true);
 bool Pill(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, int glyph, float& value, bool* iconTap, bool off = false); // off: muted, the fill greys out
-void Gauge(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, float radius, float thick, float value);
+void Gauge(Ui& ui, const Theme& t, uint32_t id, D2D1_POINT_2F c, float radius, float thick, float value, bool live = false); // live: eased at full frame rate
 void Spark(Canvas& c, const D2D1_RECT_F& r, const std::vector<float>& values, uint64_t version, float maxV,
                Color line, bool flip = false, const D2D1_ROUNDED_RECT* in = nullptr); // in: kept inside a card's corners, and inside r
 bool Chip(Ui& ui, const Theme& t, uint32_t id, const D2D1_RECT_F& r, const std::wstring& label, bool selected);

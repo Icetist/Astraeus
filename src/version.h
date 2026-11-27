@@ -1,7 +1,7 @@
 #pragma once
 
 #define APP_VER_MAJOR 2 // bump these, then push tag vX.Y.Z to publish
-#define APP_VER_MINOR 8
-#define APP_VER_PATCH 7
-#define APP_VER_STR "2.8.7" // must match the numbers above and the release tag
-#define APP_VER_W L"2.8.7"
+#define APP_VER_MINOR 9
+#define APP_VER_PATCH 0
+#define APP_VER_STR "2.9.0" // must match the numbers above and the release tag
+#define APP_VER_W L"2.9.0"

@@ -21,6 +21,8 @@ constexpr float kPad = 18; // room around it in its window: the bounce, the shou
 constexpr float kEdgeRoom = 12; // never closer than this to the end of its edge
 constexpr float kFillet = 10; // the shoulders where a stuck pill meets the edge
 constexpr float kItemGap = 12;
+const Color kRecRed = Color::Rgb(0xFF4D4D); // the recording dot
+constexpr float kRecDot = 4.5f; // its radius, before the type scale
 constexpr float kSongLeast = 80; // a song's title is never squeezed below this, and never asks for more of the pill's own length
 constexpr float kShapeRate = 12, kShapeFlat = 8; // changing over between its two shapes
 constexpr float kBlurSigma = 22;
@@ -33,7 +35,8 @@ constexpr UINT kCoverPx = 128; // a small square: no more is ever drawn
 constexpr float kBarW = 3.5f, kBarStep = 6, kBarLow = 3, kBarRise = 11; // the visualizer, as the small pill's
 constexpr int kBarCount = 4;
 constexpr UINT kBarsSync = 4; // vsyncs per frame while only they move: about 15 a second at 60 Hz, as the small pill's
-constexpr UINT_PTR kLyricTimer = 1;
+constexpr UINT_PTR kLyricTimer = 1, kTrimTimer = 2;
+constexpr UINT kTrimMs = 3000; // resting this long: what showing up and the editor left behind goes back, as the small pill's
 constexpr double kLyricSoon = 1.2; // a line due sooner than the next second's look is waited for on its own
 constexpr UINT kLyricLateMs = 20; // just past the line's start, so it's there when looked
 constexpr double kMidFade = 0.62; // seconds: a line hands over to the next, or to what the middle holds
@@ -131,6 +134,11 @@ LRESULT CALLBACK DeskPill::Proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 LRESULT DeskPill::Handle(UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_TIMER:
+        if (wp == kTrimTimer) {
+            KillTimer(hwnd, kTrimTimer);
+            if (trimArmed && wantUp && !Editing()) trimDue = true, Poke(); // done on a frame: a renewed device shows nothing until it has drawn
+            return 0;
+        }
         if (wp != kLyricTimer) break;
         KillTimer(hwnd, kLyricTimer);
         if (wantUp && !Editing()) Watch();
@@ -182,6 +190,14 @@ LRESULT DeskPill::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         input.down = false;
         input.released = true;
         Poke();
+        if (!editing && !leaving && was && model.clip && drawnOnce) { // a click on the recording item keeps a clip instead of opening the panel
+            D2D1_POINT_2F m = ToLocal(drawnPose, input.mouse);
+            for (const Placed& it : placed)
+                if (it.kind == Model::kDRecord && !it.idle && m.x >= it.x - 4 && m.x <= it.x + it.w + 4) {
+                    model.ClipSave();
+                    return 0;
+                }
+        }
         if (!editing && !leaving && was && onOpen) onOpen();
         return 0;
     }
@@ -359,6 +375,7 @@ RECT DeskPill::Spot(HMONITOR on) {
 
 void DeskPill::FitWindow() {
     D2D1_RECT_F b = editing ? D2D1_RECT_F{0, 0, MW, MH} : shapeShift ? Reach(kPad) : Box(Goal(), kPad);
+    if (editing) devWide = true; // whole-screen buffers: the driver keeps pools that size until the device goes
     view = {std::floor(b.left * scale) / scale, std::floor(b.top * scale) / scale};
     int w = (int)std::ceil((b.right - view.x) * scale), h = (int)std::ceil((b.bottom - view.y) * scale);
     SetWindowPos(hwnd, HWND_TOPMOST, monitor.left + (int)std::lround(view.x * scale), monitor.top + (int)std::lround(view.y * scale), w, h, SWP_NOACTIVATE);
@@ -386,23 +403,67 @@ bool DeskPill::EnsureDev() {
         FreeDev();
     }
     if (ctx) return true;
-    if (!dev->Ok()) {
-        dev->Reset();
-        UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_SINGLETHREADED;
-        if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, nullptr, 0, D3D11_SDK_VERSION, &dev->d3d, nullptr, nullptr)) &&
-            FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags, nullptr, 0, D3D11_SDK_VERSION, &dev->d3d, nullptr, nullptr)))
-            return false;
-        ComPtr<IDXGIDevice> dxgi;
-        ComPtr<IDXGIAdapter> adapter;
-        if (FAILED(dev->d3d.As(&dxgi)) || FAILED(gfx::D2D()->CreateDevice(dxgi.Get(), &dev->d2d)) ||
-            FAILED(dxgi->GetAdapter(&adapter)) || FAILED(adapter->GetParent(IID_PPV_ARGS(&dev->factory))) ||
-            FAILED(DCompositionCreateDevice2(nullptr, IID_PPV_ARGS(&dev->dcomp)))) {
-            dev->Reset();
-            return false;
-        }
-        dev->gen++;
-    }
+    if (!dev->Ok() && !MakeDevice()) return false;
     devGen = dev->gen;
+    if (!MakeSwap()) {
+        FreeDev();
+        return false;
+    }
+    if (FAILED(dev->dcomp->CreateTargetForHwnd(hwnd, TRUE, &target)) || FAILED(dev->dcomp->CreateVisual(&visual)) ||
+        FAILED(visual->SetContent(swap.Get())) || FAILED(target->SetRoot(visual.Get())) || FAILED(dev->dcomp->Commit())) {
+        FreeDev();
+        return false;
+    }
+    return true;
+}
+
+bool DeskPill::MakeDevice() {
+    ComPtr<IDCompositionDesktopDevice> keep = dev->dcomp; // composition isn't tied to a d3d device: a renewed pill keeps its window's
+    dev->Reset();
+    dev->dcomp = keep;
+    UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_SINGLETHREADED;
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, nullptr, 0, D3D11_SDK_VERSION, &dev->d3d, nullptr, nullptr)) &&
+        FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags, nullptr, 0, D3D11_SDK_VERSION, &dev->d3d, nullptr, nullptr))) {
+        dev->Reset();
+        return false;
+    }
+    ComPtr<IDXGIDevice> dxgi;
+    ComPtr<IDXGIAdapter> adapter;
+    if (FAILED(dev->d3d.As(&dxgi)) || FAILED(gfx::D2D()->CreateDevice(dxgi.Get(), &dev->d2d)) ||
+        FAILED(dxgi->GetAdapter(&adapter)) || FAILED(adapter->GetParent(IID_PPV_ARGS(&dev->factory))) ||
+        (!dev->dcomp && FAILED(DCompositionCreateDevice2(nullptr, IID_PPV_ARGS(&dev->dcomp))))) {
+        dev->Reset();
+        return false;
+    }
+    dev->gen++;
+    return true;
+}
+
+bool DeskPill::RenewDev() {
+    if (!ctx || !swap || !visual || !dev || !dev->Ok() || dev.use_count() > 1) return false; // other screens' pills draw on it too: it stays
+    visual->SetContent(nullptr); // nothing committed until the new frame is in: the pill never blinks
+    ctx->SetTarget(nullptr);
+    ui.Forget();
+    canvas.reset(); // everything made on the old device goes with it
+    body.Reset();
+    bodyLen = -1;
+    wall.Reset();
+    wallBlur.Reset();
+    wallFor = 0;
+    buf.Reset();
+    if (frameWait) CloseHandle(frameWait), frameWait = nullptr;
+    swap.Reset();
+    ctx.Reset();
+    bufW = bufH = 0;
+    if (MakeDevice()) { // the old device went in there: the driver's pools with it
+        devGen = dev->gen;
+        if (MakeSwap()) return true;
+    }
+    FreeDev(); // half torn down: the next EnsureDev builds it the usual way
+    return false;
+}
+
+bool DeskPill::MakeSwap() {
     RECT wr{};
     GetClientRect(hwnd, &wr);
     DXGI_SWAP_CHAIN_DESC1 d = {};
@@ -418,23 +479,13 @@ bool DeskPill::EnsureDev() {
     ComPtr<IDXGISwapChain1> sc;
     if (FAILED(dev->d2d->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &ctx)) ||
         FAILED(dev->factory->CreateSwapChainForComposition(dev->d3d.Get(), &d, nullptr, &sc)) ||
-        FAILED(sc.As(&swap))) {
-        FreeDev();
+        FAILED(sc.As(&swap)))
         return false;
-    }
     swap->SetMaximumFrameLatency(1);
     frameWait = swap->GetFrameLatencyWaitableObject();
     bufW = bufH = 0;
-    if (!SizeBuffers(d.Width, d.Height)) {
-        FreeDev();
-        return false;
-    }
+    if (!SizeBuffers(d.Width, d.Height)) return false;
     ctx->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-    if (FAILED(dev->dcomp->CreateTargetForHwnd(hwnd, TRUE, &target)) || FAILED(dev->dcomp->CreateVisual(&visual)) ||
-        FAILED(visual->SetContent(swap.Get())) || FAILED(target->SetRoot(visual.Get())) || FAILED(dev->dcomp->Commit())) {
-        FreeDev();
-        return false;
-    }
     canvas = std::make_unique<Canvas>(ctx.Get());
     body.Reset();
     bodyLen = -1;
@@ -768,6 +819,7 @@ void DeskPill::DrawPill(const Theme& t, const Pose& p, float alpha) {
             }
     }
     placed = LayOut(spec.items, p.len, p.thick);
+    drawnPose = p, drawnOnce = true;
     float content = anim::Clamp01((alpha - 0.35f) / 0.65f);
     auto draw = [&](const Placed& it, float a, float dy) {
         float x = it.x, y = cy + dy;
@@ -788,7 +840,12 @@ void DeskPill::DrawPill(const Theme& t, const Pose& p, float alpha) {
         float tx = x;
         if (it.icon) {
             float is = 15 * k;
-            c.Icon(it.icon, {x + is / 2, y}, is, lit.Alpha(a), true);
+            if (it.kind == Model::kDRecord) { // a steady dot: red while recording, faint while paused or refused. still, so it costs no frames
+                bool on = model.clip && !model.clip->Paused();
+                c.Dot({x + is / 2, y}, kRecDot * k, (on ? kRecRed : lit.Alpha(0.45f)).Alpha(a));
+            } else {
+                c.Icon(it.icon, {x + is / 2, y}, is, lit.Alpha(a), true);
+            }
             tx += is + 5 * k;
         }
         if (!it.text.empty()) c.Text(it.text, Rect(tx, y - box / 2, x + it.w - tx + 2, box), Weight::Medium, size, (it.kind == Model::kDClock || it.kind == Model::kDScore || it.kind == Model::kDLyrics ? ink : dim).Alpha(a));
@@ -881,10 +938,15 @@ void DeskPill::Frame(const Theme& shell) {
         ShowWindow(hwnd, SW_HIDE);
         FreeDev();
         gfx::GiveBack();
+        KillTimer(hwnd, kTrimTimer);
+        trimArmed = trimDue = false;
         dirty = false;
         lastFrame = 0;
         return;
     }
+    bool tidy = trimDue && !editing && !leaving, renewed = false; // resting a while: the tidy-up rides this frame
+    trimDue = false;
+    if (tidy && devWide) renewed = RenewDev();
     if (!EnsureDev()) {
         dirty = false;
         return;
@@ -975,6 +1037,18 @@ void DeskPill::Frame(const Theme& shell) {
         dirty = true;
         return;
     }
+    if (renewed) { // the new device's first frame is in: now it shows, and the old one is gone for good
+        visual->SetContent(swap.Get());
+        dev->dcomp->Commit();
+        devWide = false;
+    }
+    if (tidy) {
+        gfx::Settle(dev->d3d.Get());
+        gfx::GiveBack(); // idle pages and freed heap back to windows; what the bars touch comes right back
+    }
+    bool resting = !arranging && !moving && !busy && drag == Drag::None && appear.target > 0;
+    if (!resting) trimArmed = false; // something moved: tidied again once it settles
+    else if (!trimArmed) trimArmed = true, SetTimer(hwnd, kTrimTimer, kTrimMs, nullptr);
     if (inkDue > 0 && now >= inkDue) inkDue = 0, SampleInk();
     dirty = moving || busy || barsMoving || midFading || drag != Drag::None || inkDue > 0 || leaving || (!editing && appear.target <= 0); // going away: on to the frame that lets go of everything
 }

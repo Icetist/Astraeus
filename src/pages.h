@@ -18,6 +18,7 @@ struct PageCtx {
     D2D1_RECT_F area; // page content rect below tabs
     bool wantClose = false; // page asks drawer to retract
     bool wantStage = false; // media page asks for the fullscreen stage
+    std::wstring wantClip; // the games page asks for this clip in the studio
     int wantPage = -1; // a page asks to switch to another, e.g. the home media card to the media page
     const Seed* mediaSeed = nullptr; // what the media palette came from: a cover's other colors ride along in it
     const wchar_t* hint = nullptr; // a short tip the drawer shows just outside the panel, next to hintRect
@@ -63,6 +64,16 @@ bool AlarmPickerOpen(const Model& m, const D2D1_RECT_F& area);
 void DrawAlarmPickerOverlay(PageCtx& p);
 void DrawShelf(PageCtx& p); // files and notes dropped on the island
 void DrawWidgetsPage(PageCtx& p); // the board of widgets
+void DrawGames(PageCtx& p); // what's played, for how long, and how the games page behaves
+void ForgetGameArt(); // with the device: the pictures below belong to it, and the clips' too
+void ForgetClipArt();
+void OpenRecordings(const std::wstring& game); // the games page shows that game's clips
+size_t ClipCount(Model& m, const std::wstring& game); // the clips in that game's folder now, not as many as were saved
+bool ClipViews(PageCtx& p); // a game's clips, or one being edited, fills the page: true when one is showing
+void ClipsClose(); // back to the page itself
+float ClipsRowH(Model& m, float width); // the newest clips on the page: 0 with none
+void ClipsRow(PageCtx& p, float& y, const D2D1_RECT_F& col);
+ID2D1Bitmap* GameArt(Canvas& c, const std::wstring& cover, const std::wstring& exe); // a game's picture on this device: its launcher's art, else its program's icon; null when neither
 void DrawWidgetStudio(PageCtx& p); // arranging and adding to it, over the wallpaper; area: the screen. wantClose when it's done
 void DrawTileStudio(PageCtx& p); // the same for the tools page's tiles
 void DrawPageStudio(PageCtx& p); // and for the pages on the rail

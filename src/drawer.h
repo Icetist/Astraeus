@@ -12,6 +12,7 @@
 #include "hud.h"
 #include "config.h"
 #include "model.h"
+#include "clipstudio.h"
 #include "stage.h"
 #include "theme.h"
 #include "ui.h"
@@ -33,7 +34,12 @@ public:
     }
     void Toggle();
     void KeyOpen(); // from the shortcut: open on the screen with the mouse and take the keyboard, or close
-    void Peek(const std::wstring& title, const std::wstring& detail, int icon = 0); // brief notification drop, 0 = timer icon
+    bool Peek(const std::wstring& title, const std::wstring& detail, int icon = 0, int page = Model::kPgTools, const std::wstring& cover = {}, const std::wstring& exe = {}, bool force = false); // brief notification drop, 0 = timer icon; cover or exe: a picture in the icon's place; force: over a fullscreen app too (a game's own pills). false when it can't be seen
+    bool forcedUp = false; // brought up over a fullscreen app for a game's pill: hidden again once it has gone
+    bool CanShowOver() const; // false when a game holds this screen in exclusive fullscreen: nothing can be drawn over it
+    void GameEvent(int event); // a game started or closed: its pill, or its sound where the pill can't be seen
+    void ClipStarted(int secs); // the clip key pressed: its sound and pill at once
+    void ClipDone(bool saved, const std::wstring& text); // the file written, or why not: only a failure is heard
     void RingAlarm(); // interactive alarm island drop (or panel refresh if open)
     bool AskDrink(); // the water reminder in the alarm's banner: drink or snooze; false when nothing's free to show it
     void SetFull(bool on); // fullscreen app present, stay out of the way
@@ -57,6 +63,9 @@ public:
     Theme BoardMedia() const; // the song's look, as a dashboard draws it
     void BoardFocus(); // the keyboard into the dashboard under the mouse
     bool DeskNeeds() const; // the desktop pill has a frame to draw
+    bool StudioNeeds() const { return studio && studio->Needs(); } // the clip studio has a frame to draw: only while something moves or plays
+    HANDLE StudioWait() const { return studio ? studio->Wait() : nullptr; }
+    void StudioFrame();
     HANDLE DeskWait() const;
     void DeskFrame();
     static bool DeskFront(HWND w);
@@ -101,7 +110,7 @@ private:
     void Reserve(bool on, bool force = false); // that reservation, as a shell appbar
     void SyncReserve(bool force = false) { Reserve(WantReserve(), force); }
     static constexpr UINT kBarMsg = WM_APP + 62; // the shell's appbar notices
-    enum : UINT_PTR { kHoverTimer = 1, kCloseTimer, kReleaseTimer, kPeekTimer, kDevTimer, kFollowTimer, kTrimTimer = 8, kFullTimer, kGreetTimer, kDeskTimer, kAdoptTimer, kPasteTimer, kLongTimer }; // all one-shot; 7 is the model's
+    enum : UINT_PTR { kHoverTimer = 1, kCloseTimer, kReleaseTimer, kPeekTimer, kDevTimer, kFollowTimer, kTrimTimer = 8, kFullTimer, kGreetTimer, kDeskTimer, kAdoptTimer, kPasteTimer, kLongTimer, kForcedTimer }; // all one-shot; 7 is the model's
     static constexpr UINT kAdoptMsg = WM_APP + 60; // a hover strip on another screen asks the panel to come over
     static constexpr float kStrip = 3; // idle bezel height in dips, just enough to catch the mouse
     static constexpr UINT kShelfMsg = WM_APP + 61; // the shelf page asked for a drag out, run after the frame: it's modal
@@ -308,7 +317,9 @@ private:
     void SampleShade(); // glass, while showing: what's behind it now, every half minute
     void SetMedia(const Theme& t);
     void OpenStage(); // fullscreen ambient player, replaces the panel until it's left
+    void OpenStudio(const std::wstring& path); // the clip studio over this screen; the panel comes back on the games page when it's left
     std::unique_ptr<Stage> stage;
+    std::unique_ptr<ClipStudio> studio; // a clip open full screen, from the games page
     std::unique_ptr<Stage> twin; // two screens: the other half of the pair, paced by the first
     HMONITOR stageHome = nullptr; // the screen fullscreen was opened on
     int twinSplit = -1; // the two screen setting the pair was last built for
@@ -342,6 +353,7 @@ private:
     bool rgnOn = false; // any window region: the pill's, or the right edge's trim to the depth in use
     RECT rgnRect{}; // that region, to skip setting it again unchanged
     bool eco = false; // process in efficiency mode
+    ULONGLONG bornAt = GetTickCount64(); // efficiency mode waits a little after launch: sign-in is when the full cores are needed
     bool locked = false, screenOff = false; // nobody can see the pill: its bars stop until the screen is back
     HPOWERNOTIFY displayNote = nullptr; // display on/off notices
     bool Unseen() const { return locked || screenOff; }
@@ -376,6 +388,7 @@ private:
     std::vector<HWND> strips; // hover strips on other screens, all-screens mode only
     D2D1_MATRIX_3X2_F shapeXform = D2D1::Matrix3x2F::Identity(); // this frame's shape placement, the glass mask reuses it
     std::wstring peekTitle, peekDetail;
+    std::wstring peekCover, peekExe; // a game's picture, drawn where the icon goes
     int peekIcon = 0;
     float dragOff = 0, dragY0 = 0, dragY = 0, dragVel = 0, pressTo = 0; // drag state, vel for fling
     double dragT = 0;

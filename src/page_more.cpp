@@ -46,7 +46,7 @@ void GaugeCell(PageCtx& p, const D2D1_RECT_F& r, const Cell& cell, int index) {
     const Theme& t = p.shell;
     const float radius = 50;
     D2D1_POINT_2F center = {(r.left + r.right) / 2, r.top + 96}; // gauge center near top of cell
-    w::Gauge(p.ui, t, Ui::Id("sys.g", index), center, radius, 6, cell.value);
+    w::Gauge(p.ui, t, Ui::Id("sys.g", index), center, radius, 6, cell.value, true); // watched: smooth at the screen's rate
     c.Icon(cell.glyph, {center.x, center.y - 16}, 20, t.accent); // icon sits above value inside ring
     c.Text(cell.big, Rect(center.x - radius, center.y - 4, radius * 2, 28), Weight::Light, 22, t.text, Align::Center);
     c.Text(cell.name, Rect(r.left + 6, r.top + 170, Width(r) - 12, 20), Weight::Medium, 14, t.text, Align::Center); // label + detail below gauge
@@ -70,7 +70,7 @@ void Procs(PageCtx& p, const D2D1_RECT_F& r) {
         c.Text(pr.name, Rect(x0, y, x1 - x0 - 70, 20), Weight::Medium, 13, t.text); // name leaves room for cpu % on right
         c.Text(w::Pct((float)pr.cpu), Rect(x1 - 70, y, 70, 20), Weight::Medium, 12.5f, t.text, Align::Right);
         c.Text(fmt::Gb(pr.memBytes / 1073741824.0), Rect(x1 - 90, y + 18, 90, 14), Weight::Light, 10.5f, t.textLow, Align::Right); // bytes -> gb
-        float bar = p.ui.Soft(Ui::Id("sys.bar", (int)i), anim::Clamp01((float)pr.cpu)); // eased bar so values don't jump
+        float bar = p.ui.Live(Ui::Id("sys.bar", (int)i), anim::Clamp01((float)pr.cpu)); // eased bar so values don't jump, at full rate
         float by = y + 26; // bar under name line
         c.Line({x0, by}, {x1 - 100, by}, t.track, 3);
         if (bar > 0.003f) c.Line({x0, by}, {x0 + (x1 - 100 - x0) * bar, by}, t.accent, 3); // skip near-zero to avoid cap dot

@@ -26,6 +26,8 @@
 #include "battery.h"
 #include "accent.h"
 #include "alarms.h"
+#include "gamelog.h"
+#include "sys_clip.h"
 
 
 enum : UINT { // posted to ui thread by services/worker
@@ -53,6 +55,11 @@ enum : UINT { // posted to ui thread by services/worker
     WM_APP_UPDATES, // the update count is in
     WM_APP_PING, // a host answered, or didn't
     WM_APP_FEEDS, // a widget's feed has something new
+    WM_APP_GAMES, // the games library was read again
+    WM_APP_GAME, // a game session began (wparam GameLog::kStarted) or ended (kEnded)
+    WM_APP_GAMEPICK, // the games page asked for a program to add: the file picker opens after the frame
+    WM_APP_CLIP, // a clip: wparam 2 being saved (no lparam), 1 written, 0 not, lparam then a new std::wstring* with its path or why not
+    WM_APP_CLIPS, // the games page's clip pictures or list came in off the ui thread
 };
 
 class Hist { // fixed-size rolling graph history
@@ -169,7 +176,8 @@ public:
     bool TodoDueOn(int y, int mo, int d) const; // anything not done due that day: the calendar marks it
     std::vector<Todo> todos; // the tools page's to-do list, kept in the registry
     std::vector<std::wstring> hosts; // the servers it watches
-    enum Field { kFieldNone, kFieldTodo, kFieldHost, kFieldTimer, kFieldAlarmLabel };
+    enum Field { kFieldNone, kFieldTodo, kFieldHost, kFieldTimer, kFieldAlarmLabel, kFieldGameName, kFieldClipName };
+    std::wstring gameNaming; // the game whose name is being typed
     int field = kFieldNone; // the list field taking keystrokes
     std::wstring fieldEdit;
     static constexpr size_t kFieldMax = 120;
@@ -389,7 +397,42 @@ public:
     std::wstring ActivityText() const; // its time, short enough for the bubble
     float ActivityFrac() const; // its ring, 0..1
     int rememberPage = 1, defaultPage = 0, lastPage = 0; // the page the panel opens on, by identity
-    enum PageId { kPgHome, kPgMedia, kPgSystem, kPgNetwork, kPgTools, kPgShelf, kPgWidgets, kPageIds }; // what a page is, wherever it sits on the rail
+    enum PageId { kPgHome, kPgMedia, kPgSystem, kPgNetwork, kPgTools, kPgShelf, kPgWidgets, kPgGames, kPageIds }; // what a page is, wherever it sits on the rail; new ones go last, the numbers are saved
+    GameLog games; // what's being played and what was: the games page and its pills
+    int gameDetect = 1; // games are noticed as they come to the front
+    int gamePill = 1; // a pill with the game's picture when one starts
+    int gameSummary = 1; // and one with how long it ran when it closes
+    int gameQuiet = 0; // do not disturb while a game plays
+    bool quietByGame = false; // do not disturb was switched on by a game, and goes off with it
+    int cueStyle = 0, cueVol = 60; // the games page's sounds: chime, glass or pulse, and how loud
+    int cueOn = 1, cueOff = 1; // a sound when a game starts or closes where its pill can't be seen
+    int cueAlways = 1; // and even where it can
+    int gameSort = GameLog::kByName; // the games list: by name, last played, most played
+    // clips: only the game's window is recorded, into memory, while a game is played and this is on
+    static constexpr int kClipHotId = 0x5300, kClipPauseId = 0x5301, kClipLongId = 0x5302; // the save, pause and long clip shortcuts' ids, held only while recording
+    static constexpr int kLongSecs = 120; // what the long clip shortcut keeps
+    static constexpr int kClipAfters[] = {0, 5, 10}; // seconds still recorded after the key: the moment, and what came of it
+    static constexpr int kClipHeights[] = {0, 1440, 1080, 720}; // 0: the game's own size
+    static constexpr int kClipSecs[] = {15, 30, 60, 120};
+    int clipOn = 0, clipSecs = 30, clipQuality = 1, clipAudio = 1, clipCursor = 0, clipFps = 60, clipHeight = 0, clipMic = 0;
+    int clipKeyPause = 0, clipKeyLong = 0; // none until one is picked
+    int clipAfter = 0;
+    int ClipKeep() const { return (clipKeyLong & 0xFF) ? (std::max)(clipSecs, kLongSecs) : clipSecs; } // what memory holds: the long clip's two minutes only once its key is set
+    int clipKeyWhich = 0; // the page waits for a key: 1 save, 2 pause
+    std::unordered_set<std::wstring> clipsOff; // game ids never recorded
+    void ClipOff(const std::wstring& id, bool off);
+    std::wstring clipRenaming; // the clip whose new name is being typed
+    int clipsEpoch = 0; // goes up when a clip is saved, trimmed, renamed or deleted: the page lists them again
+    int clipKey = 0x200 | VK_F9; // alt + f9: a stage-prefs combo
+    bool clipKeyClash = false; // a clip key is held by another app
+    std::unique_ptr<sys::clip::Recorder> clip;
+    std::wstring clipWhy, lastClip; // why recording couldn't start; the newest clip saved
+    ULONGLONG clipSavedAt = 0; // when the newest clip was kept: the long pill says so for a moment
+    void ClipSync(); // once a second and after a change: recording follows the switch, the session and the game's window
+    void ClipSave(bool longer = false);
+    void ClipKeys(bool on);
+    std::wstring ClipFolder() const; // videos\astraeus
+    void OnGame(int event); // a session began or ended: do not disturb follows it
     std::vector<int> faceOn; // the widgets on the widgets page, in order
     std::map<int, int> faceSize; // each one's size there if it was ever chosen: 0 small, 1 wide, 2 large
     void SetFaceSize(int kind, int size);
@@ -493,7 +536,7 @@ public:
     float faceAreaW = 0, faceAreaH = 0, tileAreaW = 0, tileAreaH = 0; // the room they have on their pages: their editors show them at just this size
     int deskEdge = 0, deskPos = 500, deskLen = 560, deskThick = 30, deskGap = 10, deskFloat = 1, deskFill = 0; // its edge, place along it in thousandths, size, gap, stuck or floating, body
     int deskApps = 0; // it also stands in for the small pill over maximized apps, on the same rules
-    enum DeskItem { kDClock = 20, kDDate, kDVolume, kDWifi, kDMusic, kDTimer, kDCover, kDBars, kDScore, kDLyrics }; // beyond the widgets above; new ones go last
+    enum DeskItem { kDClock = 20, kDDate, kDVolume, kDWifi, kDMusic, kDTimer, kDCover, kDBars, kDScore, kDLyrics, kDRecord }; // beyond the widgets above; new ones go last
     bool PillLyrics() const; // the long pill shows the sung line somewhere: the song's lyrics are looked up for it
     double LyricWait() const; // seconds until its line changes; -1: nothing coming while it plays
     int scoreAt = 0; // the long pill's score: which of the followed leagues' games it shows; the wheel over it steps on

@@ -73,7 +73,7 @@ void Apply(const std::wstring& name, const std::wstring& exe, const std::wstring
     std::wstring xml = TaskXml(sid, exe, args);
     if (exists) { // already right: nothing written
         BSTR now = nullptr;
-        bool same = SUCCEEDED(have->get_Xml(&now)) && now && wcsstr(now, (L"<Command>" + Escaped(exe) + L"</Command>").c_str());
+        bool same = SUCCEEDED(have->get_Xml(&now)) && now && wcsstr(now, (L"<Command>" + Escaped(exe) + L"</Command>").c_str()) && wcsstr(now, L"<Priority>4</Priority>"); // a task from before the priority was set runs below normal: written again
         SysFreeString(now);
         if (same) return;
     }

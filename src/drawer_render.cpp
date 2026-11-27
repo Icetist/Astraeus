@@ -220,6 +220,7 @@ bool Drawer::RenewDev() {
     coverBack.Reset();
     coverPrev.Reset();
     ForgetShelfArt();
+    ForgetGameArt();
     pillLayer.Reset();
     pillKey = 0;
     skyLayer.Reset();
@@ -366,6 +367,7 @@ void Drawer::FreeDev() {
     coverBack.Reset();
     coverPrev.Reset(); // the flip's old cover too: it would hold the device
     ForgetShelfArt(); // its previews belong to this device
+    ForgetGameArt(); // and the games' pictures
     if (frameWait) {
         CloseHandle(frameWait);
         frameWait = nullptr; // main loop falls back to plain msg wait
@@ -535,7 +537,7 @@ void Drawer::SyncAccent() {
 }
 
 void Drawer::SyncTyping() {
-    bool want = model.Typing() || StagePrefs::Get().capture || Entry::Get().focus; // a text field, or settings waiting for a fullscreen key
+    bool want = model.Typing() || StagePrefs::Get().capture || model.clipKeyWhich || Entry::Get().focus; // a text field, or settings waiting for a fullscreen key
     if (want == typing) return;
     typing = want;
     if (typing) { // the panel never takes focus normally, its text fields are the exception
@@ -662,7 +664,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
         divider({kRailW, 34}, {kRailW, H - 34});
         DrawRail(shellNow);
     }
-    bool fieldFocus = model.Typing() || Entry::Get().focus || StagePrefs::Get().capture || ui.Captured(); // a text field, a key being picked or a slider held keeps its arrows
+    bool fieldFocus = model.Typing() || Entry::Get().focus || StagePrefs::Get().capture || model.clipKeyWhich || ui.Captured(); // a text field, a key being picked or a slider held keeps its arrows
     railHot = opened && !fieldFocus && Inside(RailBox(), local.mouse);
     D2D1_RECT_F area = Tall() ? D2D1_RECT_F{14, kTopRail + 10, panelW - 14, panelH - 14} : D2D1_RECT_F{kRailW + 14, 18, panelW - 20, H - 20};
     if (const Alarm* ring = model.alarms.Ringing()) {
@@ -749,6 +751,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
         case Model::kPgNetwork: DrawNet(pc); break;
         case Model::kPgTools: DrawTools(pc); break;
         case Model::kPgWidgets: DrawWidgetsPage(pc); break;
+        case Model::kPgGames: DrawGames(pc); break;
         default: DrawShelf(pc); break;
         }
     }
@@ -814,6 +817,7 @@ void Drawer::DrawBody(float h, float dt, double now) {
         Close(); // page asked to close, after drawing finishes
     }
     if (pc.wantStage) OpenStage();
+    if (!pc.wantClip.empty()) OpenStudio(pc.wantClip);
     if (pc.wantPage >= 0) SetPage(pc.wantPage);
 }
 
@@ -822,6 +826,31 @@ void Drawer::PlayFull() {
     stageAway = true;
     OpenStage();
     stageHalo = true; // after OpenStage: the way back is halobar's, even with this panel open
+}
+
+void Drawer::OpenStudio(const std::wstring& path) {
+    if (studio) return;
+    HMONITOR on = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
+    Close(); // the panel steps aside, the studio covers this screen
+    studio = std::make_unique<ClipStudio>(model, on, path);
+    if (!studio->Ok()) {
+        studio.reset();
+        return;
+    }
+    Retract(); // the island goes too, and the long pill steps aside: the studio is the whole screen
+    SyncDesk();
+}
+
+void Drawer::StudioFrame() {
+    if (!studio) return;
+    studio->Frame(Shell());
+    if (!studio->Done()) return;
+    studio.reset(); // its window, device and player all go with it
+    gfx::GiveBack();
+    SyncDesk(); // the long pill comes back
+    AutoPage(Model::kPgGames); // back where it came from
+    pageSet = true;
+    Open();
 }
 
 void Drawer::OpenStage() {
@@ -914,8 +943,13 @@ void Drawer::DrawPeek(float h) {
     if (a <= 0) return;
     D2D1_RECT_F area = edgeNow == 0 ? Rect(0, 0, W, h) : edgeNow == 1 ? Rect(0, cfg.fillet, h, CH()) : Rect(winH - h, cfg.fillet, h, CH()); // visible part
     float cx = (area.left + area.right) / 2 + (Side() ? 60 : 0), cy = Side() ? area.top + 70 : (area.top + area.bottom) / 2; // sidebar: near the top
-    canvas->Dot({cx - 112, cy}, 17, t.accent.Alpha(0.18f * a));
-    canvas->Icon(peekIcon ? peekIcon : glyph::Timer, {cx - 112, cy}, 21, t.accentHi.Alpha(a), true);
+    constexpr float kArtPx = 36, kArtR = 9; // a game's picture, the size of the icon's dot
+    ID2D1Bitmap* art = peekCover.empty() && peekExe.empty() ? nullptr : GameArt(*canvas, peekCover, peekExe);
+    if (art) canvas->Image(art, Rect(cx - 112 - kArtPx / 2, cy - kArtPx / 2, kArtPx, kArtPx), kArtR, a);
+    else {
+        canvas->Dot({cx - 112, cy}, 17, t.accent.Alpha(0.18f * a));
+        canvas->Icon(peekIcon ? peekIcon : glyph::Timer, {cx - 112, cy}, 21, t.accentHi.Alpha(a), true);
+    }
     if (peekLevel >= 0) { // the hud: what changed, a bar and the number
         float lv = peekLevel;
         canvas->Text(peekTitle, Rect(cx - 84, cy - 19, 150, 20), Weight::Medium, 14, t.text.Alpha(a));

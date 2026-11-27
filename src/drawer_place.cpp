@@ -307,6 +307,7 @@ void Drawer::SyncHide() {
         if (HMONITOR to = Refuge()) return Hop(to); // every screen: a game took this one, the pill carries on next door
     if (hide == hidden) return;
     hidden = hide;
+    forcedUp = false; // shown or hidden for real now: a game's pill no longer holds it up
     Log(hide ? L"hide, fullscreen app" : L"show again");
     if (hide) {
         Retract();
@@ -395,7 +396,7 @@ bool Passing(HWND w) { // a shell flyout, a menu, a tooltip or an app's own popu
 }
 
 void Drawer::StayOnTop() { // at sign-in the shell starts after us and its windows land over the strip: the mouse never reaches it until something lifts it
-    if (hidden || stage || opened || dragging) return;
+    if (hidden || stage || studio || opened || dragging) return; // the clip studio has the screen, like the player
     RECT me{};
     if (!GetWindowRect(hwnd, &me)) return;
     for (HWND w = GetWindow(hwnd, GW_HWNDPREV); w; w = GetWindow(w, GW_HWNDPREV)) {

@@ -27,13 +27,14 @@ constexpr float kBackRate = 9, kFollow = 22, kTurn = 13;
 constexpr float kShakeRate = 7, kShakeReach = 7;
 constexpr float kBackFrom = 1.05f; // the wallpaper settles from a little closer
 
-constexpr int kAll[] = {Model::kDClock, Model::kDDate, Model::kWWeather, Model::kDMusic, Model::kDLyrics, Model::kDCover, Model::kDBars, Model::kDTimer, Model::kDVolume, Model::kDWifi, Model::kWCpu, Model::kWGpu, Model::kWRam, Model::kWNet, Model::kWDisk, Model::kWBattery, Model::kWWork, Model::kWLang, Model::kWTitle, Model::kWMarket, Model::kDScore};
+constexpr int kAll[] = {Model::kDClock, Model::kDDate, Model::kWWeather, Model::kDMusic, Model::kDLyrics, Model::kDCover, Model::kDBars, Model::kDTimer, Model::kDVolume, Model::kDWifi, Model::kWCpu, Model::kWGpu, Model::kWRam, Model::kWNet, Model::kWDisk, Model::kWBattery, Model::kWWork, Model::kWLang, Model::kWTitle, Model::kWMarket, Model::kDScore, Model::kDRecord};
 
 constexpr int kTileCols = 7;
 constexpr float kTileH = 56, kTileGap = 8, kTileR = 14, kHintH = 18; // the widgets as tiles: each one's mark, name and what it shows now
 
 int ItemIcon(int kind) { // a tile's mark: always the same, whatever the item shows right now
     switch (kind) {
+    case Model::kDRecord: return glyph::Pad;
     case Model::kDClock: return glyph::Schedule;
     case Model::kDDate: return glyph::Calendar;
     case Model::kWWeather: return glyph::PartlyDay;
@@ -61,6 +62,7 @@ int ItemIcon(int kind) { // a tile's mark: always the same, whatever the item sh
 
 const wchar_t* ItemHint(int kind) { // what a tile does, under the tiles while it's hovered
     switch (kind) {
+    case Model::kDRecord: return L"While a game is recorded: a red dot, and Clip saved when you keep one. Click it to save a clip";
     case Model::kDClock: return L"The time. Drop any item on the pill's middle to put it there";
     case Model::kDDate: return L"The day and the date";
     case Model::kWWeather: return L"The temperature and the sky where you are";
@@ -90,6 +92,7 @@ const wchar_t* ItemIdle(int kind) { // a tile's second line when the item has no
     switch (kind) {
     case Model::kDMusic: case Model::kDCover: case Model::kDBars: return L"With a song";
     case Model::kDLyrics: return L"Sings along"; // short: a tile fits about fourteen letters
+    case Model::kDRecord: return L"While recording";
     case Model::kDTimer: return L"When one runs";
     case Model::kDScore: return L"During games";
     case Model::kDWifi: return L"Online or not";

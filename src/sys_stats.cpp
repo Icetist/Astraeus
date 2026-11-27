@@ -126,7 +126,7 @@ struct StatSrc::Impl {
     double ReadGpuNow() {
         int state = gpuState.load(std::memory_order_acquire);
         if (state == kGpuIdle) OpenGpu();
-        if (state == kGpuIdle || state == kGpuPending) return 0; // still opening: an empty gauge, not a missing one
+        if (state == kGpuIdle || state == kGpuPending) return lastGpu; // still opening: the last reading holds, so a reopen never drops the gauge to 0
         if (state == kGpuFailed) return -1;  // -1 tells ui gpu is unavailable
         PDH_STATUS st = PdhCollectQueryData(query);
         if (st != ERROR_SUCCESS) return 0;
